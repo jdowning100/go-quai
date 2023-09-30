@@ -852,7 +852,7 @@ func ReadBlock(db ethdb.Reader, hash common.Hash, number uint64) *types.Block {
 	if body == nil {
 		return nil
 	}
-	return types.NewBlockWithHeader(header).WithBody(body.Transactions, body.Uncles, body.ExtTransactions, body.SubManifest)
+	return types.NewBlockWithHeader(header).WithBody(body.Transactions, body.Uncles, body.ExtTransactions, body.UTXOs, body.SubManifest)
 }
 
 // WriteBlock serializes a block into the database, header and body separately.
@@ -905,7 +905,7 @@ func ReadBadBlock(db ethdb.Reader, hash common.Hash) *types.Block {
 	}
 	for _, bad := range badBlocks {
 		if bad.Header.Hash() == hash {
-			return types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.SubManifest)
+			return types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.UTXOs, bad.Body.SubManifest)
 		}
 	}
 	return nil
@@ -924,7 +924,7 @@ func ReadAllBadBlocks(db ethdb.Reader) []*types.Block {
 	}
 	var blocks []*types.Block
 	for _, bad := range badBlocks {
-		blocks = append(blocks, types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.SubManifest))
+		blocks = append(blocks, types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.UTXOs, bad.Body.SubManifest))
 	}
 	return blocks
 }
@@ -1332,4 +1332,59 @@ func DeleteInboundEtxs(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Delete(inboundEtxsKey(hash)); err != nil {
 		log.Fatal("Failed to delete inbound etxs", "err", err)
 	}
+}
+
+func WriteUtxo(db ethdb.KeyValueWriter, hash common.Hash, utxo *types.UtxoEntry) {
+	data, err := rlp.EncodeToBytes(utxo)
+	if err != nil {
+		log.Fatal("Failed to RLP encode inbound etxs", "err", err)
+	}
+	if err := db.Put(utxoKey(hash), data); err != nil {
+		log.Fatal("Failed to store badHashesList", "err", err)
+	}
+}
+
+func ReadUtxo(db ethdb.Reader, hash common.Hash) *types.UtxoEntry {
+	// Try to look up the data in leveldb.
+	data, _ := db.Get(utxoKey(hash))
+	if len(data) == 0 {
+		return nil
+	}
+	utxo := new(types.UtxoEntry)
+	if err := rlp.Decode(bytes.NewReader(data), utxo); err != nil {
+		log.Error("Invalid utxo RLP", "utxo", utxo, "err", err)
+		return nil
+	}
+	return utxo
+}
+
+// DeleteUtxo deletes utxos from the database
+func DeleteUtxo(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(utxoKey(hash)); err != nil {
+		log.Fatal("Failed to delete utxo", "err", err)
+	}
+}
+
+func WriteSpentUTXOs(db ethdb.KeyValueWriter, hash common.Hash, spentUTXOs []types.SpentTxOut) {
+	data, err := rlp.EncodeToBytes(spentUTXOs)
+	if err != nil {
+		log.Fatal("Failed to RLP encode spent utxos", "err", err)
+	}
+	if err := db.Put(spentUTXOsKey(hash), data); err != nil {
+		log.Fatal("Failed to store spent utxos", "err", err)
+	}
+}
+
+func ReadSpentUTXOs(db ethdb.Reader, hash common.Hash) []types.SpentTxOut {
+	// Try to look up the data in leveldb.
+	data, _ := db.Get(spentUTXOsKey(hash))
+	if len(data) == 0 {
+		return nil
+	}
+	spentUTXOs := []types.SpentTxOut{}
+	if err := rlp.Decode(bytes.NewReader(data), &spentUTXOs); err != nil {
+		log.Error("Invalid spent utxos RLP", "err", err)
+		return nil
+	}
+	return spentUTXOs
 }

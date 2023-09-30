@@ -516,7 +516,6 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 	if err != nil {
 		return nil, err
 	}
-
 	work.header = newBlock.Header()
 	w.printPendingHeaderInfo(work, newBlock, start)
 
@@ -528,12 +527,12 @@ func (w *worker) printPendingHeaderInfo(work *environment, block *types.Block, s
 	work.uncleMu.RLock()
 	if w.CurrentInfo(block.Header()) {
 		log.Info("Commit new sealing work", "number", block.Number(), "sealhash", block.Header().SealHash(),
-			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()),
+			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()), "utxos", len(block.UTXOs()),
 			"gas", block.GasUsed(), "fees", totalFees(block, work.receipts),
 			"elapsed", common.PrettyDuration(time.Since(start)))
 	} else {
 		log.Debug("Commit new sealing work", "number", block.Number(), "sealhash", block.Header().SealHash(),
-			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()),
+			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()), "utxos", len(block.UTXOs()),
 			"gas", block.GasUsed(), "fees", totalFees(block, work.receipts),
 			"elapsed", common.PrettyDuration(time.Since(start)))
 	}
@@ -912,6 +911,7 @@ func (w *worker) ComputeManifestHash(header *types.Header) common.Hash {
 
 func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *types.Header, parent *types.Block, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, etxs []*types.Transaction, subManifest types.BlockManifest, receipts []*types.Receipt) (*types.Block, error) {
 	nodeCtx := common.NodeLocation.Context()
+
 	block, err := w.engine.FinalizeAndAssemble(chain, header, state, txs, uncles, etxs, subManifest, receipts)
 	if err != nil {
 		return nil, err
@@ -937,6 +937,24 @@ func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *typ
 			block.Header().SetEtxRollupHash(etxRollupHash)
 		}
 
+		if nodeCtx == common.ZONE_CTX && w.hc.ProcessingState() {
+			extraNonce := uint64(0)
+			coinbaseScript, err := standardCoinbaseScript(int32(header.NumberU64()), extraNonce)
+			if err != nil {
+				return nil, err
+			}
+			coinbaseTx, err := createCoinbaseTx(coinbaseScript,
+				int32(header.NumberU64()), header.Coinbase())
+			if err != nil {
+				return nil, err
+			}
+
+			block.AddUTXO(coinbaseTx)
+
+			fmt.Println("coinbase utxo", coinbaseTx)
+		}
+
+		fmt.Println("add pending block body", len(block.Body().UTXOs))
 		w.AddPendingBlockBody(block.Header(), block.Body())
 	}
 

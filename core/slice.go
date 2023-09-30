@@ -1216,11 +1216,15 @@ func (sl *Slice) ConstructLocalBlock(header *types.Header) (*types.Block, error)
 	for i, etx := range pendingBlockBody.ExtTransactions {
 		etxs[i] = etx
 	}
+	utxos := make([]*types.MsgUTXO, len(pendingBlockBody.UTXOs))
+	for i, utxo := range pendingBlockBody.UTXOs {
+		utxos[i] = utxo
+	}
 	subManifest := make(types.BlockManifest, len(pendingBlockBody.SubManifest))
 	for i, blockHash := range pendingBlockBody.SubManifest {
 		subManifest[i] = blockHash
 	}
-	block := types.NewBlockWithHeader(header).WithBody(txs, uncles, etxs, subManifest)
+	block := types.NewBlockWithHeader(header).WithBody(txs, uncles, etxs, utxos, subManifest)
 	if err := sl.validator.ValidateBody(block); err != nil {
 		return block, err
 	} else {
@@ -1256,11 +1260,15 @@ func (sl *Slice) ConstructLocalMinedBlock(header *types.Header) (*types.Block, e
 	for i, etx := range pendingBlockBody.ExtTransactions {
 		etxs[i] = etx
 	}
+	utxos := make([]*types.MsgUTXO, len(pendingBlockBody.UTXOs))
+	for i, utxo := range pendingBlockBody.UTXOs {
+		utxos[i] = utxo
+	}
 	subManifest := make(types.BlockManifest, len(pendingBlockBody.SubManifest))
 	for i, blockHash := range pendingBlockBody.SubManifest {
 		subManifest[i] = blockHash
 	}
-	block := types.NewBlockWithHeader(header).WithBody(txs, uncles, etxs, subManifest)
+	block := types.NewBlockWithHeader(header).WithBody(txs, uncles, etxs, utxos, subManifest)
 	if err := sl.validator.ValidateBody(block); err != nil {
 		return block, err
 	} else {

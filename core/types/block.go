@@ -84,6 +84,7 @@ type Header struct {
 	uncleHash     common.Hash     `json:"sha3Uncles"           gencodec:"required"`
 	coinbase      common.Address  `json:"miner"                gencodec:"required"`
 	root          common.Hash     `json:"stateRoot"            gencodec:"required"`
+	utxoHash      common.Hash     `json:"utxoHash"			   gencodex:"required"`
 	txHash        common.Hash     `json:"transactionsRoot"     gencodec:"required"`
 	etxHash       common.Hash     `json:"extTransactionsRoot"  gencodec:"required"`
 	etxRollupHash common.Hash     `json:"extRollupRoot"        gencodec:"required"`
@@ -669,6 +670,7 @@ func (h *Header) EmptyReceipts() bool {
 // Body is a simple (mutable, non-safe) data container for storing and moving
 // a block's data contents (transactions and uncles) together.
 type Body struct {
+	UTXOs           []*UTXO
 	Transactions    []*Transaction
 	Uncles          []*Header
 	ExtTransactions []*Transaction
@@ -679,6 +681,7 @@ type Body struct {
 type Block struct {
 	header          *Header
 	uncles          []*Header
+	utxos           []*UTXO
 	transactions    Transactions
 	extTransactions Transactions
 	subManifest     BlockManifest
@@ -850,6 +853,7 @@ func (b *Block) NonceU64() uint64                     { return b.header.NonceU64
 // TODO: copies
 
 func (b *Block) Uncles() []*Header          { return b.uncles }
+func (b *Block) UTXOs() []*UTXO             { return b.utxos }
 func (b *Block) Transactions() Transactions { return b.transactions }
 func (b *Block) Transaction(hash common.Hash) *Transaction {
 	for _, transaction := range b.Transactions() {
@@ -874,7 +878,7 @@ func (b *Block) Header() *Header { return b.header }
 
 // Body returns the non-header content of the block.
 func (b *Block) Body() *Body {
-	return &Body{b.transactions, b.uncles, b.extTransactions, b.subManifest}
+	return &Body{b.utxos, b.transactions, b.uncles, b.extTransactions, b.subManifest}
 }
 
 // Size returns the true RLP encoded storage size of the block, either by encoding

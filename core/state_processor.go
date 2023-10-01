@@ -211,20 +211,20 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 	}
 
 	// Process UTXOs
-	utxoView := NewUtxoViewpoint()
+	utxoView := types.NewUtxoViewpoint()
 	utxoView.SetBestHash(parent.Hash())
-	stxos := make([]SpentTxOut, 0, countSpentOutputs(block))
+	stxos := make([]types.SpentTxOut, 0, types.CountSpentOutputs(block))
 	// Load all of the utxos referenced by the inputs for all transactions
 	// in the block don't already exist in the utxo view from the database.
 	//
 	// These utxo entries are needed for verification of things such as
 	// transaction inputs, counting pay-to-script-hashes, and scripts.
-	err = utxoView.fetchInputUtxos(statedb, block)
+	err = p.hc.fetchInputUtxos(utxoView, block)
 	if err != nil {
 		return types.Receipts{}, []*types.Log{}, nil, 0, err
 	}
 
-	err = validateUTXOs(block, utxoView, &stxos)
+	err = p.validateUTXOs(block, utxoView, &stxos)
 	if err != nil {
 		return types.Receipts{}, []*types.Log{}, nil, 0, err
 	}
@@ -355,7 +355,7 @@ func (p *StateProcessor) processAccountTransactions(block *types.Block, etxSet t
 }
 
 // For reference, this mirror checkConnectBlock in BTCD
-func validateUTXOs(block *types.Block, view *UtxoViewpoint, stxos *[]SpentTxOut) error {
+func (p *StateProcessor) validateUTXOs(block *types.Block, view *types.UtxoViewpoint, stxos *[]types.SpentTxOut) error {
 	// Perform several checks on the inputs for each transaction.  Also
 	// accumulate the total fees.  This could technically be combined with
 	// the loop above instead of running another loop over the transactions,
@@ -366,8 +366,7 @@ func validateUTXOs(block *types.Block, view *UtxoViewpoint, stxos *[]SpentTxOut)
 	transactions := block.UTXOs()
 	var totalFees int64
 	for _, tx := range transactions {
-		txFee, err := CheckTransactionInputs(tx, node.height, view,
-			b.chainParams)
+		txFee, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), view)
 		if err != nil {
 			return err
 		}
@@ -377,15 +376,15 @@ func validateUTXOs(block *types.Block, view *UtxoViewpoint, stxos *[]SpentTxOut)
 		lastTotalFees := totalFees
 		totalFees += txFee
 		if totalFees < lastTotalFees {
-			return ruleError(ErrBadFees, "total fees for block "+
-				"overflows accumulator")
+			// return ruleError(ErrBadFees, "total fees for block "+
+			// 	"overflows accumulator")
 		}
 
 		// Add all of the outputs for this transaction which are not
 		// provably unspendable as available utxos.  Also, the passed
 		// spent txos slice is updated to contain an entry for each
 		// spent txout in the order each transaction spends them.
-		err = view.connectTransaction(tx, node.height, stxos)
+		err = view.ConnectTransaction(tx, block.Header().NumberU64(), stxos)
 		if err != nil {
 			return err
 		}
@@ -398,11 +397,11 @@ func validateUTXOs(block *types.Block, view *UtxoViewpoint, stxos *[]SpentTxOut)
 	// expensive ECDSA signature check scripts.  Doing this last helps
 	// prevent CPU exhaustion attacks.
 	if runScripts {
-		err := checkBlockScripts(block, view, scriptFlags, b.sigCache,
-			b.hashCache)
-		if err != nil {
-			return err
-		}
+		// err := checkBlockScripts(block, view, scriptFlags, b.sigCache,
+		// 	b.hashCache)
+		// if err != nil {
+		// 	return err
+		// }
 	}
 
 	// Update the best hash for view to include this block since all of its

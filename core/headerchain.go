@@ -973,3 +973,100 @@ func (hc *HeaderChain) SubscribeChainSideEvent(ch chan<- ChainSideEvent) event.S
 func (hc *HeaderChain) StateAt(root common.Hash) (*state.StateDB, error) {
 	return hc.bc.processor.StateAt(root)
 }
+
+func (hc *HeaderChain) GetUtxo(hash common.Hash) *types.UtxoEntry {
+	return hc.bc.GetUtxo(hash)
+}
+
+// fetchUtxosMain fetches unspent transaction output data about the provided
+// set of outpoints from the point of view of the end of the main chain at the
+// time of the call.
+//
+// Upon completion of this function, the view will contain an entry for each
+// requested outpoint.  Spent outputs, or those which otherwise don't exist,
+// will result in a nil entry in the view.
+func (hc *HeaderChain) fetchUtxosMain(view *types.UtxoViewpoint, outpoints []types.OutPoint) error {
+	// Nothing to do if there are no requested outputs.
+	if len(outpoints) == 0 {
+		return nil
+	}
+
+	// Load the requested set of unspent transaction outputs from the point
+	// of view of the end of the main chain.
+	//
+	// NOTE: Missing entries are not considered an error here and instead
+	// will result in nil entries in the view.  This is intentionally done
+	// so other code can use the presence of an entry in the store as a way
+	// to unnecessarily avoid attempting to reload it from the database.
+	for i := range outpoints {
+		entry := hc.GetUtxo(outpoints[i].Hash)
+		if entry == nil {
+			return nil
+		}
+
+		view.AddEntry(outpoints, i, entry)
+
+		return nil
+	}
+
+	return nil
+}
+
+// fetchInputUtxos loads the unspent transaction outputs for the inputs
+// referenced by the transactions in the given block into the view from the
+// database as needed.  In particular, referenced entries that are earlier in
+// the block are added to the view and entries that are already in the view are
+// not modified.
+func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.Block) error {
+	// Build a map of in-flight transactions because some of the inputs in
+	// this block could be referencing other transactions earlier in this
+	// block which are not yet in the chain.
+	txInFlight := map[common.Hash]int{}
+	transactions := block.UTXOs()
+	for i, tx := range transactions {
+		txInFlight[tx.Hash()] = i
+	}
+
+	// Loop through all of the transaction inputs (except for the coinbase
+	// which has no inputs) collecting them into sets of what is needed and
+	// what is already known (in-flight).
+	needed := make([]types.OutPoint, 0, len(transactions))
+	for i, tx := range transactions[1:] {
+		for _, txIn := range tx.MsgTx().TxIn {
+			// It is acceptable for a transaction input to reference
+			// the output of another transaction in this block only
+			// if the referenced transaction comes before the
+			// current one in this block.  Add the outputs of the
+			// referenced transaction as available utxos when this
+			// is the case.  Otherwise, the utxo details are still
+			// needed.
+			//
+			// NOTE: The >= is correct here because i is one less
+			// than the actual position of the transaction within
+			// the block due to skipping the coinbase.
+			originHash := &txIn.PreviousOutPoint.Hash
+			if inFlightIndex, ok := txInFlight[*originHash]; ok &&
+				i >= inFlightIndex {
+
+				originTx := transactions[inFlightIndex]
+				view.AddTxOuts(originTx, block.Header().NumberU64())
+				continue
+			}
+
+			// Don't request entries that are already in the view
+			// from the database.
+			// if _, ok := view.entries[txIn.PreviousOutPoint]; ok {
+			// 	continue
+			// }
+			entry := view.LookupEntry(txIn.PreviousOutPoint)
+			if entry == nil {
+				continue
+			}
+
+			needed = append(needed, txIn.PreviousOutPoint)
+		}
+	}
+
+	// Request the input utxos from the database.
+	return hc.fetchUtxosMain(view, needed)
+}

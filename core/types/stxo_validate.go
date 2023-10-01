@@ -1,6 +1,4 @@
-package core
-
-import "github.com/dominant-strategies/go-quai/core/types"
+package types
 
 // SpentTxOut contains a spent transaction output and potentially additional
 // contextual information such as whether or not it was contained in a coinbase
@@ -17,14 +15,14 @@ type SpentTxOut struct {
 	PkScript []byte
 
 	// Height is the height of the block containing the creating tx.
-	Height int32
+	Height uint64
 
 	// Denotes if the creating tx is a coinbase.
 	IsCoinBase bool
 }
 
 // countSpentOutputs returns the number of utxos the passed block spends.
-func countSpentOutputs(block *types.Block) int {
+func CountSpentOutputs(block *Block) int {
 	// Exclude the coinbase transaction since it can't spend anything.
 	var numSpent int
 	for _, tx := range block.UTXOs()[1:] {

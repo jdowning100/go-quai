@@ -1333,3 +1333,27 @@ func DeleteInboundEtxs(db ethdb.KeyValueWriter, hash common.Hash) {
 		log.Fatal("Failed to delete inbound etxs", "err", err)
 	}
 }
+
+func WriteUtxo(db ethdb.KeyValueWriter, hash common.Hash, utxo *types.UtxoEntry) {
+	data, err := rlp.EncodeToBytes(utxo)
+	if err != nil {
+		log.Fatal("Failed to RLP encode inbound etxs", "err", err)
+	}
+	if err := db.Put(utxoKey(hash), data); err != nil {
+		log.Fatal("Failed to store badHashesList", "err", err)
+	}
+}
+
+func ReadUtxo(db ethdb.Reader, hash common.Hash) *types.UtxoEntry {
+	// Try to look up the data in leveldb.
+	data, _ := db.Get(utxoKey(hash))
+	if len(data) == 0 {
+		return nil
+	}
+	utxo := new(types.UtxoEntry)
+	if err := rlp.Decode(bytes.NewReader(data), utxo); err != nil {
+		log.Error("Invalid utxo RLP", "utxo", utxo, "err", err)
+		return nil
+	}
+	return utxo
+}

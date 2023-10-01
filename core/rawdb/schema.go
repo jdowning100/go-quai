@@ -96,6 +96,7 @@ var (
 	terminiPrefix       = []byte("tk")    //terminiPrefix + hash -> []common.Hash
 	badHashesListPrefix = []byte("bh")
 	inboundEtxsPrefix   = []byte("ie") // inboundEtxsPrefix + hash -> types.Transactions
+	utxoPrefix          = []byte("ut") // outpointPrefix + hash -> types.Outpoint
 
 	blockBodyPrefix         = []byte("b")  // blockBodyPrefix + num (uint64 big endian) + hash -> block body
 	blockReceiptsPrefix     = []byte("r")  // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
@@ -307,4 +308,8 @@ func bloomKey(hash common.Hash) []byte {
 
 func inboundEtxsKey(hash common.Hash) []byte {
 	return append(inboundEtxsPrefix, hash.Bytes()...)
+}
+
+func utxoKey(hash common.Hash) []byte {
+	return append(utxoPrefix, hash.Bytes()...)
 }

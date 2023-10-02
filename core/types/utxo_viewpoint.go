@@ -136,6 +136,10 @@ func (view *UtxoViewpoint) BestHash() common.Hash {
 	return view.bestHash
 }
 
+func (view *UtxoViewpoint) Entries() map[OutPoint]*UtxoEntry {
+	return view.entries
+}
+
 // SetBestHash sets the hash of the best block in the chain the view currently
 // respresents.
 func (view *UtxoViewpoint) SetBestHash(hash common.Hash) {

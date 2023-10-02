@@ -4,6 +4,27 @@ import (
 	"github.com/dominant-strategies/go-quai/common"
 )
 
+const (
+
+	// UTXOVersion is the current latest supported transaction version.
+	UTXOVersion = 1
+
+	// MaxTxInSequenceNum is the maximum sequence number the sequence field
+	// of a transaction input can be.
+	MaxTxInSequenceNum uint32 = 0xffffffff
+
+	// MaxPrevOutIndex is the maximum index the index field of a previous
+	// outpoint can be.
+	MaxPrevOutIndex uint32 = 0xffffffff
+
+	// defaultTxInOutAlloc is the default size used for the backing array for
+	// transaction inputs and outputs.  The array will dynamically grow as needed,
+	// but this figure is intended to provide enough space for the number of
+	// inputs and outputs in a typical transaction without needing to grow the
+	// backing array multiple times.
+	defaultTxInOutAlloc = 15
+)
+
 // Tx defines a bitcoin transaction that provides easier and more efficient
 // manipulation of raw transactions.  It also memoizes the hash for the
 // transaction on its first access so subsequent accesses don't have to repeat
@@ -20,6 +41,19 @@ type UTXO struct {
 func (t *UTXO) MsgTx() *MsgUTXO {
 	// Return the cached transaction.
 	return t.msgUTXO
+}
+
+// NewMsgTx returns a new bitcoin tx message that conforms to the Message
+// interface.  The return instance has a default version of TxVersion and there
+// are no transaction inputs or outputs.  Also, the lock time is set to zero
+// to indicate the transaction is valid immediately as opposed to some time in
+// future.
+func NewMsgTx(version int32) *MsgUTXO {
+	return &MsgUTXO{
+		Version: version,
+		TxIn:    make([]*TxIn, 0, defaultTxInOutAlloc),
+		TxOut:   make([]*TxOut, 0, defaultTxInOutAlloc),
+	}
 }
 
 // Hash returns the hash of the transaction.  This is equivalent to

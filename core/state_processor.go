@@ -228,9 +228,10 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 		return types.Receipts{}, []*types.Log{}, nil, 0, err
 	}
 
-	// write utxo set
-
 	receipts, allLogs, statedb, usedGas, err := p.processAccountTransactions(block, etxSet, statedb)
+	if err != nil {
+		return types.Receipts{}, []*types.Log{}, nil, 0, err
+	}
 
 	return receipts, allLogs, statedb, usedGas, nil
 }

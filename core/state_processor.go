@@ -210,6 +210,21 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 		return types.Receipts{}, []*types.Log{}, nil, 0, err
 	}
 
+	extraNonce := uint64(0)
+	coinbaseScript, err := standardCoinbaseScript(int32(block.NumberU64()+1), extraNonce)
+	if err != nil {
+		return types.Receipts{}, []*types.Log{}, nil, 0, err
+	}
+	coinbaseTx, err := createCoinbaseTx(coinbaseScript,
+		int32(block.NumberU64()+1), block.Header().Coinbase())
+	if err != nil {
+		return types.Receipts{}, []*types.Log{}, nil, 0, err
+	}
+
+	block.AddUTXO(coinbaseTx)
+
+	fmt.Println("coinbase utxo", coinbaseTx)
+
 	// Process UTXOs
 	utxoView := types.NewUtxoViewpoint()
 	utxoView.SetBestHash(parent.Hash())
@@ -238,7 +253,6 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 }
 
 func (p *StateProcessor) processAccountTransactions(block *types.Block, etxSet types.EtxSet, statedb *state.StateDB) (types.Receipts, []*types.Log, *state.StateDB, uint64, error) {
-
 	var (
 		receipts    types.Receipts
 		usedGas     = new(uint64)
@@ -365,7 +379,7 @@ func (p *StateProcessor) validateUTXOs(block *types.Block, view *types.UtxoViewp
 	// against all the inputs when the signature operations are out of
 	// bounds.
 	transactions := block.UTXOs()
-	var totalFees int64
+	var totalFees uint64
 	for _, tx := range transactions {
 		txFee, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), view)
 		if err != nil {

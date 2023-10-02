@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
@@ -1026,7 +1025,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	txInFlight := map[common.Hash]int{}
 	transactions := block.UTXOs()
 	for i, tx := range transactions {
-		txInFlight[tx.Hash()] = i
+		txInFlight[tx.TxHash()] = i
 	}
 
 	// Loop through all of the transaction inputs (except for the coinbase
@@ -1034,7 +1033,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	// what is already known (in-flight).
 	needed := make([]types.OutPoint, 0, len(transactions))
 	for i, tx := range transactions[1:] {
-		for _, txIn := range tx.MsgTx().TxIn {
+		for _, txIn := range tx.TxIn {
 			// It is acceptable for a transaction input to reference
 			// the output of another transaction in this block only
 			// if the referenced transaction comes before the
@@ -1110,13 +1109,23 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 	return nil
 }
 
+// standardCoinbaseScript returns a standard script suitable for use as the
+// signature script of the coinbase transaction of a new block.  In particular,
+// it starts with the block height that is required by version 2 blocks and adds
+// the extra nonce as well as additional coinbase flags.
+func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, error) {
+	return txscript.NewScriptBuilder().AddInt64(int64(nextBlockHeight)).
+		AddInt64(int64(extraNonce)).
+		Script()
+}
+
 // createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy
 // based on the passed block height to the provided address.  When the address
 // is nil, the coinbase transaction will instead be redeemable by anyone.
 //
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
-func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.MsgUTXO, error) {
+func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.MsgUTXO, error) {
 	// Create the script to pay to the provided payment address if one was
 	// specified.  Otherwise create a script that allows the coinbase to be
 	// redeemable by anyone.

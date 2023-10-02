@@ -251,6 +251,37 @@ func (b *ScriptBuilder) AddData(data []byte) *ScriptBuilder {
 	return b.addData(data)
 }
 
+// AddInt64 pushes the passed integer to the end of the script.  The script will
+// not be modified if pushing the data would cause the script to exceed the
+// maximum allowed script engine size.
+func (b *ScriptBuilder) AddInt64(val int64) *ScriptBuilder {
+	if b.err != nil {
+		return b
+	}
+
+	// Pushes that would cause the script to exceed the largest allowed
+	// script size would result in a non-canonical script.
+	if len(b.script)+1 > MaxScriptSize {
+		str := fmt.Sprintf("adding an integer would exceed the "+
+			"maximum allow canonical script length of %d",
+			MaxScriptSize)
+		b.err = ErrScriptNotCanonical(str)
+		return b
+	}
+
+	// Fast path for small integers and OP_1NEGATE.
+	if val == 0 {
+		b.script = append(b.script, OP_0)
+		return b
+	}
+	if val == -1 || (val >= 1 && val <= 16) {
+		b.script = append(b.script, byte((OP_1-1)+val))
+		return b
+	}
+
+	return b.AddData(scriptNum(val).Bytes())
+}
+
 // Reset resets the script so it has no content.
 func (b *ScriptBuilder) Reset() *ScriptBuilder {
 	b.script = b.script[0:0]

@@ -48,7 +48,7 @@ func (t *UTXO) MsgTx() *MsgUTXO {
 // are no transaction inputs or outputs.  Also, the lock time is set to zero
 // to indicate the transaction is valid immediately as opposed to some time in
 // future.
-func NewMsgTx(version int32) *MsgUTXO {
+func NewMsgTx(version uint32) *MsgUTXO {
 	return &MsgUTXO{
 		Version: version,
 		TxIn:    make([]*TxIn, 0, defaultTxInOutAlloc),
@@ -78,7 +78,7 @@ func (t *UTXO) Hash() common.Hash {
 // Use the AddTxIn and AddTxOut functions to build up the list of transaction
 // inputs and outputs.
 type MsgUTXO struct {
-	Version  int32
+	Version  uint32
 	TxIn     []*TxIn
 	TxOut    []*TxOut
 	LockTime uint32
@@ -102,13 +102,13 @@ func (msg *MsgUTXO) TxHash() common.Hash {
 // GetBlockTemplateResultTx models the transactions field of the
 // getblocktemplate command.
 type GetBlockTemplateResultTx struct {
-	Data    string  `json:"data"`
-	Hash    string  `json:"hash"`
-	TxID    string  `json:"txid"`
-	Depends []int64 `json:"depends"`
-	Fee     int64   `json:"fee"`
-	SigOps  int64   `json:"sigops"`
-	Weight  int64   `json:"weight"`
+	Data    string   `json:"data"`
+	Hash    string   `json:"hash"`
+	TxID    string   `json:"txid"`
+	Depends []uint64 `json:"depends"`
+	Fee     uint64   `json:"fee"`
+	SigOps  uint64   `json:"sigops"`
+	Weight  uint64   `json:"weight"`
 }
 
 // TxIn defines a bitcoin transaction input.
@@ -169,7 +169,7 @@ func NewOutPoint(hash *common.Hash, index uint32) *OutPoint {
 // 	buf := make([]byte, 2*common.HashSize+1, 2*common.HashSize+1+10)
 // 	copy(buf, o.Hash.String())
 // 	buf[2*common.HashSize] = ':'
-// 	buf = strconv.AppendUint(buf, uint64(o.Index), 10)
+// 	buf = strconv.AppendUint(buf, uuint64(o.Index), 10)
 // 	return string(buf)
 // }
 
@@ -179,7 +179,7 @@ func NewOutPoint(hash *common.Hash, index uint32) *OutPoint {
 // 	// Outpoint Hash 32 bytes + Outpoint Index 4 bytes + Sequence 4 bytes +
 // 	// serialized varint size for the length of SignatureScript +
 // 	// SignatureScript bytes.
-// 	return 40 + VarIntSerializeSize(uint64(len(t.SignatureScript))) +
+// 	return 40 + VarIntSerializeSize(uuint64(len(t.SignatureScript))) +
 // 		len(t.SignatureScript)
 // }
 
@@ -203,13 +203,13 @@ type TxWitness [][]byte
 // transaction input's witness.
 // func (t TxWitness) SerializeSize() int {
 // 	// A varint to signal the number of elements the witness has.
-// 	n := VarIntSerializeSize(uint64(len(t)))
+// 	n := VarIntSerializeSize(uuint64(len(t)))
 
 // 	// For each element in the witness, we'll need a varint to signal the
 // 	// size of the element, then finally the number of bytes the element
 // 	// itself comprises.
 // 	for _, witItem := range t {
-// 		n += VarIntSerializeSize(uint64(len(witItem)))
+// 		n += VarIntSerializeSize(uuint64(len(witItem)))
 // 		n += len(witItem)
 // 	}
 
@@ -218,7 +218,7 @@ type TxWitness [][]byte
 
 // TxOut defines a bitcoin transaction output.
 type TxOut struct {
-	Value    int64
+	Value    uint64
 	PkScript []byte
 }
 
@@ -227,12 +227,12 @@ type TxOut struct {
 // func (t *TxOut) SerializeSize() int {
 // 	// Value 8 bytes + serialized varint size for the length of PkScript +
 // 	// PkScript bytes.
-// 	return 8 + VarIntSerializeSize(uint64(len(t.PkScript))) + len(t.PkScript)
+// 	return 8 + VarIntSerializeSize(uuint64(len(t.PkScript))) + len(t.PkScript)
 // }
 
 // NewTxOut returns a new bitcoin transaction output with the provided
 // transaction value and public key script.
-func NewTxOut(value int64, pkScript []byte) *TxOut {
+func NewTxOut(value uint64, pkScript []byte) *TxOut {
 	return &TxOut{
 		Value:    value,
 		PkScript: pkScript,

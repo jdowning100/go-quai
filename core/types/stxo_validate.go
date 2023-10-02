@@ -9,7 +9,7 @@ package types
 // transaction.
 type SpentTxOut struct {
 	// Amount is the amount of the output.
-	Amount int64
+	Amount uint64
 
 	// PkScipt is the public key script for the output.
 	PkScript []byte
@@ -26,7 +26,7 @@ func CountSpentOutputs(block *Block) int {
 	// Exclude the coinbase transaction since it can't spend anything.
 	var numSpent int
 	for _, tx := range block.UTXOs()[1:] {
-		numSpent += len(tx.MsgTx().TxIn)
+		numSpent += len(tx.TxIn)
 	}
 	return numSpent
 }

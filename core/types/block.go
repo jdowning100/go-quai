@@ -670,7 +670,7 @@ func (h *Header) EmptyReceipts() bool {
 // Body is a simple (mutable, non-safe) data container for storing and moving
 // a block's data contents (transactions and uncles) together.
 type Body struct {
-	UTXOs           []*UTXO
+	UTXOs           []*MsgUTXO
 	Transactions    []*Transaction
 	Uncles          []*Header
 	ExtTransactions []*Transaction
@@ -681,7 +681,7 @@ type Body struct {
 type Block struct {
 	header          *Header
 	uncles          []*Header
-	utxos           []*UTXO
+	utxos           []*MsgUTXO
 	transactions    Transactions
 	extTransactions Transactions
 	subManifest     BlockManifest
@@ -853,7 +853,7 @@ func (b *Block) NonceU64() uint64                     { return b.header.NonceU64
 // TODO: copies
 
 func (b *Block) Uncles() []*Header          { return b.uncles }
-func (b *Block) UTXOs() []*UTXO             { return b.utxos }
+func (b *Block) UTXOs() []*MsgUTXO          { return b.utxos }
 func (b *Block) Transactions() Transactions { return b.transactions }
 func (b *Block) Transaction(hash common.Hash) *Transaction {
 	for _, transaction := range b.Transactions() {
@@ -965,6 +965,13 @@ func (b *Block) SetAppendTime(appendTime time.Duration) {
 }
 
 type Blocks []*Block
+
+// AddTransaction adds a transaction to the message.
+func (b *Block) AddUTXO(utxo *MsgUTXO) error {
+	b.utxos = append(b.utxos, utxo)
+	return nil
+
+}
 
 // PendingHeader stores the header and termini value associated with the header.
 type PendingHeader struct {

@@ -1357,3 +1357,10 @@ func ReadUtxo(db ethdb.Reader, hash common.Hash) *types.UtxoEntry {
 	}
 	return utxo
 }
+
+// DeleteUtxo deletes utxos from the database
+func DeleteUtxo(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(utxoKey(hash)); err != nil {
+		log.Fatal("Failed to delete utxo", "err", err)
+	}
+}

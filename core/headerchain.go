@@ -9,11 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
 	"github.com/dominant-strategies/go-quai/core/rawdb"
 	"github.com/dominant-strategies/go-quai/core/state"
+	"github.com/dominant-strategies/go-quai/core/txscript"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
@@ -1070,3 +1072,265 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	// Request the input utxos from the database.
 	return hc.fetchUtxosMain(view, needed)
 }
+
+// writeUtxoViewpoint updates the utxo set in the database based on the provided utxo view contents and state.  In
+// particular, only the entries that have been marked as modified are written
+// to the database.
+func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
+	for outpoint, entry := range view.Entries() {
+		// No need to update the database if the entry was not modified.
+		// if entry == nil || !entry.isModified() {
+		// 	continue
+		// }
+
+		// Remove the utxo entry if it is spent.
+		if entry.IsSpent() {
+			rawdb.DeleteUtxo(hc.bc.db, outpoint.Hash)
+			continue
+		}
+
+		// // Serialize and store the utxo entry.
+		// serialized, err := serializeUtxoEntry(entry)
+		// if err != nil {
+		// 	return err
+		// }
+		// key := outpointKey(outpoint)
+		// err = utxoBucket.Put(*key, serialized)
+
+		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, entry)
+		// NOTE: The key is intentionally not recycled here since the
+		// database interface contract prohibits modifications.  It will
+		// be garbage collected normally when the database is done with
+		// it.
+		// if err != nil {
+		// 	return err
+		// }
+	}
+
+	return nil
+}
+
+// createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy
+// based on the passed block height to the provided address.  When the address
+// is nil, the coinbase transaction will instead be redeemable by anyone.
+//
+// See the comment for NewBlockTemplate for more information about why the nil
+// address handling is useful.
+func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.MsgUTXO, error) {
+	// Create the script to pay to the provided payment address if one was
+	// specified.  Otherwise create a script that allows the coinbase to be
+	// redeemable by anyone.
+	var pkScript []byte
+	if (addr != common.Address{}) {
+		var err error
+		pkScript, err = txscript.PayToAddrScript(addr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// else {
+	// 	var err error
+	// 	scriptBuilder := txscript.NewScriptBuilder()
+	// 	pkScript, err = scriptBuilder.AddOp(txscript.OP_TRUE).Script()
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// }
+
+	tx := types.NewMsgTx(types.UTXOVersion)
+	tx.AddTxIn(&types.TxIn{
+		// Coinbase transactions have no inputs, so previous outpoint is
+		// zero hash and max index.
+		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
+			types.MaxPrevOutIndex),
+		SignatureScript: coinbaseScript,
+		Sequence:        types.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(&types.TxOut{
+		Value: 10000000,
+		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
+		PkScript: pkScript,
+	})
+	return tx, nil
+}
+
+// func (hc *HeaderChain) reorgUTXOSet() {
+
+// 	// All of the blocks to detach and related spend journal entries needed
+// 	// to unspend transaction outputs in the blocks being disconnected must
+// 	// be loaded from the database during the reorg check phase below and
+// 	// then they are needed again when doing the actual database updates.
+// 	// Rather than doing two loads, cache the loaded data into these slices.
+// 	detachBlocks := make([]*btcutil.Block, 0, detachNodes.Len())
+// 	detachSpentTxOuts := make([][]SpentTxOut, 0, detachNodes.Len())
+// 	attachBlocks := make([]*btcutil.Block, 0, attachNodes.Len())
+
+// 	// Disconnect all of the blocks back to the point of the fork.  This
+// 	// entails loading the blocks and their associated spent txos from the
+// 	// database and using that information to unspend all of the spent txos
+// 	// and remove the utxos created by the blocks.
+// 	view := NewUtxoViewpoint()
+// 	view.SetBestHash(&oldBest.hash)
+
+// 	// TODO need to add each block here
+
+// 	// Load all of the utxos referenced by the block that aren't
+// 	// already in the view.
+// 	err = view.fetchInputUtxos(hc.bc.db, block)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Load all of the spent txos for the block from the spend
+// 	// journal.
+// 	var stxos []types.SpentTxOut
+// 	err = b.db.View(func(dbTx database.Tx) error {
+// 		stxos, err = dbFetchSpendJournalEntry(dbTx, block)
+// 		return err
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Store the loaded block and spend journal entry for later.
+// 	detachBlocks = append(detachBlocks, block)
+// 	detachSpentTxOuts = append(detachSpentTxOuts, stxos)
+
+// 	err = view.disconnectTransactions(b.db, block, stxos)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	newBest = n.parent
+// }
+
+// // disconnectTransactions updates the view by removing all of the transactions
+// // created by the passed block, restoring all utxos the transactions spent by
+// // using the provided spent txo information, and setting the best hash for the
+// // view to the block before the passed block.
+// func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *types.Block, stxos []types.SpentTxOut) error {
+// 	// Sanity check the correct number of stxos are provided.
+// 	if len(stxos) != types.CountSpentOutputs(block) {
+// 		return fmt.Errorf("disconnectTransactions: wrong number of")
+// 	}
+
+// 	// Loop backwards through all transactions so everything is unspent in
+// 	// reverse order.  This is necessary since transactions later in a block
+// 	// can spend from previous ones.
+// 	stxoIdx := len(stxos) - 1
+// 	transactions := block.UTXOs()
+// 	for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
+// 		tx := transactions[txIdx]
+
+// 		// All entries will need to potentially be marked as a coinbase.
+// 		var packedFlags txoFlags
+// 		isCoinBase := txIdx == 0
+// 		if isCoinBase {
+// 			packedFlags |= tfCoinBase
+// 		}
+
+// 		// Mark all of the spendable outputs originally created by the
+// 		// transaction as spent.  It is instructive to note that while
+// 		// the outputs aren't actually being spent here, rather they no
+// 		// longer exist, since a pruned utxo set is used, there is no
+// 		// practical difference between a utxo that does not exist and
+// 		// one that has been spent.
+// 		//
+// 		// When the utxo does not already exist in the view, add an
+// 		// entry for it and then mark it spent.  This is done because
+// 		// the code relies on its existence in the view in order to
+// 		// signal modifications have happened.
+// 		txHash := tx.Hash()
+// 		prevOut := wire.OutPoint{Hash: *txHash}
+// 		for txOutIdx, txOut := range tx.MsgTx().TxOut {
+// 			if txscript.IsUnspendable(txOut.PkScript) {
+// 				continue
+// 			}
+
+// 			prevOut.Index = uint32(txOutIdx)
+// 			entry := view.entries[prevOut]
+// 			if entry == nil {
+// 				entry = &types.UtxoEntry{
+// 					amount:      txOut.Value,
+// 					pkScript:    txOut.PkScript,
+// 					blockHeight: block.Height(),
+// 					packedFlags: packedFlags,
+// 				}
+
+// 				view.entries[prevOut] = entry
+// 			}
+
+// 			entry.Spend()
+// 		}
+
+// 		// Loop backwards through all of the transaction inputs (except
+// 		// for the coinbase which has no inputs) and unspend the
+// 		// referenced txos.  This is necessary to match the order of the
+// 		// spent txout entries.
+// 		if isCoinBase {
+// 			continue
+// 		}
+// 		for txInIdx := len(tx.MsgTx().TxIn) - 1; txInIdx > -1; txInIdx-- {
+// 			// Ensure the spent txout index is decremented to stay
+// 			// in sync with the transaction input.
+// 			stxo := &stxos[stxoIdx]
+// 			stxoIdx--
+
+// 			// When there is not already an entry for the referenced
+// 			// output in the view, it means it was previously spent,
+// 			// so create a new utxo entry in order to resurrect it.
+// 			originOut := &tx.MsgTx().TxIn[txInIdx].PreviousOutPoint
+// 			entry := view.entries[*originOut]
+// 			if entry == nil {
+// 				entry = new(UtxoEntry)
+// 				view.entries[*originOut] = entry
+// 			}
+
+// 			// The legacy v1 spend journal format only stored the
+// 			// coinbase flag and height when the output was the last
+// 			// unspent output of the transaction.  As a result, when
+// 			// the information is missing, search for it by scanning
+// 			// all possible outputs of the transaction since it must
+// 			// be in one of them.
+// 			//
+// 			// It should be noted that this is quite inefficient,
+// 			// but it realistically will almost never run since all
+// 			// new entries include the information for all outputs
+// 			// and thus the only way this will be hit is if a long
+// 			// enough reorg happens such that a block with the old
+// 			// spend data is being disconnected.  The probability of
+// 			// that in practice is extremely low to begin with and
+// 			// becomes vanishingly small the more new blocks are
+// 			// connected.  In the case of a fresh database that has
+// 			// only ever run with the new v2 format, this code path
+// 			// will never run.
+// 			if stxo.Height == 0 {
+// 				utxo, err := view.fetchEntryByHash(db, txHash)
+// 				if err != nil {
+// 					return err
+// 				}
+// 				if utxo == nil {
+// 					return fmt.Errorf("disconnectTransactions: missing utxo ")
+// 				}
+
+// 				stxo.Height = utxo.BlockHeight()
+// 				stxo.IsCoinBase = utxo.IsCoinBase()
+// 			}
+
+// 			// Restore the utxo using the stxo data from the spend
+// 			// journal and mark it as modified.
+// 			entry.amount = stxo.Amount
+// 			entry.pkScript = stxo.PkScript
+// 			entry.blockHeight = stxo.Height
+// 			entry.packedFlags = tfModified
+// 			if stxo.IsCoinBase {
+// 				entry.packedFlags |= tfCoinBase
+// 			}
+// 		}
+// 	}
+
+// 	// Update the best hash for view to the previous block since all of the
+// 	// transactions for the current block have been disconnected.
+// 	view.SetBestHash(block.Header().ParentHash())
+// 	return nil
+// }

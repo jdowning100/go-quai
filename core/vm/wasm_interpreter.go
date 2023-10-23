@@ -25,6 +25,10 @@ type WASMInterpreter struct {
 	// Depth is the current call stack
 	depth int
 
+	staticMode bool
+
+	terminationType int
+
 	Config Config
 }
 
@@ -39,6 +43,11 @@ func NewWASMInterpreter(evm *EVM, cfg Config) *WASMInterpreter {
 }
 
 func (in *WASMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (ret []byte, err error) {
+	// Check if it can run
+	if len(contract.Code) < 4 || string(contract.Code[:4]) != "\000asm" {
+		return nil, nil
+	}
+
 	// Increment the call depth which is restricted to 1024
 	in.evm.depth++
 	defer func() { in.evm.depth-- }()

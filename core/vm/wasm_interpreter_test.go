@@ -266,7 +266,7 @@ func TestCreate(t *testing.T) {
 			(module
 				(import "" "create" (func $create (param i32 i32 i32 i32) (result i32)))
 				(import "" "memory" (memory 1))
-				(data (i32.const 0) "\63\FF\FF\FF\FF\60\00\52\60\04\60\1C\F3")
+				(data (i32.const 0) "\6F\FF\FF\FF\FF\60\00\52\60\04\60\1C\F3")
 				(func (export "run")
 					(local i32)  ;; Local variable to hold the return value
 					;; Setup memory for value
@@ -305,4 +305,96 @@ func TestCreate(t *testing.T) {
 			// }
 		})
 	}
+}
+
+func TestCall(t *testing.T) {
+	// Set node location to zone-0-0 so that ZeroAddr returns properly in dummyContractRef
+	common.NodeLocation = append(common.NodeLocation, byte(0))
+	common.NodeLocation = append(common.NodeLocation, byte(0))
+
+	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+
+	blockContext := BlockContext{
+		CanTransfer: CanTransfer,
+		Transfer:    Transfer,
+	}
+
+	var (
+		env = NewEVM(blockContext, TxContext{},
+			statedb, params.TestChainConfig, Config{})
+		wasmInterpreter = NewWASMInterpreter(env, env.Config)
+	)
+
+	// Create a basic contract to call
+	wasmCode := `
+	(module
+		(import "" "create" (func $create (param i32 i32 i32 i32) (result i32)))
+		(import "" "memory" (memory 1))
+		(data (i32.const 0) "\6F\FF\FF\FF\FF\60\00\52\60\04\60\1C\F3")
+		(func (export "run")
+			(local i32)  ;; Local variable to hold the result of the create call
+			(local.set 0 (call $create (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 100)))  ;; Call create with 0 value and no code, and store the result in the local variable
+		)
+	)
+	`
+
+	wasmBytes, err := wasmtime.Wat2Wasm(wasmCode)
+	if err != nil {
+		t.Fatalf("failed to convert WAT to WASM: %v", err)
+	}
+
+	byteSlice := [20]byte{}
+	byteSlice[0] = 1
+	addr := common.Bytes20ToAddress(byteSlice)
+
+	createContractRef := &dummyContractRef{}
+	createContractRef.SetAddress(addr)
+	createContract := NewContract(createContractRef, createContractRef, new(big.Int), 2000)
+
+	createContract.SetCodeOptionalHash(&common.ZeroAddr, &codeAndHash{
+		code: wasmBytes,
+		hash: crypto.Keccak256Hash(wasmBytes),
+	})
+
+	_, err2 := wasmInterpreter.Run(createContract, nil, false)
+	if err2 != nil {
+		t.Errorf("error: %v", err2)
+	}
+
+	// Create a basic contract to call
+	callWasmCode := `
+		(module
+			(import "" "call" (func $call (param i64 i32 i32 i32 i32) (result i32)))
+			(import "" "memory" (memory 1))
+			(data (i32.const 0) "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")  ;; Zero address at offset 0
+			(func (export "run")
+				(local i32)  ;; Local variable to hold the result of the call
+				(local.set 0 (call $call (i64.const 0) (i32.const 0) (i32.const 21) (i32.const 0) (i32.const 0)))  ;; Call call with zero address and other necessary parameters, and store the result in the local variable
+			)
+		)
+		`
+
+	callWasmBytes, err := wasmtime.Wat2Wasm(callWasmCode)
+	if err != nil {
+		t.Fatalf("failed to convert WAT to WASM: %v", err)
+	}
+
+	byteSlice = [20]byte{}
+	byteSlice[0] = 2
+	addr = common.Bytes20ToAddress(byteSlice)
+
+	callContractRef := &dummyContractRef{}
+	callContractRef.SetAddress(addr)
+	callContract := NewContract(callContractRef, callContractRef, new(big.Int), 2000)
+
+	callContract.SetCodeOptionalHash(&addr, &codeAndHash{
+		code: callWasmBytes,
+		hash: crypto.Keccak256Hash(callWasmBytes),
+	})
+
+	_, err3 := wasmInterpreter.Run(callContract, nil, false)
+	if err3 != nil {
+		t.Errorf("error: %v", err3)
+	}
+
 }

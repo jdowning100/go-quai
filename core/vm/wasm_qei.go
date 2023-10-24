@@ -457,7 +457,10 @@ func (in *WASMInterpreter) create(valueOffset int32, codeOffset int32, length in
 	gas := in.Contract.Gas - in.Contract.Gas/64
 	in.gasAccounting(gas)
 
-	_, addr, gasLeft, _ := in.evm.Create(in.Contract, input, gas, big.NewInt(0).SetBytes(value))
+	_, addr, gasLeft, err := in.evm.Create(in.Contract, input, gas, big.NewInt(0).SetBytes(value))
+	if err != nil {
+		return ErrQEICallFailure
+	}
 
 	switch in.terminationType {
 	case TerminateFinish:

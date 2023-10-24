@@ -25,9 +25,21 @@ import (
 
 type dummyContractRef struct {
 	calledForEach bool
+	address       common.Address
 }
 
-func (dummyContractRef) Address() common.Address     { return common.ZeroAddr }
+func (d dummyContractRef) Address() common.Address {
+	if (d.address == common.Address{}) {
+		return common.ZeroAddr
+	} else {
+		return d.address
+	}
+}
+
+func (d *dummyContractRef) SetAddress(a common.Address) {
+	d.address = a
+}
+
 func (dummyContractRef) Value() *big.Int             { return new(big.Int) }
 func (dummyContractRef) SetCode(common.Hash, []byte) {}
 func (d *dummyContractRef) ForEachStorage(callback func(key, value common.Hash) bool) {

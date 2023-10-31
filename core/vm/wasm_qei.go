@@ -108,7 +108,7 @@ type WasmVM struct {
 
 	Contract *Contract
 
-	cachedResult   []byte
+	cachedResult   []byte // result from the previous call
 	panicErr       error
 	timeoutStarted bool
 }
@@ -252,6 +252,62 @@ func (in *WASMInterpreter) gasAccounting(cost uint64) {
 
 func (in *WASMInterpreter) useGas(amount int64) {
 	in.gasAccounting(uint64(amount))
+}
+
+func (in *WASMInterpreter) getCallDataSize() int32 {
+	in.gasAccounting(100)
+	return int32(len(in.Contract.Input))
+}
+
+func (in *WASMInterpreter) callDataCopy(resultOffset int32, dataOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Input[dataOffset:dataOffset+length])
+}
+
+func (in *WASMInterpreter) getCodeSize() int32 {
+	in.gasAccounting(100)
+	return int32(len(in.Contract.Code))
+}
+
+func (in *WASMInterpreter) codeCopy(resultOffset int32, codeOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Code[codeOffset:codeOffset+length])
+}
+
+func (in *WASMInterpreter) getCaller(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Caller().Bytes())
+}
+
+func (in *WASMInterpreter) getCallValue(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Value().Bytes())
+}
+
+func (in *WASMInterpreter) getTxOrigin(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.evm.Context.Origin.Bytes()) // need to add tx origin to context
+}
+
+func (in *WASMInterpreter) getReturnDataSize() int32 {
+	in.gasAccounting(100)
+	return int32(len(in.vm.cachedResult))
+}
+
+func (in *WASMInterpreter) returnDataCopy(resultOffset int32, dataOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.vm.cachedResult[dataOffset:dataOffset+length])
+}
+
+func (in *WASMInterpreter) callCode(gas int64, addressOffset int32, valueOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
+	in.gasAccounting(100)
+	return in.call(gas, addressOffset, valueOffset, dataOffset, dataLength)
 }
 
 func (in *WASMInterpreter) getAddress(resultOffset int32) {

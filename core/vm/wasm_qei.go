@@ -9,6 +9,7 @@ import (
 
 	"github.com/bytecodealliance/wasmtime-go"
 	"github.com/dominant-strategies/go-quai/common"
+	"github.com/dominant-strategies/go-quai/core/types"
 )
 
 /**
@@ -108,7 +109,7 @@ type WasmVM struct {
 
 	Contract *Contract
 
-	cachedResult   []byte
+	cachedResult   []byte // result from the previous call
 	panicErr       error
 	timeoutStarted bool
 }
@@ -254,13 +255,238 @@ func (in *WASMInterpreter) useGas(amount int64) {
 	in.gasAccounting(uint64(amount))
 }
 
+func (in *WASMInterpreter) getCallDataSize() int32 {
+	in.gasAccounting(100)
+	return int32(len(in.Contract.Input))
+}
+
+func (in *WASMInterpreter) callDataCopy(resultOffset int32, dataOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Input[dataOffset:dataOffset+length])
+}
+
+func (in *WASMInterpreter) getCodeSize() int32 {
+	in.gasAccounting(100)
+	return int32(len(in.Contract.Code))
+}
+
+func (in *WASMInterpreter) codeCopy(resultOffset int32, codeOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Code[codeOffset:codeOffset+length])
+}
+
+func (in *WASMInterpreter) getCaller(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Caller().Bytes())
+}
+
+func (in *WASMInterpreter) getCallValue(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Contract.Value().Bytes())
+}
+
+func (in *WASMInterpreter) getTxOrigin(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.Origin.Bytes()) // need to add tx origin to context
+}
+
+func (in *WASMInterpreter) getReturnDataSize() int32 {
+	in.gasAccounting(100)
+	return int32(len(in.vm.cachedResult))
+}
+
+func (in *WASMInterpreter) returnDataCopy(resultOffset int32, dataOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.vm.cachedResult[dataOffset:dataOffset+length])
+}
+
+func (in *WASMInterpreter) callCode(gas int64, addressOffset int32, valueOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
+	in.gasAccounting(100)
+	return in.call(gas, addressOffset, valueOffset, dataOffset, dataLength)
+}
+
+func (in *WASMInterpreter) callDelegate(gas int64, addressOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
+	in.gasAccounting(100)
+	return in.call(gas, addressOffset, 0, dataOffset, dataLength)
+}
+
+func (in *WASMInterpreter) callStatic(gas int64, addressOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
+	in.gasAccounting(100)
+	return in.call(gas, addressOffset, 0, dataOffset, dataLength)
+}
+
+func (in *WASMInterpreter) storageStore(pathOffset int32, valueOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	path := memoryData[pathOffset : pathOffset+u256Len]
+	value := memoryData[valueOffset : valueOffset+u256Len]
+	internal, err := in.Contract.Address().InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	in.StateDB.SetState(internal, common.BytesToHash(path), common.BytesToHash(value))
+}
+
+func (in *WASMInterpreter) storageLoad(pathOffset int32, resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	path := memoryData[pathOffset : pathOffset+u256Len]
+	internal, err := in.Contract.Address().InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	value := in.StateDB.GetState(internal, common.BytesToHash(path))
+	copy(memoryData[resultOffset:], value.Bytes())
+}
+
+func (in *WASMInterpreter) externalCodeCopy(addressOffset int32, resultOffset int32, codeOffset int32, length int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	code := in.StateDB.GetCode(addr)
+	copy(memoryData[resultOffset:], code[codeOffset:codeOffset+length])
+}
+
+func (in *WASMInterpreter) getExternalCodeSize(addressOffset int32) int32 {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	code := in.StateDB.GetCode(addr)
+	return int32(len(code))
+}
+
+func (in *WASMInterpreter) getGasLeft() int64 {
+	in.gasAccounting(100)
+	return int64(in.Contract.Gas)
+}
+
+func (in *WASMInterpreter) getBlockCoinbase(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.evm.Context.Coinbase.Bytes())
+}
+
+func (in *WASMInterpreter) getBlockDifficulty(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	diff := in.evm.Context.Difficulty.Bytes()
+	copy(memoryData[resultOffset:], diff)
+}
+
+func (in *WASMInterpreter) getBlockGasLimit() int64 {
+	in.gasAccounting(100)
+	return int64(in.evm.Context.GasLimit)
+}
+
+func (in *WASMInterpreter) getBlockTimestamp() int64 {
+	in.gasAccounting(100)
+	return in.Context.Time.Int64()
+}
+
+func (in *WASMInterpreter) getTxGasPrice(resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], in.evm.GasPrice.Bytes())
+}
+
+func (in *WASMInterpreter) getBlockNumber() int64 {
+	in.gasAccounting(100)
+	return in.evm.Context.BlockNumber.Int64()
+}
+
+func (in *WASMInterpreter) log(dataOffset int32, dataLength int32, numberOfTopics int32, topic1 int32, topic2 int32, topic3 int32, topic4 int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	topics := make([]common.Hash, numberOfTopics)
+	for i := int32(0); i < numberOfTopics; i++ {
+		topics[i] = common.BytesToHash(memoryData[topic1+i*32 : topic1+i*32+32])
+	}
+	data := memoryData[dataOffset : dataOffset+dataLength]
+	in.StateDB.AddLog(&types.Log{
+		Address:     in.Contract.Address(),
+		Topics:      topics,
+		Data:        data,
+		BlockNumber: in.evm.Context.BlockNumber.Uint64(),
+	})
+}
+
+func (in *WASMInterpreter) getBlockHash(number int64, resultOffset int32) int32 {
+	in.gasAccounting(100)
+	n := big.NewInt(number)
+	n.Sub(in.evm.Context.BlockNumber, n)
+	if n.Cmp(big.NewInt(256)) > 0 || n.Cmp(big.NewInt(0)) <= 0 {
+		return 1
+	}
+	h := in.evm.Context.GetHash(uint64(number))
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	copy(memoryData[resultOffset:], h.Bytes())
+	return 0
+}
+
+func (in *WASMInterpreter) finish(dataOffset int32, dataLength int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	in.vm.cachedResult = memoryData[dataOffset : dataOffset+dataLength]
+	in.vm.panicErr = nil
+	in.vm.timeoutStarted = false
+	in.terminationType = TerminateFinish
+}
+
+func (in *WASMInterpreter) revert(dataOffset int32, dataLength int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	in.vm.cachedResult = memoryData[dataOffset : dataOffset+dataLength]
+	in.vm.panicErr = nil
+	in.vm.timeoutStarted = false
+	in.terminationType = TerminateRevert
+}
+
+func (in *WASMInterpreter) selfDestruct(addressOffset int32) {
+	in.gasAccounting(100)
+	internal, err := in.Contract.Address().InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	balance := in.StateDB.GetBalance(internal)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	in.StateDB.AddBalance(addr, balance)
+	in.StateDB.Suicide(internal)
+	in.terminationType = TerminateSuicide
+	in.StateDB.AddRefund(GasRefundSelfDestruct)
+}
+
 func (in *WASMInterpreter) getAddress(resultOffset int32) {
 	in.gasAccounting(100)
-	addr := []byte(in.Contract.CodeAddr.String())
-
-	// Assume vm is a field in your WASMInterpreter struct referring to your WasmVM instance
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
-	copy(memoryData[resultOffset:], addr)
+	copy(memoryData[resultOffset:], in.Contract.Address().Bytes())
+}
+
+func (in *WASMInterpreter) getExternalBalance(addressOffset uint32, resultOffset int32) {
+	in.gasAccounting(100)
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	addr := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength])
+	internal, err := addr.InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+	balance := swapEndian(in.StateDB.GetBalance(internal).Bytes())
+	copy(memoryData[resultOffset:], balance)
 }
 
 func swapEndian(src []byte) []byte {
@@ -271,42 +497,11 @@ func swapEndian(src []byte) []byte {
 	return ret
 }
 
-func (in *WASMInterpreter) getExternalBalance(addressOffset uint32, resultOffset int32) {
-	in.gasAccounting(100)
-	memoryData := in.vm.memory.UnsafeData(in.vm.store)
-	addr := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength])
-	internal, err := addr.InternalAddress()
-	if err != nil {
-		log.Panicf("🟥 Memory.Write(%d, %d) out of range", resultOffset, len(internal))
-	}
-	balance := swapEndian(in.StateDB.GetBalance(internal).Bytes())
-	copy(memoryData[resultOffset:], balance)
-}
-
-func (in *WASMInterpreter) getBlockNumber() int64 {
-	in.gasAccounting(100)
-	return in.evm.Context.BlockNumber.Int64()
-}
-
 // Helper function to convert int64 to []byte
 func int64ToBytes(i int64) []byte {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.LittleEndian, i)
 	return buf.Bytes()
-}
-
-func (in *WASMInterpreter) getBlockHash(number int64, resultOffset int32) int32 {
-	in.gasAccounting(100)
-	n := big.NewInt(number)
-	fmt.Println(n)
-	n.Sub(in.evm.Context.BlockNumber, n)
-	if n.Cmp(big.NewInt(256)) > 0 || n.Cmp(big.NewInt(0)) <= 0 {
-		return 1
-	}
-	h := in.evm.Context.GetHash(uint64(number))
-	memoryData := in.vm.memory.UnsafeData(in.vm.store)
-	copy(memoryData[resultOffset:], h.Bytes())
-	return 0
 }
 
 func (in *WASMInterpreter) call(gas int64, addressOffset int32, valueOffset int32, dataOffset int32, dataLength int32) int32 {

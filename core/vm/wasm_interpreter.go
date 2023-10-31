@@ -20,6 +20,7 @@ type WASMInterpreter struct {
 	returnData []byte // Last CALL's return data for subsequent reuse
 
 	TxContext
+	Context BlockContext
 	// StateDB gives access to the underlying state
 	StateDB StateDB
 	// Depth is the current call stack

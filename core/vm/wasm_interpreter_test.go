@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bytes"
 	"math/big"
 	"strings"
 	"testing"
@@ -397,4 +398,86 @@ func TestCall(t *testing.T) {
 		t.Errorf("error: %v", err3)
 	}
 
+}
+
+func TestGetCallDataSize(t *testing.T) {
+	context := BlockContext{
+		BlockNumber: big.NewInt(100),
+	}
+
+	var (
+		env             = NewEVM(context, TxContext{}, nil, params.TestChainConfig, Config{})
+		wasmInterpreter = NewWASMInterpreter(env, env.Config)
+	)
+
+	wasmCode := `
+	(module
+		(import "" "getCallDataSize" (func $getCallDataSize (result i32)))
+		(func (export "run")
+			(local i32)  ;; Local variable to hold the block number
+			(local.set 0 (call $getCallDataSize))  ;; Call getCallDataSize and store the result in the local variable
+		)
+	)
+	`
+	wasmBytes, err := wasmtime.Wat2Wasm(wasmCode)
+	if err != nil {
+		t.Fatalf("failed to convert WAT to WASM: %v", err)
+	}
+
+	contract := NewContract(&dummyContractRef{}, &dummyContractRef{}, new(big.Int), 2000)
+	contract.SetCodeOptionalHash(&common.ZeroAddr, &codeAndHash{
+		code: wasmBytes,
+		hash: crypto.Keccak256Hash(wasmBytes),
+	})
+
+	callData := make([]byte, 5) // Create a byte slice of length 5 filled with zeros
+	_, err2 := wasmInterpreter.Run(contract, callData, false)
+
+	if err2 != nil {
+		t.Errorf("error: %v", err2)
+	}
+}
+
+func TestCallDataCopy(t *testing.T) {
+	context := BlockContext{
+		BlockNumber: big.NewInt(100),
+	}
+
+	var (
+		env             = NewEVM(context, TxContext{}, nil, params.TestChainConfig, Config{})
+		wasmInterpreter = NewWASMInterpreter(env, env.Config)
+	)
+
+	wasmCode := `
+    (module
+        (import "" "callDataCopy" (func $callDataCopy (param i32 i32 i32)))
+		(import "" "memory" (memory 1))
+		(func (export "run")
+            (call $callDataCopy (i32.const 0) (i32.const 0) (i32.const 5))
+        )
+    )
+    `
+	wasmBytes, err := wasmtime.Wat2Wasm(wasmCode)
+	if err != nil {
+		t.Fatalf("failed to convert WAT to WASM: %v", err)
+	}
+
+	// Initialise a new contract and set the code that is to be used by the EVM.
+	contract := NewContract(&dummyContractRef{}, &dummyContractRef{}, new(big.Int), 2000)
+	contract.SetCodeOptionalHash(&common.ZeroAddr, &codeAndHash{
+		code: wasmBytes,
+		hash: crypto.Keccak256Hash(wasmBytes),
+	})
+
+	callData := []byte{1, 2, 3, 4, 5} // Create a byte slice of length 5 with specified values
+	_, err2 := wasmInterpreter.Run(contract, callData, false)
+
+	if err2 != nil {
+		t.Errorf("error: %v", err2)
+	}
+
+	memoryData := wasmInterpreter.vm.memory.UnsafeData(wasmInterpreter.vm.store)
+	if !bytes.Equal(memoryData[:5], callData) {
+		t.Errorf("Expected memory to contain %v, but got %v", callData, memoryData[:5])
+	}
 }

@@ -346,6 +346,9 @@ func (sl *Slice) Append(header *types.Header, domPendingHeader *types.Header, do
 
 	if setHead {
 		sl.hc.SetCurrentHeader(block.Header())
+	} else if !setHead {
+		log.Debug("Found uncle", "hash", block.Hash(), "number", block.NumberU64(), "location", block.Location(), "parent hash", block.ParentHash())
+		sl.hc.chainSideFeed.Send(ChainSideEvent{Blocks: []*types.Block{block}, ResetUncles: false})
 	}
 
 	if subReorg {

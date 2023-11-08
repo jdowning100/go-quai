@@ -325,7 +325,7 @@ func (s *Service) loopBlocks(chainHeadCh chan core.ChainHeadEvent, chainSideCh c
 			// Notify of chain side events, but drop if too frequent
 			case sideEvent := <-chainSideCh:
 				select {
-				case sideCh <- sideEvent.Block:
+				case sideCh <- sideEvent.Blocks[0]:
 				default:
 				}
 			case <-s.headSub.Err():

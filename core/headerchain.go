@@ -357,11 +357,12 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 			break
 		}
 	}
-
+	var prevHashStack []*types.Header
 	for {
 		if prevHeader.Hash() == commonHeader.Hash() {
 			break
 		}
+		prevHashStack = append(prevHashStack, prevHeader)
 		rawdb.DeleteCanonicalHash(hc.headerDb, prevHeader.NumberU64())
 		prevHeader = hc.GetHeader(prevHeader.ParentHash(), prevHeader.NumberU64()-1)
 
@@ -375,6 +376,17 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 	for i := len(hashStack) - 1; i >= 0; i-- {
 		rawdb.WriteCanonicalHash(hc.headerDb, hashStack[i].Hash(), hashStack[i].NumberU64())
 	}
+
+	go func() {
+		var blocks []*types.Block
+		for i := len(prevHashStack) - 1; i >= 0; i-- {
+			block := hc.bc.GetBlock(prevHashStack[i].Hash(), prevHashStack[i].NumberU64())
+			if block != nil {
+				blocks = append(blocks, block)
+			}
+		}
+		hc.bc.chainFeed.Send(ChainSideEvent{Blocks: blocks, ResetUncles: true})
+	}()
 
 	return nil
 }

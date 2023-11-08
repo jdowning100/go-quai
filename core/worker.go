@@ -49,6 +49,8 @@ const (
 	// c_headerPrintsExpiryTime is how long a header hash is kept in the cache, so that currentInfo
 	// is not printed on a Proc frequency
 	c_headerPrintsExpiryTime = 2 * time.Minute
+
+	chainSideChanSize = 10
 )
 
 // environment is the worker's current environment and holds all
@@ -184,6 +186,9 @@ type worker struct {
 	chainHeadCh  chan ChainHeadEvent
 	chainHeadSub event.Subscription
 
+	chainSideCh  chan ChainSideEvent
+	chainSideSub event.Subscription
+
 	// Channels
 	taskCh                         chan *task
 	resultCh                       chan *types.Block
@@ -270,6 +275,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, db ethdb.Databas
 		localUncles:                    make(map[common.Hash]*types.Block),
 		remoteUncles:                   make(map[common.Hash]*types.Block),
 		chainHeadCh:                    make(chan ChainHeadEvent, chainHeadChanSize),
+		chainSideCh:                    make(chan ChainSideEvent, chainSideChanSize),
 		taskCh:                         make(chan *task),
 		resultCh:                       make(chan *types.Block, resultQueueSize),
 		exitCh:                         make(chan struct{}),
@@ -297,6 +303,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, db ethdb.Databas
 	nodeCtx := common.NodeLocation.Context()
 	if headerchain.ProcessingState() && nodeCtx == common.ZONE_CTX {
 		worker.chainHeadSub = worker.hc.SubscribeChainHeadEvent(worker.chainHeadCh)
+		worker.chainSideSub = worker.hc.SubscribeChainSideEvent(worker.chainSideCh)
 		worker.wg.Add(1)
 		go worker.asyncStateLoop()
 	}
@@ -376,6 +383,7 @@ func (w *worker) start() {
 func (w *worker) stop() {
 	if w.hc.ProcessingState() && common.NodeLocation.Context() == common.ZONE_CTX {
 		w.chainHeadSub.Unsubscribe()
+		w.chainSideSub.Unsubscribe()
 	}
 	atomic.StoreInt32(&w.running, 0)
 }
@@ -451,9 +459,44 @@ func (w *worker) asyncStateLoop() {
 					return
 				}
 			}()
+		case side := <-w.chainSideCh:
+			go func() {
+				if side.ResetUncles {
+					w.uncleMu.Lock()
+					w.localUncles = make(map[common.Hash]*types.Block)
+					w.remoteUncles = make(map[common.Hash]*types.Block)
+					w.uncleMu.Unlock()
+				}
+				for _, block := range side.Blocks {
+
+					// Short circuit for duplicate side blocks
+					w.uncleMu.RLock()
+					if _, exists := w.localUncles[block.Hash()]; exists {
+						w.uncleMu.RUnlock()
+						continue
+					}
+					if _, exists := w.remoteUncles[block.Hash()]; exists {
+						w.uncleMu.RUnlock()
+						continue
+					}
+					w.mu.RUnlock()
+					if w.isLocalBlock != nil && w.isLocalBlock(block.Header()) {
+						w.uncleMu.Lock()
+						w.localUncles[block.Hash()] = block
+						w.uncleMu.Unlock()
+					} else {
+						w.uncleMu.Lock()
+						w.remoteUncles[block.Hash()] = block
+						w.uncleMu.Unlock()
+					}
+				}
+				//TODO: Should we regenerated a new pending header?
+			}()
 		case <-w.exitCh:
 			return
 		case <-w.chainHeadSub.Err():
+			return
+		case <-w.chainSideSub.Err():
 			return
 		}
 	}
@@ -831,7 +874,7 @@ func (w *worker) prepareWork(genParams *generateParams, block *types.Block) (*en
 		commitUncles := func(blocks map[common.Hash]*types.Block) {
 			for hash, uncle := range blocks {
 				env.uncleMu.RLock()
-				if len(env.uncles) == 2 {
+				if len(env.uncles) == 2 { // Presumably, you cannot add more than 2 uncles to a block
 					env.uncleMu.RUnlock()
 					break
 				}

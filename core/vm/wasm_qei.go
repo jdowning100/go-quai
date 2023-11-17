@@ -182,6 +182,16 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 		return err
 	}
 
+	err = vm.linker.DefineFunc(vm.store, "", "getCallDataSize", in.getCallDataSize)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "", "callDataCopy", in.callDataCopy)
+	if err != nil {
+		return err
+	}
+
 	err = vm.linker.Define("", "memory", vm.memory)
 	if err != nil {
 		return err
@@ -292,7 +302,7 @@ func (in *WASMInterpreter) getCallValue(resultOffset int32) {
 func (in *WASMInterpreter) getTxOrigin(resultOffset int32) {
 	in.gasAccounting(100)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
-	copy(memoryData[resultOffset:], in.Origin.Bytes()) // need to add tx origin to context
+	copy(memoryData[resultOffset:], in.evm.TxContext.Origin.Bytes())
 }
 
 func (in *WASMInterpreter) getReturnDataSize() int32 {

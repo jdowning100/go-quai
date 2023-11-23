@@ -142,42 +142,172 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "logHelloWorld", logHelloWorld)
+	err = vm.linker.DefineFunc(vm.store, "quai", "logHelloWorld", logHelloWorld)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "useGas", in.useGas)
+	err = vm.linker.DefineFunc(vm.store, "quai", "useGas", in.useGas)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "getAddress", in.getAddress)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getAddress", in.getAddress)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "getExternalBalance", in.getExternalBalance)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getExternalBalance", in.getExternalBalance)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "getBlockNumber", in.getBlockNumber)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getBlockNumber", in.getBlockNumber)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "getBlockHash", in.getBlockHash)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getBlockHash", in.getBlockHash)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "call", in.call)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getBlockCoinbase", in.getBlockCoinbase)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "create", in.create)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getBlockDifficulty", in.getBlockDifficulty)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getBlockGasLimit", in.getBlockGasLimit)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getBlockTimestamp", in.getBlockTimestamp)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getTxGasPrice", in.getTxGasPrice)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getTxOrigin", in.getTxOrigin)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getGasLeft", in.getGasLeft)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getReturnDataSize", in.getReturnDataSize)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "returnDataCopy", in.returnDataCopy)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getCallDataSize", in.getCallDataSize)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "callDataCopy", in.callDataCopy)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getCodeSize", in.getCodeSize)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "codeCopy", in.codeCopy)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "externalCodeCopy", in.externalCodeCopy)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getExternalCodeSize", in.getExternalCodeSize)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "storageStore", in.storageStore)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "storageLoad", in.storageLoad)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getCaller", in.getCaller)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "getCallValue", in.getCallValue)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "call", in.call)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "callCode", in.callCode)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "callDelegate", in.callDelegate)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "callStatic", in.callStatic)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "create", in.create)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "selfDestruct", in.selfDestruct)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "finish", in.finish)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "revert", in.revert)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "quai", "log", in.log)
 	if err != nil {
 		return err
 	}
@@ -201,12 +331,12 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 }
 
 func (vm *WasmVM) LoadWasm(wasm []byte) (err error) {
-	defer func() {
+	/*defer func() {
 		if r := recover(); r != nil {
 			// Optionally, you can set 'err' to a custom error value here.
 			err = fmt.Errorf("panic: %v", r)
 		}
-	}()
+	}()*/
 
 	module, err := wasmtime.NewModule(vm.engine, wasm)
 	if err != nil {
@@ -230,7 +360,7 @@ func (vm *WasmVM) LoadWasm(wasm []byte) (err error) {
 
 	// After we've instantiated we can lookup our `run` function and call
 	// it.
-	run := vm.instance.GetFunc(vm.store, "run")
+	run := vm.instance.GetFunc(vm.store, "main")
 	if run == nil {
 		panic("not a function")
 	}

@@ -2,6 +2,7 @@ package vm
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -21,6 +22,34 @@ func TestCoinflipContract(t *testing.T) {
 	)
 
 	wasmBytes, err := wasmtime.Wat2Wasm(coinflip)
+
+	if err != nil {
+		t.Errorf("wast error: %v", err)
+	}
+
+	// Track time taken and memory usage
+	// defer trackTime(time.Now(), "wasm")
+
+	// Initialise a new contract and set the code that is to be used by the EVM.
+	// The contract is a scoped environment for this execution context only.
+	contract := NewContract(&dummyContractRef{address: common.Address{}}, &dummyContractRef{address: common.Address{}}, new(big.Int), 200000)
+	contract.SetCodeOptionalHash(&common.Address{}, &codeAndHash{
+		code: wasmBytes,
+	})
+
+	_, err = wasmInterpreter.Run(contract, nil, false)
+	if err != nil {
+		t.Errorf("wasm error: %v", err)
+	}
+}
+
+func TestWRC20Contract(t *testing.T) {
+	var (
+		env             = NewEVM(BlockContext{}, TxContext{}, &dummyStatedb{}, params.TestChainConfig, Config{})
+		wasmInterpreter = NewWASMInterpreter(env, env.Config)
+	)
+
+	wasmBytes, err := wasmtime.Wat2Wasm(wrc_20)
 
 	if err != nil {
 		t.Errorf("wast error: %v", err)
@@ -97,6 +126,8 @@ func TestHelloContract(t *testing.T) {
 				))))))))
 	  )
 	`)
+
+	fmt.Println(wasmBytes)
 
 	if err != nil {
 		t.Errorf("wasm error: %v", err)
@@ -552,6 +583,286 @@ func TestCallDataCopy(t *testing.T) {
 		t.Errorf("Expected memory to contain %v, but got %v", callData, memoryData[:5])
 	}
 }
+
+var wrc_20 = `
+(module
+	(import "quai" "storageStore" (func $storageStore (param i32 i32)))
+	(import "quai" "call" (func $call (param i64 i32 i32 i32 i32) (result i32)))
+	(import "quai" "getReturnDataSize" (func $getReturnDataSize (result i32)))
+	(import "quai" "returnDataCopy" (func $returnDataCopy (param i32 i32 i32)))
+	(import "debug" "printMemHex" (func $printMemHex (param i32 i32)))
+	(import "debug" "print32" (func $print32 (param i32)))
+	(memory 1)
+
+	;; first command: query balance of 0xeD09375DC6B20050d242d1611af97eE4A6E93CAd
+	(data (i32.const 0) "\99\93\02\1a\ed\09\37\5d\c6\b2\00\50\d2\42\d1\61\1a\f9\7e\e4\a6\e9\3c\ad")
+	
+	;; second command: Transfer 500000 to 0xe929CF2544363bdCEE4a976515d5F97758Ef476c
+	(data (i32.const 32) "\5d\35\9f\bd\e9\29\CF\25\44\36\3b\dC\EE\4a\97\65\15\d5\F9\77\58\Ef\47\6c\00\00\00\00\00\07\a1\20")
+
+	;; third command: Query balance of 0xeD09375DC6B20050d242d1611af97eE4A6E93CAd
+	;;(data (i32.const 64) "\99\93\02\1a\de\ad\be\ef\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+	(data (i32.const 64) "\99\93\02\1a\ed\09\37\5d\c6\b2\00\50\d2\42\d1\61\1a\f9\7e\e4\a6\e9\3c\ad")
+	
+	;; fourth command: Query balance of 0xe929CF2544363bdCEE4a976515d5F97758Ef476c
+	;;(data (i32.const 96) "\99\93\02\1a\6c\47\ef\58\77\f9\d5\15\65\97\4a\ee\dc\3b\36\44\25\cf\29\e9")
+	(data (i32.const 96) "\99\93\02\1a\e9\29\CF\25\44\36\3b\dC\EE\4a\97\65\15\d5\F9\77\58\Ef\47\6c")
+
+	;; contract address
+	(data (i32.const 128) "\a0\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+
+	;; storage keys
+	(data (i32.const 160) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01") ;; 01
+	(data (i32.const 192) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02") ;; 02
+	(data (i32.const 224) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03") ;; 03
+	(data (i32.const 256) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04") ;; 04
+	(data (i32.const 512) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\05") ;; 05
+	(data (i32.const 544) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\06") ;; 06
+	(data (i32.const 576) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\07") ;; 07
+	(data (i32.const 608) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\08") ;; 08
+
+	(export "memory" (memory 0))
+	(export "main" (func $main))
+
+	(func $main
+	  ;; locals
+	  (local $memOffset i32)
+	  (local $ptrAddress i32)
+	  (local $ptrValueZero i32)
+
+	  (local $ptrCommand1 i32)
+	  (local $ptrCommand2 i32)
+	  (local $ptrCommand3 i32)
+	  (local $ptrCommand4 i32)
+
+	  (local $lenCommand1 i32)
+	  (local $lenCommand2 i32)
+	  (local $lenCommand3 i32)
+	  (local $lenCommand4 i32)
+
+	  (local $ptrCallResult1 i32)
+	  (local $ptrCallResult2 i32)
+	  (local $ptrCallResult3 i32)
+	  (local $ptrCallResult4 i32)
+
+	  (local $ptrStorageKey1 i32)
+	  (local $ptrStorageKey2 i32)
+	  (local $ptrStorageKey3 i32)
+	  (local $ptrStorageKey4 i32)
+	  (local $ptrStorageKey5 i32)
+	  (local $ptrStorageKey6 i32)
+	  (local $ptrStorageKey7 i32)
+	  (local $ptrStorageKey8 i32)
+
+	  (local $ptrReturnData1 i32)
+	  (local $ptrReturnData2 i32)
+	  (local $ptrReturnData3 i32)
+	  (local $ptrReturnData4 i32)
+
+	  ;; init data pointers
+	  (set_local $ptrCommand1 (i32.const 0))
+	  (set_local $ptrCommand2 (i32.const 32))
+	  (set_local $ptrCommand3 (i32.const 64))
+	  (set_local $ptrCommand4 (i32.const 96))
+	  (set_local $ptrAddress (i32.const 128))
+
+	  (set_local $lenCommand1 (i32.const 24))
+	  (set_local $lenCommand2 (i32.const 32))
+	  (set_local $lenCommand3 (i32.const 24))
+	  (set_local $lenCommand4 (i32.const 24))
+
+	  ;; memory layout and pointers
+	  (set_local $memOffset      (i32.const 160))
+	  (set_local $ptrStorageKey1 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 0)))) ;; 160
+	  (set_local $ptrStorageKey2 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 1)))) ;; 192
+	  (set_local $ptrStorageKey3 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 2)))) ;; 224
+	  (set_local $ptrStorageKey4 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 3)))) ;; 256
+	  (set_local $ptrValueZero   (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 4)))) ;; 288
+	  (set_local $ptrReturnData1 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 5)))) ;; 320
+	  (set_local $ptrReturnData2 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 6)))) ;; 352
+	  (set_local $ptrCallResult1 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 7)))) ;; 384
+	  (set_local $ptrCallResult2 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 8)))) ;; 416
+	  (set_local $ptrCallResult3 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 9)))) ;; 448
+	  (set_local $ptrCallResult4 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 10)))) ;; 480
+	  (set_local $ptrStorageKey5 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 11)))) ;; 512
+	  (set_local $ptrStorageKey6 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 12)))) ;; 544
+	  (set_local $ptrStorageKey7 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 13)))) ;; 576
+	  (set_local $ptrStorageKey8 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 14)))) ;; 608
+	  (set_local $ptrReturnData3 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 15)))) ;; 640
+	  (set_local $ptrReturnData4 (i32.add (get_local $memOffset) (i32.mul (i32.const 32) (i32.const 16)))) ;; 672
+
+	  (call $printMemHex (get_local $ptrCommand1) (get_local $lenCommand1))
+	  ;; send data 99 93 2 1a de ad be ef 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+	  ;; first command: Query balance of 0xeD09375DC6B20050d242d1611af97eE4A6E93CAd
+	  ;; and save result
+	  (i32.store
+		(get_local $ptrCallResult1)
+		(call $call
+		  ;; gas
+		  (i64.const 100000)
+		  ;; address offset
+		  (get_local $ptrAddress)
+		  ;; value offset
+		  (get_local $ptrValueZero)
+		  ;; data offset
+		  (get_local $ptrCommand1)
+		  ;; data length
+		  (get_local $lenCommand1)
+		)
+	  )
+
+	  ;; [ 1 ] call exit code =======================================
+	  ;; receives 0 = success, stored in key 1
+	  ;; store it
+	  (call $print32 (i32.const 1))
+	  (call $printMemHex (get_local $ptrCallResult1) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey1) (get_local $ptrCallResult1))
+
+	  ;; read return val
+	  (call $returnDataCopy
+		;; resultOffset
+		(get_local $ptrReturnData1)
+		;; dataOffset
+		(i32.const 0)
+		;; length
+		(call $getReturnDataSize)
+	  )
+
+	  ;; [ 2 ] call result ===========================================
+	  ;; receives balance, stored in key 2
+	  ;; store it
+	  (call $print32 (i32.const 2))
+	  (call $printMemHex (get_local $ptrReturnData1) (i32.const 32))  
+	  (call $storageStore (get_local $ptrStorageKey2) (get_local $ptrReturnData1))
+
+
+	  (call $printMemHex (get_local $ptrCommand2) (get_local $lenCommand2))
+	  
+	  ;; second command: Transfer 500000 to 0xe929CF2544363bdCEE4a976515d5F97758Ef476c
+	  ;; and save result
+	  (i32.store
+		(get_local $ptrCallResult2)
+		(call $call
+		  ;; gas
+		  (i64.const 1000000)
+		  ;; address offset
+		  (get_local $ptrAddress)
+		  ;; value offset
+		  (get_local $ptrValueZero)
+		  ;; data offset
+		  (get_local $ptrCommand2)
+		  ;; data length
+		  (get_local $lenCommand2)
+		)
+	  )
+
+	  ;; [ 3 ] 2nd call exit code ====================================================
+	  ;; store it
+	  (call $print32 (i32.const 3))
+	  (call $printMemHex (get_local $ptrCallResult2) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey3) (get_local $ptrCallResult2))
+
+	  ;; read return val
+	  (call $returnDataCopy
+		;; resultOffset
+		(get_local $ptrReturnData2)
+		;; dataOffset
+		(i32.const 0)
+		;; length
+		(call $getReturnDataSize)
+	  )
+
+	  ;; [ 4 ] 2nd call no output =================================================== 
+	  ;; store it
+	  (call $print32 (i32.const 4))
+	  (call $printMemHex (get_local $ptrReturnData2) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey4) (get_local $ptrReturnData2))
+
+
+	  (call $printMemHex (get_local $ptrCommand3) (get_local $lenCommand3))
+	  ;; third command: Query balance of 0xeD09375DC6B20050d242d1611af97eE4A6E93CAd
+	  ;; and save result
+	  (i32.store
+		(get_local $ptrCallResult3)
+		(call $call
+		  ;; gas
+		  (i64.const 100000)
+		  ;; address offset
+		  (get_local $ptrAddress)
+		  ;; value offset
+		  (get_local $ptrValueZero)
+		  ;; data offset
+		  (get_local $ptrCommand3)
+		  ;; data length
+		  (get_local $lenCommand3)
+		)
+	  )
+
+	  ;; [ 5 ] 3rd call exit code ================================================
+	  ;; store it
+	  (call $print32 (i32.const 5))
+	  (call $printMemHex (get_local $ptrCallResult3) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey5) (get_local $ptrCallResult3))
+
+	  ;; read return val
+	  (call $returnDataCopy
+		;; resultOffset
+		(get_local $ptrReturnData3)
+		;; dataOffset
+		(i32.const 0)
+		;; length
+		(call $getReturnDataSize)
+	  )
+
+	  ;; [ 6 ] 3rd call result ====================================================
+	  ;; store it
+	  (call $print32 (i32.const 6))
+	  (call $printMemHex (get_local $ptrReturnData3) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey6) (get_local $ptrReturnData3))
+
+
+	  ;; fourth command: Query balance of 0xe929CF2544363bdCEE4a976515d5F97758Ef476c
+	  ;; and save result
+	  (call $printMemHex (get_local $ptrCommand4) (get_local $lenCommand4))
+	  (i32.store
+		(get_local $ptrCallResult4)
+		(call $call
+		  ;; gas
+		  (i64.const 100000)
+		  ;; address offset
+		  (get_local $ptrAddress)
+		  ;; value offset
+		  (get_local $ptrValueZero)
+		  ;; data offset
+		  (get_local $ptrCommand4)
+		  ;; data length
+		  (get_local $lenCommand4)
+		)
+	  )
+	  ;; [ 7 ] 4th call exit code ================================================
+	  ;; store it
+	  (call $print32 (i32.const 7))
+	  (call $printMemHex (get_local $ptrCallResult4) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey7) (get_local $ptrCallResult4))
+
+	  ;; read return val
+	  (call $returnDataCopy
+		;; resultOffset
+		(get_local $ptrReturnData4)
+		;; dataOffset
+		(i32.const 0)
+		;; length
+		(call $getReturnDataSize)
+	  )
+
+	  ;; [ 8 ] 4th call result ===================================================
+	  ;; store it
+	  (call $print32 (i32.const 8))
+	  (call $printMemHex (get_local $ptrReturnData4) (i32.const 32))
+	  (call $storageStore (get_local $ptrStorageKey8) (get_local $ptrReturnData4))
+	)
+  )
+	`
 
 var coinflip = `
 

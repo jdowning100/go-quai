@@ -312,6 +312,21 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 		return err
 	}
 
+	err = vm.linker.DefineFunc(vm.store, "debug", "printMemHex", in.printMemHex)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "debug", "printMem", in.printStorageHex)
+	if err != nil {
+		return err
+	}
+
+	err = vm.linker.DefineFunc(vm.store, "debug", "print32", in.print32)
+	if err != nil {
+		return err
+	}
+
 	err = vm.linker.DefineFunc(vm.store, "", "getCallDataSize", in.getCallDataSize)
 	if err != nil {
 		return err
@@ -331,12 +346,12 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 }
 
 func (vm *WasmVM) LoadWasm(wasm []byte) (err error) {
-	/*defer func() {
+	defer func() {
 		if r := recover(); r != nil {
 			// Optionally, you can set 'err' to a custom error value here.
 			err = fmt.Errorf("panic: %v", r)
 		}
-	}()*/
+	}()
 
 	module, err := wasmtime.NewModule(vm.engine, wasm)
 	if err != nil {
@@ -379,6 +394,36 @@ func (vm *WasmVM) UnsafeMemory() []byte {
 
 func logHelloWorld() {
 	fmt.Println("🤖: Hello World")
+}
+
+func (in *WASMInterpreter) printMemHex(offset, length int32) {
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	data := memoryData[offset : offset+length]
+	for _, v := range data {
+		fmt.Printf("%02x", v)
+	}
+	fmt.Println("")
+}
+
+func (in *WASMInterpreter) printStorageHex(pathOffset int32) {
+	memoryData := in.vm.memory.UnsafeData(in.vm.store)
+	data := memoryData[pathOffset:]
+
+	path := common.BytesToHash(data)
+	internal, err := in.Contract.Address().InternalAddress()
+	if err != nil {
+		log.Panicf(err.Error())
+	}
+
+	val := in.StateDB.GetState(internal, path)
+	for v := range val {
+		fmt.Printf("%02x", v)
+	}
+	fmt.Println("")
+}
+
+func (in *WASMInterpreter) print32(val int32) {
+	fmt.Printf("%d", val)
 }
 
 func (in *WASMInterpreter) gasAccounting(cost uint64) {

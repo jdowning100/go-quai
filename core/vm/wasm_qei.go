@@ -385,7 +385,7 @@ func (in *WASMInterpreter) gasAccounting(cost uint64) {
 	if in.Contract == nil {
 		panic("nil contract")
 	}
-	_, err := in.vm.store.ConsumeFuel(100)
+	_, err := in.vm.store.ConsumeFuel(cost)
 	if err != nil {
 		panic("out of gas")
 	}
@@ -396,85 +396,115 @@ func (in *WASMInterpreter) useGas(amount int64) {
 }
 
 func (in *WASMInterpreter) getCallDataSize() int32 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return int32(len(in.Contract.Input))
 }
 
 func (in *WASMInterpreter) callDataCopy(resultOffset int32, dataOffset int32, length int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostVeryLow + GasCostCopy*(uint64(length+31)>>5))
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.Contract.Input[dataOffset:dataOffset+length])
 }
 
 func (in *WASMInterpreter) getCodeSize() int32 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return int32(len(in.Contract.Code))
 }
 
 func (in *WASMInterpreter) codeCopy(resultOffset int32, codeOffset int32, length int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostVeryLow + GasCostCopy*(uint64(length+31)>>5))
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.Contract.Code[codeOffset:codeOffset+length])
 }
 
 func (in *WASMInterpreter) getCaller(resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.Contract.Caller().Bytes())
 }
 
 func (in *WASMInterpreter) getCallValue(resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.Contract.Value().Bytes())
 }
 
 func (in *WASMInterpreter) getTxOrigin(resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.evm.TxContext.Origin.Bytes())
 }
 
 func (in *WASMInterpreter) getReturnDataSize() int32 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return int32(len(in.vm.cachedResult))
 }
 
 func (in *WASMInterpreter) returnDataCopy(resultOffset int32, dataOffset int32, length int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostVeryLow + GasCostCopy*(uint64(length+31)>>5))
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.vm.cachedResult[dataOffset:dataOffset+length])
 }
 
+// TODO
 func (in *WASMInterpreter) callCode(gas int64, addressOffset int32, valueOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostCall)
 	return in.call(gas, addressOffset, valueOffset, dataOffset, dataLength)
 }
 
+// TOOD
 func (in *WASMInterpreter) callDelegate(gas int64, addressOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
 	in.gasAccounting(100)
 	return in.call(gas, addressOffset, 0, dataOffset, dataLength)
 }
 
+// TODO
 func (in *WASMInterpreter) callStatic(gas int64, addressOffset int32, dataOffset int32, dataLength int32, resultOffset int32) int32 {
 	in.gasAccounting(100)
 	return in.call(gas, addressOffset, 0, dataOffset, dataLength)
 }
 
 func (in *WASMInterpreter) storageStore(pathOffset int32, valueOffset int32) {
-	in.gasAccounting(100)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	path := memoryData[pathOffset : pathOffset+u256Len]
 	value := memoryData[valueOffset : valueOffset+u256Len]
+
+	loc := common.BytesToHash(path)
+	val := common.BytesToHash(value)
+
 	internal, err := in.Contract.Address().InternalAddress()
 	if err != nil {
 		log.Panicf(err.Error())
 	}
-	in.StateDB.SetState(internal, common.BytesToHash(path), common.BytesToHash(value))
+
+	nonZeroBytes := 0
+	for _, b := range val.Bytes() {
+		if b != 0 {
+			nonZeroBytes++
+		}
+	}
+
+	oldValue := in.StateDB.GetState(internal, loc)
+	oldNonZeroBytes := 0
+	for _, b := range oldValue.Bytes() {
+		if b != 0 {
+			oldNonZeroBytes++
+		}
+	}
+
+	if (nonZeroBytes > 0 && oldNonZeroBytes != nonZeroBytes) || (oldNonZeroBytes != 0 && nonZeroBytes == 0) {
+		in.gasAccounting(GasCostSSet)
+	} else {
+		// Refund for setting one value to 0 or if the "zeroness" remains
+		// unchanged.
+		in.gasAccounting(GasCostSReset)
+	}
+
+	in.StateDB.SetState(internal, loc, val)
 }
 
 func (in *WASMInterpreter) storageLoad(pathOffset int32, resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(in.gasTable.SLoad)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	path := memoryData[pathOffset : pathOffset+u256Len]
 	internal, err := in.Contract.Address().InternalAddress()
@@ -486,7 +516,7 @@ func (in *WASMInterpreter) storageLoad(pathOffset int32, resultOffset int32) {
 }
 
 func (in *WASMInterpreter) externalCodeCopy(addressOffset int32, resultOffset int32, codeOffset int32, length int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(in.gasTable.ExtcodeCopy + GasCostCopy*(uint64(length+31)>>5))
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
 	if err != nil {
@@ -497,7 +527,7 @@ func (in *WASMInterpreter) externalCodeCopy(addressOffset int32, resultOffset in
 }
 
 func (in *WASMInterpreter) getExternalCodeSize(addressOffset int32) int32 {
-	in.gasAccounting(100)
+	in.gasAccounting(in.gasTable.ExtcodeSize)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
 	if err != nil {
@@ -508,46 +538,46 @@ func (in *WASMInterpreter) getExternalCodeSize(addressOffset int32) int32 {
 }
 
 func (in *WASMInterpreter) getGasLeft() int64 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return int64(in.Contract.Gas)
 }
 
 func (in *WASMInterpreter) getBlockCoinbase(resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.evm.Context.Coinbase.Bytes())
 }
 
 func (in *WASMInterpreter) getBlockDifficulty(resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	diff := in.evm.Context.Difficulty.Bytes()
 	copy(memoryData[resultOffset:], diff)
 }
 
 func (in *WASMInterpreter) getBlockGasLimit() int64 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return int64(in.evm.Context.GasLimit)
 }
 
 func (in *WASMInterpreter) getBlockTimestamp() int64 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return in.Context.Time.Int64()
 }
 
 func (in *WASMInterpreter) getTxGasPrice(resultOffset int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	copy(memoryData[resultOffset:], in.evm.GasPrice.Bytes())
 }
 
 func (in *WASMInterpreter) getBlockNumber() int64 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBase)
 	return in.evm.Context.BlockNumber.Int64()
 }
 
 func (in *WASMInterpreter) log(dataOffset int32, dataLength int32, numberOfTopics int32, topic1 int32, topic2 int32, topic3 int32, topic4 int32) {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostLog + GasCostLogData*uint64(dataLength) + uint64(numberOfTopics)*GasCostLogTopic)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	topics := make([]common.Hash, numberOfTopics)
 	for i := int32(0); i < numberOfTopics; i++ {
@@ -563,7 +593,7 @@ func (in *WASMInterpreter) log(dataOffset int32, dataLength int32, numberOfTopic
 }
 
 func (in *WASMInterpreter) getBlockHash(number int64, resultOffset int32) int32 {
-	in.gasAccounting(100)
+	in.gasAccounting(GasCostBlockHash)
 	n := big.NewInt(number)
 	n.Sub(in.evm.Context.BlockNumber, n)
 	if n.Cmp(big.NewInt(256)) > 0 || n.Cmp(big.NewInt(0)) <= 0 {
@@ -576,7 +606,6 @@ func (in *WASMInterpreter) getBlockHash(number int64, resultOffset int32) int32 
 }
 
 func (in *WASMInterpreter) finish(dataOffset int32, dataLength int32) {
-	in.gasAccounting(100)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	in.vm.cachedResult = memoryData[dataOffset : dataOffset+dataLength]
 	in.vm.panicErr = nil
@@ -585,7 +614,6 @@ func (in *WASMInterpreter) finish(dataOffset int32, dataLength int32) {
 }
 
 func (in *WASMInterpreter) revert(dataOffset int32, dataLength int32) {
-	in.gasAccounting(100)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	in.vm.cachedResult = memoryData[dataOffset : dataOffset+dataLength]
 	in.vm.panicErr = nil
@@ -594,7 +622,6 @@ func (in *WASMInterpreter) revert(dataOffset int32, dataLength int32) {
 }
 
 func (in *WASMInterpreter) selfDestruct(addressOffset int32) {
-	in.gasAccounting(100)
 	internal, err := in.Contract.Address().InternalAddress()
 	if err != nil {
 		log.Panicf(err.Error())
@@ -605,6 +632,14 @@ func (in *WASMInterpreter) selfDestruct(addressOffset int32) {
 	if err != nil {
 		log.Panicf(err.Error())
 	}
+
+	totalGas := in.gasTable.Suicide
+	// If the destination address doesn't exist, add the account creation costs
+	if in.StateDB.Empty(addr) && balance.Sign() != 0 {
+		totalGas += in.gasTable.CreateBySuicide
+	}
+	in.gasAccounting(totalGas)
+
 	in.StateDB.AddBalance(addr, balance)
 	in.StateDB.Suicide(internal)
 	in.terminationType = TerminateSuicide

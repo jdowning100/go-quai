@@ -10,6 +10,7 @@ import (
 	"github.com/bytecodealliance/wasmtime-go"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/core/types"
+	"github.com/dominant-strategies/go-quai/params"
 )
 
 /**
@@ -312,17 +313,17 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "getCallDataSize", in.getCallDataSize)
+	err = vm.linker.DefineFunc(vm.store, "quai", "getCallDataSize", in.getCallDataSize)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.DefineFunc(vm.store, "", "callDataCopy", in.callDataCopy)
+	err = vm.linker.DefineFunc(vm.store, "quai", "callDataCopy", in.callDataCopy)
 	if err != nil {
 		return err
 	}
 
-	err = vm.linker.Define("", "memory", vm.memory)
+	err = vm.linker.Define("quai", "memory", vm.memory)
 	if err != nil {
 		return err
 	}
@@ -331,12 +332,12 @@ func (vm *WasmVM) LinkHost(in *WASMInterpreter) (err error) {
 }
 
 func (vm *WasmVM) LoadWasm(wasm []byte) (err error) {
-	/*defer func() {
+	defer func() {
 		if r := recover(); r != nil {
 			// Optionally, you can set 'err' to a custom error value here.
 			err = fmt.Errorf("panic: %v", r)
 		}
-	}()*/
+	}()
 
 	module, err := wasmtime.NewModule(vm.engine, wasm)
 	if err != nil {
@@ -504,7 +505,7 @@ func (in *WASMInterpreter) storageStore(pathOffset int32, valueOffset int32) {
 }
 
 func (in *WASMInterpreter) storageLoad(pathOffset int32, resultOffset int32) {
-	in.gasAccounting(in.gasTable.SLoad)
+	in.gasAccounting(params.SloadGas)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	path := memoryData[pathOffset : pathOffset+u256Len]
 	internal, err := in.Contract.Address().InternalAddress()
@@ -516,7 +517,7 @@ func (in *WASMInterpreter) storageLoad(pathOffset int32, resultOffset int32) {
 }
 
 func (in *WASMInterpreter) externalCodeCopy(addressOffset int32, resultOffset int32, codeOffset int32, length int32) {
-	in.gasAccounting(in.gasTable.ExtcodeCopy + GasCostCopy*(uint64(length+31)>>5))
+	in.gasAccounting(params.ExtcodeCopyBase + GasCostCopy*(uint64(length+31)>>5))
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
 	if err != nil {
@@ -527,7 +528,7 @@ func (in *WASMInterpreter) externalCodeCopy(addressOffset int32, resultOffset in
 }
 
 func (in *WASMInterpreter) getExternalCodeSize(addressOffset int32) int32 {
-	in.gasAccounting(in.gasTable.ExtcodeSize)
+	in.gasAccounting(params.ExtcodeSizeGas)
 	memoryData := in.vm.memory.UnsafeData(in.vm.store)
 	addr, err := common.BytesToAddress(memoryData[addressOffset : addressOffset+common.AddressLength]).InternalAddress()
 	if err != nil {
@@ -633,10 +634,10 @@ func (in *WASMInterpreter) selfDestruct(addressOffset int32) {
 		log.Panicf(err.Error())
 	}
 
-	totalGas := in.gasTable.Suicide
+	totalGas := params.SelfdestructGas
 	// If the destination address doesn't exist, add the account creation costs
 	if in.StateDB.Empty(addr) && balance.Sign() != 0 {
-		totalGas += in.gasTable.CreateBySuicide
+		totalGas += params.CreateBySelfdestructGas
 	}
 	in.gasAccounting(totalGas)
 

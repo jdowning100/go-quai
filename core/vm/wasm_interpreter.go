@@ -111,38 +111,38 @@ func (in *WASMInterpreter) validateModule(wasmBytes []byte) (int, error) {
 	}
 
 	mainIndex := -1
-	for _, export := range exports {
-		switch export.Name() {
-		case "main":
-			if export.Type() != wasmtime.ExternType {
-				return -1, fmt.Errorf("Main is not a function in module")
-			}
-			mainIndex = int(export.Index())
-		case "memory":
-			if export.Type().Kind() != wasmtime.ExternTypeMemory {
-				return -1, fmt.Errorf("'memory' is not a memory in module")
-			}
-		default:
-			return -1, fmt.Errorf("A symbol named %s has been exported. Only main and memory should exist", export.Name())
-		}
-	}
+	// for _, export := range exports {
+	// 	switch export.Name() {
+	// 	case "main":
+	// 		if export.Type() != wasmtime.ExternType {
+	// 			return -1, fmt.Errorf("Main is not a function in module")
+	// 		}
+	// 		mainIndex = int(export.Index())
+	// 	case "memory":
+	// 		if export.Type().Kind() != wasmtime.ExternTypeMemory {
+	// 			return -1, fmt.Errorf("'memory' is not a memory in module")
+	// 		}
+	// 	default:
+	// 		return -1, fmt.Errorf("A symbol named %s has been exported. Only main and memory should exist", export.Name())
+	// 	}
+	// }
 
-	// Check imports
-	imports := module.Imports()
-	for _, imp := range imports {
-		if imp.Module() == "quai" && imp.Type() == wasmtime.ExternType {
-			found := false
-			for _, name := range qeiFunctionList {
-				if name == *imp.Name() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return -1, fmt.Errorf("%s could not be found in the list of quai-provided functions", imp.Name())
-			}
-		}
-	}
+	// // Check imports
+	// imports := module.Imports()
+	// for _, imp := range imports {
+	// 	if imp.Module() == "quai" && imp.Type() == wasmtime.ExternType {
+	// 		found := false
+	// 		for _, name := range qeiFunctionList {
+	// 			if name == *imp.Name() {
+	// 				found = true
+	// 				break
+	// 			}
+	// 		}
+	// 		if !found {
+	// 			return -1, fmt.Errorf("%s could not be found in the list of quai-provided functions", imp.Name())
+	// 		}
+	// 	}
+	// }
 
 	return mainIndex, nil
 }

@@ -238,7 +238,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	)
 	forkID := forkid.NewID(h.core.Config(), h.core.Genesis().Hash(), h.core.CurrentHeader().Number().Uint64())
 	if err := peer.Handshake(h.networkID, h.slicesRunning, entropy, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
-		peer.Log().Debug("Quai handshake failed", "err", err)
+		peer.Log().Trace("Quai handshake failed", "err", err)
 		return err
 	}
 	reject := false // reserved peer slots

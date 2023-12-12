@@ -870,7 +870,6 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, block *typ
 	if err != nil {
 		return
 	}
-	return
 	if len(pending) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, pending, env.header.BaseFee(), true)
 		if w.commitTransactions(env, txs, interrupt) {

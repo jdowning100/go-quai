@@ -197,32 +197,17 @@ func NewStateProcessor(config *params.ChainConfig, hc *HeaderChain, engine conse
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types.Receipts, []*types.Log, *state.StateDB, uint64, error) {
+func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types.Receipts, []*types.Log, *state.StateDB, *types.UtxoViewpoint, uint64, error) {
 	parent := p.hc.GetBlock(block.Header().ParentHash(), block.NumberU64()-1)
 	if parent == nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, errors.New("parent block is nil for the block given to process")
+		return types.Receipts{}, []*types.Log{}, nil, nil, 0, errors.New("parent block is nil for the block given to process")
 	}
 
 	// Initialize a statedb
 	statedb, err := state.New(parent.Header().Root(), p.stateCache, p.snaps)
 	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, err
+		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
-
-	extraNonce := uint64(0)
-	coinbaseScript, err := standardCoinbaseScript(int32(block.NumberU64()+1), extraNonce)
-	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, err
-	}
-	coinbaseTx, err := createCoinbaseTx(coinbaseScript,
-		int32(block.NumberU64()+1), block.Header().Coinbase())
-	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, err
-	}
-
-	block.AddUTXO(coinbaseTx)
-
-	fmt.Println("coinbase utxo", coinbaseTx)
 
 	// Process UTXOs
 	utxoView := types.NewUtxoViewpoint()
@@ -235,20 +220,23 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 	// transaction inputs, counting pay-to-script-hashes, and scripts.
 	err = p.hc.fetchInputUtxos(utxoView, block)
 	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, err
+		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
 
 	err = p.validateUTXOs(block, utxoView, &stxos)
 	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, err
+		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
+
+	// write the stxos to the db
+	rawdb.WriteSpentUTXOs(p.hc.bc.db, block.Hash(), stxos)
 
 	receipts, allLogs, statedb, usedGas, err := p.processAccountTransactions(block, etxSet, statedb)
 	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, 0, err
+		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
 
-	return receipts, allLogs, statedb, usedGas, nil
+	return receipts, allLogs, statedb, utxoView, usedGas, nil
 }
 
 func (p *StateProcessor) processAccountTransactions(block *types.Block, etxSet types.EtxSet, statedb *state.StateDB) (types.Receipts, []*types.Log, *state.StateDB, uint64, error) {
@@ -489,7 +477,7 @@ func applyTransaction(msg types.Message, config *params.ChainConfig, bc ChainCon
 var lastWrite uint64
 
 // Apply State
-func (p *StateProcessor) Apply(batch ethdb.Batch, block *types.Block, newInboundEtxs types.Transactions) ([]*types.Log, error) {
+func (p *StateProcessor) Apply(batch ethdb.Batch, block *types.Block, newInboundEtxs types.Transactions) (*types.UtxoViewpoint, []*types.Log, error) {
 	// Update the set of inbound ETXs which may be mined. This adds new inbound
 	// ETXs to the set and removes expired ETXs so they are no longer available
 	start := time.Now()
@@ -498,14 +486,14 @@ func (p *StateProcessor) Apply(batch ethdb.Batch, block *types.Block, newInbound
 	etxSet := rawdb.ReadEtxSet(p.hc.bc.db, block.ParentHash(), block.NumberU64()-1)
 	time1 := common.PrettyDuration(time.Since(start))
 	if etxSet == nil {
-		return nil, errors.New("failed to load etx set")
+		return nil, nil, errors.New("failed to load etx set")
 	}
 	etxSet.Update(newInboundEtxs, block.NumberU64())
 	time2 := common.PrettyDuration(time.Since(start))
 	// Process our block
-	receipts, logs, statedb, usedGas, err := p.Process(block, etxSet)
+	receipts, logs, statedb, utxoView, usedGas, err := p.Process(block, etxSet)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if block.Hash() != blockHash {
 		log.Warn("Block hash changed after Processing the block", "old hash", blockHash, "new hash", block.Hash())
@@ -513,7 +501,7 @@ func (p *StateProcessor) Apply(batch ethdb.Batch, block *types.Block, newInbound
 	time3 := common.PrettyDuration(time.Since(start))
 	err = p.validator.ValidateState(block, statedb, receipts, usedGas)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	time4 := common.PrettyDuration(time.Since(start))
 	rawdb.WriteReceipts(batch, block.Hash(), block.NumberU64(), receipts)
@@ -527,7 +515,7 @@ func (p *StateProcessor) Apply(batch ethdb.Batch, block *types.Block, newInbound
 	// Commit all cached state changes into underlying memory database.
 	root, err := statedb.Commit(true)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	triedb := p.stateCache.TrieDB()
 	time7 := common.PrettyDuration(time.Since(start))
@@ -536,14 +524,14 @@ func (p *StateProcessor) Apply(batch ethdb.Batch, block *types.Block, newInbound
 	var time10 common.PrettyDuration
 	var time11 common.PrettyDuration
 	if err := triedb.Commit(root, false, nil); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	time8 = common.PrettyDuration(time.Since(start))
 	rawdb.WriteEtxSet(batch, header.Hash(), header.NumberU64(), etxSet)
 	time12 := common.PrettyDuration(time.Since(start))
 
 	log.Debug("times during state processor apply:", "t1:", time1, "t2:", time2, "t3:", time3, "t4:", time4, "t4.5:", time4_5, "t5:", time5, "t6:", time6, "t7:", time7, "t8:", time8, "t9:", time9, "t10:", time10, "t11:", time11, "t12:", time12)
-	return logs, nil
+	return utxoView, logs, nil
 }
 
 // ApplyTransaction attempts to apply a transaction to the given state database
@@ -762,7 +750,7 @@ func (p *StateProcessor) StateAtBlock(block *types.Block, reexec uint64, base *s
 		if currentBlock == nil {
 			return nil, errors.New("detached block found trying to regenerate state")
 		}
-		_, _, _, _, err := p.Process(currentBlock, etxSet)
+		_, _, _, _, _, err := p.Process(currentBlock, etxSet)
 		if err != nil {
 			return nil, fmt.Errorf("processing block %d failed: %v", current.NumberU64(), err)
 		}

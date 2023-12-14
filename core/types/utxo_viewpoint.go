@@ -5,20 +5,20 @@ import (
 	"github.com/dominant-strategies/go-quai/common"
 )
 
-// txoFlags is a bitmask defining additional information and state for a
+// TxoFlags is a bitmask defining additional information and state for a
 // transaction output in a utxo view.
-type txoFlags uint8
+type TxoFlags uint8
 
 const (
-	// tfCoinBase indicates that a txout was contained in a coinbase tx.
-	tfCoinBase txoFlags = 1 << iota
+	// TfCoinBase indicates that a txout was contained in a coinbase tx.
+	TfCoinBase TxoFlags = 1 << iota
 
-	// tfSpent indicates that a txout is spent.
-	tfSpent
+	// TfSpent indicates that a txout is spent.
+	TfSpent
 
-	// tfModified indicates that a txout has been modified since it was
+	// TfModified indicates that a txout has been modified since it was
 	// loaded.
-	tfModified
+	TfModified
 )
 
 // UtxoEntry houses details about an individual transaction output in a utxo
@@ -32,38 +32,38 @@ type UtxoEntry struct {
 	// specifically crafted to result in minimal padding.  There will be a
 	// lot of these in memory, so a few extra bytes of padding adds up.
 
-	amount      uint64
-	pkScript    []byte // The public key script for the output.
-	blockHeight uint64 // Height of block containing tx.
+	Amount      uint64
+	PkScript    []byte // The public key script for the output.
+	BlockHeight uint64 // Height of block containing tx.
 
 	// packedFlags contains additional info about output such as whether it
 	// is a coinbase, whether it is spent, and whether it has been modified
 	// since it was loaded.  This approach is used in order to reduce memory
 	// usage since there will be a lot of these in memory.
-	packedFlags txoFlags
+	PackedFlags TxoFlags
 }
 
 // isModified returns whether or not the output has been modified since it was
 // loaded.
-func (entry *UtxoEntry) isModified() bool {
-	return entry.packedFlags&tfModified == tfModified
+func (entry *UtxoEntry) IsModified() bool {
+	return entry.PackedFlags&TfModified == TfModified
 }
 
 // IsCoinBase returns whether or not the output was contained in a coinbase
 // transaction.
 func (entry *UtxoEntry) IsCoinBase() bool {
-	return entry.packedFlags&tfCoinBase == tfCoinBase
+	return entry.PackedFlags&TfCoinBase == TfCoinBase
 }
 
-// BlockHeight returns the height of the block containing the output.
-func (entry *UtxoEntry) BlockHeight() uint64 {
-	return entry.blockHeight
-}
+// // BlockHeight returns the height of the block containing the output.
+// func (entry *UtxoEntry) BlockHeight() uint64 {
+// 	return entry.blockHeight
+// }
 
 // IsSpent returns whether or not the output has been spent based upon the
 // current state of the unspent transaction output view it was obtained from.
 func (entry *UtxoEntry) IsSpent() bool {
-	return entry.packedFlags&tfSpent == tfSpent
+	return entry.PackedFlags&TfSpent == TfSpent
 }
 
 // Spend marks the output as spent.  Spending an output that is already spent
@@ -75,18 +75,18 @@ func (entry *UtxoEntry) Spend() {
 	}
 
 	// Mark the output as spent and modified.
-	entry.packedFlags |= tfSpent | tfModified
+	entry.PackedFlags |= TfSpent | TfModified
 }
 
 // Amount returns the amount of the output.
-func (entry *UtxoEntry) Amount() uint64 {
-	return entry.amount
-}
+// func (entry *UtxoEntry) Amount() uint64 {
+// 	return entry.amount
+// }
 
 // PkScript returns the public key script for the output.
-func (entry *UtxoEntry) PkScript() []byte {
-	return entry.pkScript
-}
+// func (entry *UtxoEntry) PkScript() []byte {
+// 	return entry.pkScript
+// }
 
 // Clone returns a shallow copy of the utxo entry.
 func (entry *UtxoEntry) Clone() *UtxoEntry {
@@ -95,26 +95,26 @@ func (entry *UtxoEntry) Clone() *UtxoEntry {
 	}
 
 	return &UtxoEntry{
-		amount:      entry.amount,
-		pkScript:    entry.pkScript,
-		blockHeight: entry.blockHeight,
-		packedFlags: entry.packedFlags,
+		Amount:      entry.Amount,
+		PkScript:    entry.PkScript,
+		BlockHeight: entry.BlockHeight,
+		PackedFlags: entry.PackedFlags,
 	}
 }
 
 // NewUtxoEntry returns a new UtxoEntry built from the arguments.
 func NewUtxoEntry(
 	txOut *TxOut, blockHeight uint64, isCoinbase bool) *UtxoEntry {
-	var cbFlag txoFlags
+	var cbFlag TxoFlags
 	if isCoinbase {
-		cbFlag |= tfCoinBase
+		cbFlag |= TfCoinBase
 	}
 
 	return &UtxoEntry{
-		amount:      txOut.Value,
-		pkScript:    txOut.PkScript,
-		blockHeight: blockHeight,
-		packedFlags: cbFlag,
+		Amount:      txOut.Value,
+		PkScript:    txOut.PkScript,
+		BlockHeight: blockHeight,
+		PackedFlags: cbFlag,
 	}
 }
 
@@ -126,7 +126,7 @@ func NewUtxoEntry(
 // The unspent outputs are needed by other transactions for things such as
 // script validation and double spend prevention.
 type UtxoViewpoint struct {
-	entries  map[OutPoint]*UtxoEntry
+	Entries  map[OutPoint]*UtxoEntry
 	bestHash common.Hash
 }
 
@@ -134,10 +134,6 @@ type UtxoViewpoint struct {
 // respresents.
 func (view *UtxoViewpoint) BestHash() common.Hash {
 	return view.bestHash
-}
-
-func (view *UtxoViewpoint) Entries() map[OutPoint]*UtxoEntry {
-	return view.entries
 }
 
 // SetBestHash sets the hash of the best block in the chain the view currently
@@ -151,11 +147,11 @@ func (view *UtxoViewpoint) SetBestHash(hash common.Hash) {
 // not exist in the view or is otherwise not available such as when it has been
 // disconnected during a reorg.
 func (view *UtxoViewpoint) LookupEntry(outpoint OutPoint) *UtxoEntry {
-	return view.entries[outpoint]
+	return view.Entries[outpoint]
 }
 
 func (view *UtxoViewpoint) AddEntry(outpoints []OutPoint, i int, entry *UtxoEntry) {
-	view.entries[outpoints[i]] = entry
+	view.Entries[outpoints[i]] = entry
 }
 
 // FetchPrevOutput fetches the previous output referenced by the passed
@@ -164,14 +160,14 @@ func (view *UtxoViewpoint) AddEntry(outpoints []OutPoint, i int, entry *UtxoEntr
 //
 // NOTE: This is an implementation of the txscript.PrevOutputFetcher interface.
 func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
-	prevOut := view.entries[op]
+	prevOut := view.Entries[op]
 	if prevOut == nil {
 		return nil
 	}
 
 	return &TxOut{
-		Value:    prevOut.amount,
-		PkScript: prevOut.PkScript(),
+		Value:    prevOut.Amount,
+		PkScript: prevOut.PkScript,
 	}
 }
 
@@ -192,15 +188,15 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 	entry := view.LookupEntry(outpoint)
 	if entry == nil {
 		entry = new(UtxoEntry)
-		view.entries[outpoint] = entry
+		view.Entries[outpoint] = entry
 	}
 
-	entry.amount = txOut.Value
-	entry.pkScript = txOut.PkScript
-	entry.blockHeight = blockHeight
-	entry.packedFlags = tfModified
+	entry.Amount = txOut.Value
+	entry.PkScript = txOut.PkScript
+	entry.BlockHeight = blockHeight
+	entry.PackedFlags = TfModified
 	if isCoinBase {
-		entry.packedFlags |= tfCoinBase
+		entry.PackedFlags |= TfCoinBase
 	}
 }
 
@@ -246,7 +242,7 @@ func (view *UtxoViewpoint) AddTxOuts(tx *MsgUTXO, blockHeight uint64) {
 // NewUtxoViewpoint returns a new empty unspent transaction output view.
 func NewUtxoViewpoint() *UtxoViewpoint {
 	return &UtxoViewpoint{
-		entries: make(map[OutPoint]*UtxoEntry),
+		Entries: make(map[OutPoint]*UtxoEntry),
 	}
 }
 
@@ -269,7 +265,7 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *MsgUTXO, blockHeight uint64, s
 	for _, txIn := range tx.TxIn {
 		// Ensure the referenced utxo exists in the view.  This should
 		// never happen unless there is a bug is introduced in the code.
-		entry := view.entries[txIn.PreviousOutPoint]
+		entry := view.Entries[txIn.PreviousOutPoint]
 		if entry == nil {
 			return nil
 		}
@@ -278,9 +274,9 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *MsgUTXO, blockHeight uint64, s
 		if stxos != nil {
 			// Populate the stxo details using the utxo entry.
 			var stxo = SpentTxOut{
-				Amount:     entry.Amount(),
-				PkScript:   entry.PkScript(),
-				Height:     entry.BlockHeight(),
+				Amount:     entry.Amount,
+				PkScript:   entry.PkScript,
+				Height:     entry.BlockHeight,
 				IsCoinBase: entry.IsCoinBase(),
 			}
 			*stxos = append(*stxos, stxo)

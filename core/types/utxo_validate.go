@@ -178,7 +178,7 @@ func CheckTransactionInputs(tx *MsgUTXO, txHeight uint64, utxoView *UtxoViewpoin
 		// a transaction are in a unit value known as a satoshi.  One
 		// bitcoin is a quantity of satoshi as defined by the
 		// SatoshiPerBitcoin constant.
-		originTxSatoshi := utxo.Amount()
+		originTxSatoshi := utxo.Amount
 		if originTxSatoshi < 0 {
 			// str := fmt.Sprintf("transaction output has negative "+
 			// 	"value of %v", btcutil.Amount(originTxSatoshi))

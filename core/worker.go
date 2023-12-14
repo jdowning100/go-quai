@@ -517,6 +517,22 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 		return nil, err
 	}
 
+	if nodeCtx == common.ZONE_CTX && w.hc.ProcessingState() {
+		extraNonce := uint64(0)
+		coinbaseScript, err := standardCoinbaseScript(int32(block.NumberU64()), extraNonce)
+		if err != nil {
+			return nil, err
+		}
+		coinbaseTx, err := createCoinbaseTx(coinbaseScript,
+			int32(block.NumberU64()), block.Header().Coinbase())
+		if err != nil {
+			return nil, err
+		}
+
+		block.AddUTXO(coinbaseTx)
+
+		fmt.Println("coinbase utxo", coinbaseTx)
+	}
 	work.header = newBlock.Header()
 	w.printPendingHeaderInfo(work, newBlock, start)
 
@@ -528,12 +544,12 @@ func (w *worker) printPendingHeaderInfo(work *environment, block *types.Block, s
 	work.uncleMu.RLock()
 	if w.CurrentInfo(block.Header()) {
 		log.Info("Commit new sealing work", "number", block.Number(), "sealhash", block.Header().SealHash(),
-			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()),
+			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()), "utxos", len(block.UTXOs()),
 			"gas", block.GasUsed(), "fees", totalFees(block, work.receipts),
 			"elapsed", common.PrettyDuration(time.Since(start)))
 	} else {
 		log.Debug("Commit new sealing work", "number", block.Number(), "sealhash", block.Header().SealHash(),
-			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()),
+			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()), "utxos", len(block.UTXOs()),
 			"gas", block.GasUsed(), "fees", totalFees(block, work.receipts),
 			"elapsed", common.PrettyDuration(time.Since(start)))
 	}

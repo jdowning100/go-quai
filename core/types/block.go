@@ -130,6 +130,7 @@ type extheader struct {
 	UncleHash     common.Hash
 	Coinbase      common.Address
 	Root          common.Hash
+	UtxoHash      common.Hash
 	TxHash        common.Hash
 	EtxHash       common.Hash
 	EtxRollupHash common.Hash
@@ -160,6 +161,7 @@ func EmptyHeader() *Header {
 	h.difficulty = big.NewInt(0)
 	h.root = EmptyRootHash
 	h.mixHash = EmptyRootHash
+	h.utxoHash = EmptyRootHash
 	h.txHash = EmptyRootHash
 	h.etxHash = EmptyRootHash
 	h.etxRollupHash = EmptyRootHash
@@ -185,6 +187,7 @@ func (h *Header) DecodeRLP(s *rlp.Stream) error {
 	h.uncleHash = eh.UncleHash
 	h.coinbase = eh.Coinbase
 	h.root = eh.Root
+	h.utxoHash = eh.UtxoHash
 	h.txHash = eh.TxHash
 	h.etxHash = eh.EtxHash
 	h.etxRollupHash = eh.EtxRollupHash
@@ -213,6 +216,7 @@ func (h *Header) EncodeRLP(w io.Writer) error {
 		UncleHash:     h.uncleHash,
 		Coinbase:      h.coinbase,
 		Root:          h.root,
+		UtxoHash:      h.utxoHash,
 		TxHash:        h.txHash,
 		EtxHash:       h.etxHash,
 		EtxRollupHash: h.etxRollupHash,
@@ -246,6 +250,7 @@ func (h *Header) RPCMarshalHeader() map[string]interface{} {
 		"extraData":           hexutil.Bytes(h.Extra()),
 		"size":                hexutil.Uint64(h.Size()),
 		"timestamp":           hexutil.Uint64(h.Time()),
+		"utxoHash":            h.UtxoHash(),
 		"transactionsRoot":    h.TxHash(),
 		"receiptsRoot":        h.ReceiptHash(),
 		"extTransactionsRoot": h.EtxHash(),
@@ -292,6 +297,9 @@ func (h *Header) Coinbase() common.Address {
 }
 func (h *Header) Root() common.Hash {
 	return h.root
+}
+func (h *Header) UtxoHash() common.Hash {
+	return h.utxoHash
 }
 func (h *Header) TxHash() common.Hash {
 	return h.txHash
@@ -926,16 +934,18 @@ func (b *Block) WithSeal(header *Header) *Block {
 }
 
 // WithBody returns a new block with the given transaction and uncle contents, for a single context
-func (b *Block) WithBody(transactions []*Transaction, uncles []*Header, extTransactions []*Transaction, subManifest BlockManifest) *Block {
+func (b *Block) WithBody(transactions []*Transaction, uncles []*Header, extTransactions []*Transaction, utxos []*MsgUTXO, subManifest BlockManifest) *Block {
 	block := &Block{
 		header:          CopyHeader(b.header),
 		transactions:    make([]*Transaction, len(transactions)),
 		uncles:          make([]*Header, len(uncles)),
 		extTransactions: make([]*Transaction, len(extTransactions)),
+		utxos:           make([]*MsgUTXO, len(utxos)),
 		subManifest:     make(BlockManifest, len(subManifest)),
 	}
 	copy(block.transactions, transactions)
 	copy(block.extTransactions, extTransactions)
+	copy(block.utxos, utxos)
 	copy(block.subManifest, subManifest)
 	for i := range uncles {
 		block.uncles[i] = CopyHeader(uncles[i])
@@ -970,7 +980,6 @@ type Blocks []*Block
 func (b *Block) AddUTXO(utxo *MsgUTXO) error {
 	b.utxos = append(b.utxos, utxo)
 	return nil
-
 }
 
 // PendingHeader stores the header and termini value associated with the header.

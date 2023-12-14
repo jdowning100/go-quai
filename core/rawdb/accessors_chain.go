@@ -1364,3 +1364,27 @@ func DeleteUtxo(db ethdb.KeyValueWriter, hash common.Hash) {
 		log.Fatal("Failed to delete utxo", "err", err)
 	}
 }
+
+func WriteSpentUTXOs(db ethdb.KeyValueWriter, hash common.Hash, spentUTXOs []types.SpentTxOut) {
+	data, err := rlp.EncodeToBytes(spentUTXOs)
+	if err != nil {
+		log.Fatal("Failed to RLP encode spent utxos", "err", err)
+	}
+	if err := db.Put(spentUTXOsKey(hash), data); err != nil {
+		log.Fatal("Failed to store spent utxos", "err", err)
+	}
+}
+
+func ReadSpentUTXOs(db ethdb.Reader, hash common.Hash) []types.SpentTxOut {
+	// Try to look up the data in leveldb.
+	data, _ := db.Get(spentUTXOsKey(hash))
+	if len(data) == 0 {
+		return nil
+	}
+	spentUTXOs := []types.SpentTxOut{}
+	if err := rlp.Decode(bytes.NewReader(data), &spentUTXOs); err != nil {
+		log.Error("Invalid spent utxos RLP", "err", err)
+		return nil
+	}
+	return spentUTXOs
+}

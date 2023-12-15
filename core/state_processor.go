@@ -219,6 +219,8 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 	//
 	// These utxo entries are needed for verification of things such as
 	// transaction inputs, counting pay-to-script-hashes, and scripts.
+
+	fmt.Println("utxoView.Size() = ", len(block.UTXOs()))
 	err = p.hc.fetchInputUtxos(utxoView, block)
 	if err != nil {
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
@@ -230,6 +232,7 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 	}
 
 	// write the stxos to the db
+	fmt.Println("len(stxos) = ", len(stxos))
 	rawdb.WriteSpentUTXOs(p.hc.bc.db, block.Hash(), stxos)
 
 	receipts, allLogs, statedb, usedGas, err := p.processAccountTransactions(block, etxSet, statedb)

@@ -421,7 +421,7 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 
 	// Run through the hash stack to update canonicalHash and forward state processor
 	for i := len(headersWithoutState) - 1; i >= 0; i-- {
-		err := hc.ReadInboundEtxsAndAppendBlock(headersWithoutState[i])
+		_, err := hc.ReadInboundEtxsAndAppendBlock(headersWithoutState[i])
 		if err != nil {
 			return err
 		}

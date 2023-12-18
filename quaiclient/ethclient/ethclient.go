@@ -99,7 +99,6 @@ type rpcBlock struct {
 	Transactions    []rpcTransaction    `json:"transactions"`
 	UncleHashes     []common.Hash       `json:"uncles"`
 	ExtTransactions []rpcTransaction    `json:"extTransactions"`
-	UTXOs           []rpcUTXO           `json:"extUTXOs"`
 	SubManifest     types.BlockManifest `json:"manifest"`
 }
 
@@ -181,10 +180,6 @@ func (ec *Client) getBlock(ctx context.Context, method string, args ...interface
 	for i, etx := range body.ExtTransactions {
 		etxs[i] = etx.tx
 	}
-	utxos := make([]*types.MsgUTXO, len(body.Transactions))
-	for i, tx := range body.UTXOs {
-		utxos[i] = tx.MsgUTXO
-	}
 
 	// Fill the sender cache of subordinate block hashes in the block manifest.
 	var manifest types.BlockManifest
@@ -195,7 +190,7 @@ func (ec *Client) getBlock(ctx context.Context, method string, args ...interface
 		}
 		txs[i] = tx.tx
 	}
-	return types.NewBlockWithHeader(head).WithBody(txs, uncles, etxs, utxos, manifest), nil
+	return types.NewBlockWithHeader(head).WithBody(txs, uncles, etxs, manifest), nil
 }
 
 // HeaderByHash returns the block header with the given hash.
@@ -221,11 +216,6 @@ func (ec *Client) HeaderByNumber(ctx context.Context, number *big.Int) (*types.H
 
 type rpcTransaction struct {
 	tx *types.Transaction
-	txExtraInfo
-}
-
-type rpcUTXO struct {
-	MsgUTXO *types.MsgUTXO
 	txExtraInfo
 }
 

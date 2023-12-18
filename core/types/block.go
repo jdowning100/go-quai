@@ -634,7 +634,6 @@ func (h *Header) EmptyReceipts() bool {
 // Body is a simple (mutable, non-safe) data container for storing and moving
 // a block's data contents (transactions and uncles) together.
 type Body struct {
-	UTXOs           []*MsgUTXO
 	Transactions    []*Transaction
 	Uncles          []*Header
 	ExtTransactions []*Transaction
@@ -645,7 +644,6 @@ type Body struct {
 type Block struct {
 	header          *Header
 	uncles          []*Header
-	utxos           []*MsgUTXO
 	transactions    Transactions
 	extTransactions Transactions
 	subManifest     BlockManifest
@@ -816,7 +814,6 @@ func (b *Block) NonceU64() uint64                     { return b.header.NonceU64
 // TODO: copies
 
 func (b *Block) Uncles() []*Header          { return b.uncles }
-func (b *Block) UTXOs() []*MsgUTXO          { return b.utxos }
 func (b *Block) Transactions() Transactions { return b.transactions }
 func (b *Block) Transaction(hash common.Hash) *Transaction {
 	for _, transaction := range b.Transactions() {
@@ -839,9 +836,20 @@ func (b *Block) SubManifest() BlockManifest { return b.subManifest }
 
 func (b *Block) Header() *Header { return b.header }
 
+func (b *Block) UTXOs() []*Transaction {
+	// TODO: cache the UTXO loop
+	utxos := make([]*Transaction, 0)
+	for _, t := range b.Transactions() {
+		if t.Type() == UtxoTxType {
+			utxos = append(utxos, t)
+		}
+	}
+	return utxos
+}
+
 // Body returns the non-header content of the block.
 func (b *Block) Body() *Body {
-	return &Body{b.utxos, b.transactions, b.uncles, b.extTransactions, b.subManifest}
+	return &Body{b.transactions, b.uncles, b.extTransactions, b.subManifest}
 }
 
 // Size returns the true RLP encoded storage size of the block, either by encoding
@@ -889,18 +897,16 @@ func (b *Block) WithSeal(header *Header) *Block {
 }
 
 // WithBody returns a new block with the given transaction and uncle contents, for a single context
-func (b *Block) WithBody(transactions []*Transaction, uncles []*Header, extTransactions []*Transaction, utxos []*MsgUTXO, subManifest BlockManifest) *Block {
+func (b *Block) WithBody(transactions []*Transaction, uncles []*Header, extTransactions []*Transaction, subManifest BlockManifest) *Block {
 	block := &Block{
 		header:          CopyHeader(b.header),
 		transactions:    make([]*Transaction, len(transactions)),
 		uncles:          make([]*Header, len(uncles)),
 		extTransactions: make([]*Transaction, len(extTransactions)),
-		utxos:           make([]*MsgUTXO, len(utxos)),
 		subManifest:     make(BlockManifest, len(subManifest)),
 	}
 	copy(block.transactions, transactions)
 	copy(block.extTransactions, extTransactions)
-	copy(block.utxos, utxos)
 	copy(block.subManifest, subManifest)
 	for i := range uncles {
 		block.uncles[i] = CopyHeader(uncles[i])
@@ -930,12 +936,6 @@ func (b *Block) SetAppendTime(appendTime time.Duration) {
 }
 
 type Blocks []*Block
-
-// AddTransaction adds a transaction to the message.
-func (b *Block) AddUTXO(utxo *MsgUTXO) error {
-	b.utxos = append(b.utxos, utxo)
-	return nil
-}
 
 // PendingHeader stores the header and termini value associated with the header.
 type PendingHeader struct {

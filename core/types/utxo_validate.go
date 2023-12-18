@@ -13,15 +13,15 @@ import (
 //
 // This function only differs from IsCoinBase in that it works with a raw wire
 // transaction as opposed to a higher level util transaction.
-func IsCoinBaseTx(msgTx *MsgUTXO) bool {
+func IsCoinBaseTx(msgTx *Transaction) bool {
 	// A coin base must only have one transaction input.
-	if len(msgTx.TxIn) != 1 {
+	if len(msgTx.inner.txIn()) != 1 {
 		return false
 	}
 
 	// The previous output of a coin base must have a max value index and
 	// a zero hash.
-	prevOut := &msgTx.TxIn[0].PreviousOutPoint
+	prevOut := &msgTx.inner.txIn()[0].PreviousOutPoint
 	if (prevOut.Index != math.MaxUint32 || prevOut.Hash != common.Hash{}) {
 		return false
 	}
@@ -137,14 +137,14 @@ func CheckTransactionSanity(tx *UTXO) error {
 //
 // NOTE: The transaction MUST have already been sanity checked with the
 // CheckTransactionSanity function prior to calling this function.
-func CheckTransactionInputs(tx *MsgUTXO, txHeight uint64, utxoView *UtxoViewpoint) (uint64, error) {
+func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoViewpoint) (uint64, error) {
 	// Coinbase transactions have no inputs.
 	if IsCoinBaseTx(tx) {
 		return 0, nil
 	}
 
 	var totalSatoshiIn uint64
-	for _, txIn := range tx.TxIn {
+	for _, txIn := range tx.inner.txIn() {
 		// Ensure the referenced input transaction is available.
 		utxo := utxoView.LookupEntry(txIn.PreviousOutPoint)
 		if utxo == nil || utxo.IsSpent() {
@@ -211,7 +211,7 @@ func CheckTransactionInputs(tx *MsgUTXO, txHeight uint64, utxoView *UtxoViewpoin
 	// to ignore overflow and out of range errors here because those error
 	// conditions would have already been caught by checkTransactionSanity.
 	var totalSatoshiOut uint64
-	for _, txOut := range tx.TxOut {
+	for _, txOut := range tx.inner.txOut() {
 		totalSatoshiOut += txOut.Value
 	}
 

@@ -298,48 +298,8 @@ func (p *StateProcessor) processTransactions(block *types.Block, utxoView *types
 	var emittedEtxs types.Transactions
 	for i, tx := range block.Transactions() {
 		startProcess := time.Now()
-		msg, err := tx.AsMessageWithSender(types.MakeSigner(p.config, header.Number()), header.BaseFee(), senders[tx.Hash()])
-		if err != nil {
-			return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-		}
-		timeSignDelta := time.Since(startProcess)
-		timeSign += timeSignDelta
-
-		startTimePrepare := time.Now()
-		statedb.Prepare(tx.Hash(), i)
-		timePrepareDelta := time.Since(startTimePrepare)
-		timePrepare += timePrepareDelta
-
-		var receipt *types.Receipt
-		if tx.Type() == types.ExternalTxType {
-			startTimeEtx := time.Now()
-			etxEntry, exists := etxSet[tx.Hash()]
-			if !exists { // Verify that the ETX exists in the set
-				return nil, nil, nil, 0, fmt.Errorf("invalid external transaction: etx %x not found in unspent etx set", tx.Hash())
-			}
-			prevZeroBal := prepareApplyETX(statedb, &etxEntry.ETX)
-			receipt, err = applyTransaction(msg, p.config, p.hc, nil, gp, statedb, blockNumber, blockHash, &etxEntry.ETX, usedGas, vmenv, &etxRLimit, &etxPLimit)
-			statedb.SetBalance(common.ZeroInternal, prevZeroBal) // Reset the balance to what it previously was. Residual balance will be lost
-
-			if err != nil {
-				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, etxEntry.ETX.Hash().Hex(), err)
-			}
-
-			delete(etxSet, etxEntry.ETX.Hash()) // This ETX has been spent so remove it from the unspent set
-			timeEtxDelta := time.Since(startTimeEtx)
-			timeEtx += timeEtxDelta
-
-		} else if tx.Type() == types.InternalTxType || tx.Type() == types.InternalToExternalTxType {
-			startTimeTx := time.Now()
-
-			receipt, err = applyTransaction(msg, p.config, p.hc, nil, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, &etxRLimit, &etxPLimit)
-			if err != nil {
-				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-			}
-			emittedEtxs = append(emittedEtxs, receipt.Etxs...)
-			timeTxDelta := time.Since(startTimeTx)
-			timeTx += timeTxDelta
-		} else if tx.Type() == types.UtxoTxType {
+		if tx.Type() == types.UtxoTxType {
+			fmt.Println("processing utxo tx", tx.Hash().Hex())
 			_, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), utxoView)
 			if err != nil {
 				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
@@ -354,10 +314,54 @@ func (p *StateProcessor) processTransactions(block *types.Block, utxoView *types
 				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
 		} else {
-			return nil, nil, nil, 0, ErrTxTypeNotSupported
+			msg, err := tx.AsMessageWithSender(types.MakeSigner(p.config, header.Number()), header.BaseFee(), senders[tx.Hash()])
+			if err != nil {
+				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+
+			timeSignDelta := time.Since(startProcess)
+			timeSign += timeSignDelta
+
+			startTimePrepare := time.Now()
+			statedb.Prepare(tx.Hash(), i)
+			timePrepareDelta := time.Since(startTimePrepare)
+			timePrepare += timePrepareDelta
+
+			var receipt *types.Receipt
+			if tx.Type() == types.ExternalTxType {
+				startTimeEtx := time.Now()
+				etxEntry, exists := etxSet[tx.Hash()]
+				if !exists { // Verify that the ETX exists in the set
+					return nil, nil, nil, 0, fmt.Errorf("invalid external transaction: etx %x not found in unspent etx set", tx.Hash())
+				}
+				prevZeroBal := prepareApplyETX(statedb, &etxEntry.ETX)
+				receipt, err = applyTransaction(msg, p.config, p.hc, nil, gp, statedb, blockNumber, blockHash, &etxEntry.ETX, usedGas, vmenv, &etxRLimit, &etxPLimit)
+				statedb.SetBalance(common.ZeroInternal, prevZeroBal) // Reset the balance to what it previously was. Residual balance will be lost
+
+				if err != nil {
+					return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, etxEntry.ETX.Hash().Hex(), err)
+				}
+
+				delete(etxSet, etxEntry.ETX.Hash()) // This ETX has been spent so remove it from the unspent set
+				timeEtxDelta := time.Since(startTimeEtx)
+				timeEtx += timeEtxDelta
+
+			} else if tx.Type() == types.InternalTxType || tx.Type() == types.InternalToExternalTxType {
+				startTimeTx := time.Now()
+
+				receipt, err = applyTransaction(msg, p.config, p.hc, nil, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, &etxRLimit, &etxPLimit)
+				if err != nil {
+					return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
+				emittedEtxs = append(emittedEtxs, receipt.Etxs...)
+				timeTxDelta := time.Since(startTimeTx)
+				timeTx += timeTxDelta
+			} else {
+				return nil, nil, nil, 0, ErrTxTypeNotSupported
+			}
+			receipts = append(receipts, receipt)
+			allLogs = append(allLogs, receipt.Logs...)
 		}
-		receipts = append(receipts, receipt)
-		allLogs = append(allLogs, receipt.Logs...)
 		i++
 	}
 

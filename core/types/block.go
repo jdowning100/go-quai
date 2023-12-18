@@ -889,7 +889,7 @@ func (b *Block) UTXOs() []*Transaction {
 			utxos = append(utxos, t)
 		}
 	}
-	return nil
+	return utxos
 }
 
 // Body returns the non-header content of the block.

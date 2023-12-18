@@ -1365,7 +1365,7 @@ func DeleteUtxo(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
-func WriteSpentUTXOs(db ethdb.KeyValueWriter, hash common.Hash, spentUTXOs []types.SpentTxOut) {
+func WriteSpentUTXOs(db ethdb.KeyValueWriter, hash common.Hash, spentUTXOs *[]types.SpentTxOut) {
 	data, err := rlp.EncodeToBytes(spentUTXOs)
 	if err != nil {
 		log.Fatal("Failed to RLP encode spent utxos", "err", err)

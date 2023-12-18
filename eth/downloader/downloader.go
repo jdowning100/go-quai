@@ -1157,7 +1157,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	)
 
 	for _, result := range results {
-		block := types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles, result.ExtTransactions, nil, result.SubManifest)
+		block := types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles, result.ExtTransactions, result.SubManifest)
 		if d.core.IsBlockHashABadHash(block.Hash()) {
 			return errBadBlockFound
 		}

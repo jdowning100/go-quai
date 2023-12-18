@@ -225,24 +225,23 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
 
-	err = p.validateUTXOs(block, utxoView, &stxos)
+	receipts, allLogs, statedb, usedGas, err := p.processTransactions(block, utxoView, &stxos, etxSet, statedb)
 	if err != nil {
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
+
+	// Update the best hash for view to include this block since all of its
+	// transactions have been connected.
+	utxoView.SetBestHash(block.Hash())
 
 	// write the stxos to the db
 	fmt.Println("len(stxos) = ", len(stxos))
-	rawdb.WriteSpentUTXOs(p.hc.bc.db, block.Hash(), stxos)
-
-	receipts, allLogs, statedb, usedGas, err := p.processAccountTransactions(block, etxSet, statedb)
-	if err != nil {
-		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
-	}
+	rawdb.WriteSpentUTXOs(p.hc.bc.db, block.Hash(), &stxos)
 
 	return receipts, allLogs, statedb, utxoView, usedGas, nil
 }
 
-func (p *StateProcessor) processAccountTransactions(block *types.Block, etxSet types.EtxSet, statedb *state.StateDB) (types.Receipts, []*types.Log, *state.StateDB, uint64, error) {
+func (p *StateProcessor) processTransactions(block *types.Block, utxoView *types.UtxoViewpoint, stxos *[]types.SpentTxOut, etxSet types.EtxSet, statedb *state.StateDB) (types.Receipts, []*types.Log, *state.StateDB, uint64, error) {
 	var (
 		receipts    types.Receipts
 		usedGas     = new(uint64)
@@ -337,6 +336,20 @@ func (p *StateProcessor) processAccountTransactions(block *types.Block, etxSet t
 			}
 			timeTxDelta := time.Since(startTimeTx)
 			timeTx += timeTxDelta
+		} else if tx.Type() == types.UtxoTxType {
+			_, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), utxoView)
+			if err != nil {
+				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+
+			// Add all of the outputs for this transaction which are not
+			// provably unspendable as available utxos.  Also, the passed
+			// spent txos slice is updated to contain an entry for each
+			// spent txout in the order each transaction spends them.
+			err = utxoView.ConnectTransaction(tx, block.Header().NumberU64(), stxos)
+			if err != nil {
+				return nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
 		} else {
 			return nil, nil, nil, 0, ErrTxTypeNotSupported
 		}
@@ -355,63 +368,6 @@ func (p *StateProcessor) processAccountTransactions(block *types.Block, etxSet t
 
 	log.Debug("Total Tx Processing Time", "signing time", common.PrettyDuration(timeSign), "senders cache time", common.PrettyDuration(timeSenders), "percent cached internal txs", fmt.Sprintf("%.2f", float64(len(senders))/float64(numInternalTxs)*100), "prepare state time", common.PrettyDuration(timePrepare), "etx time", common.PrettyDuration(timeEtx), "tx time", common.PrettyDuration(timeTx))
 	return receipts, allLogs, statedb, *usedGas, nil
-}
-
-// For reference, this mirror checkConnectBlock in BTCD
-func (p *StateProcessor) validateUTXOs(block *types.Block, view *types.UtxoViewpoint, stxos *[]types.SpentTxOut) error {
-	// Perform several checks on the inputs for each transaction.  Also
-	// accumulate the total fees.  This could technically be combined with
-	// the loop above instead of running another loop over the transactions,
-	// but by separating it we can avoid running the more expensive (though
-	// still relatively cheap as compared to running the scripts) checks
-	// against all the inputs when the signature operations are out of
-	// bounds.
-	transactions := block.UTXOs()
-	var totalFees uint64
-	for _, tx := range transactions {
-		txFee, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), view)
-		if err != nil {
-			return err
-		}
-
-		// Sum the total fees and ensure we don't overflow the
-		// accumulator.
-		lastTotalFees := totalFees
-		totalFees += txFee
-		if totalFees < lastTotalFees {
-			// return ruleError(ErrBadFees, "total fees for block "+
-			// 	"overflows accumulator")
-		}
-
-		// Add all of the outputs for this transaction which are not
-		// provably unspendable as available utxos.  Also, the passed
-		// spent txos slice is updated to contain an entry for each
-		// spent txout in the order each transaction spends them.
-		err = view.ConnectTransaction(tx, block.Header().NumberU64(), stxos)
-		if err != nil {
-			return err
-		}
-	}
-
-	runScripts := true
-
-	// Now that the inexpensive checks are done and have passed, verify the
-	// transactions are actually allowed to spend the coins by running the
-	// expensive ECDSA signature check scripts.  Doing this last helps
-	// prevent CPU exhaustion attacks.
-	if runScripts {
-		// err := checkBlockScripts(block, view, scriptFlags, b.sigCache,
-		// 	b.hashCache)
-		// if err != nil {
-		// 	return err
-		// }
-	}
-
-	// Update the best hash for view to include this block since all of its
-	// transactions have been connected.
-	view.SetBestHash(block.Hash())
-
-	return nil
 }
 
 func applyTransaction(msg types.Message, config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, etxRLimit, etxPLimit *int) (*types.Receipt, error) {

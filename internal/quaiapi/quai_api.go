@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -580,7 +581,7 @@ func (s *PublicBlockChainQuaiAPI) fillSubordinateManifest(b *types.Block) (*type
 		if subManifest == nil || b.ManifestHash(nodeCtx+1) != types.DeriveSha(subManifest, trie.NewStackTrie(nil)) {
 			return nil, errors.New("reconstructed sub manifest does not match manifest hash")
 		}
-		return types.NewBlockWithHeader(b.Header()).WithBody(b.Transactions(), b.Uncles(), b.ExtTransactions(), b.UTXOs(), subManifest), nil
+		return types.NewBlockWithHeader(b.Header()).WithBody(b.Transactions(), b.Uncles(), b.ExtTransactions(), subManifest), nil
 	}
 }
 
@@ -606,6 +607,7 @@ func (s *PublicBlockChainQuaiAPI) ReceiveMinedHeader(ctx context.Context, raw js
 	} else if err != nil {
 		return err
 	}
+	fmt.Println("Received mined header", "txs", len(block.Transactions()))
 	s.b.WriteBlock(block)
 	// Broadcast the block and announce chain insertion event
 	if block.Header() != nil {

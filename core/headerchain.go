@@ -1204,7 +1204,7 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.
 	}
 
 	tx := types.NewTx(utxo)
-
+	fmt.Println("coinbase tx", tx.Hash().Hex())
 	return tx, nil
 }
 

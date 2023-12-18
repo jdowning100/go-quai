@@ -511,6 +511,19 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 	}
 	w.current = work
 
+	extraNonce := uint64(0)
+	coinbaseScript, err := standardCoinbaseScript(int32(block.NumberU64()), extraNonce)
+	if err != nil {
+		return nil, err
+	}
+	coinbaseTx, err := createCoinbaseTx(coinbaseScript,
+		int32(work.header.NumberU64()), work.header.Coinbase())
+	if err != nil {
+		return nil, err
+	}
+
+	work.txs = append(work.txs, coinbaseTx)
+
 	// Create a local environment copy, avoid the data race with snapshot state.
 	newBlock, err := w.FinalizeAssemble(w.hc, work.header, block, work.state, work.txs, work.unclelist(), work.etxs, work.subManifest, work.receipts)
 	if err != nil {
@@ -527,12 +540,12 @@ func (w *worker) printPendingHeaderInfo(work *environment, block *types.Block, s
 	work.uncleMu.RLock()
 	if w.CurrentInfo(block.Header()) {
 		log.Info("Commit new sealing work", "number", block.Number(), "sealhash", block.Header().SealHash(),
-			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()),
+			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()), "utxos", len(block.UTXOs()),
 			"gas", block.GasUsed(), "fees", totalFees(block, work.receipts),
 			"elapsed", common.PrettyDuration(time.Since(start)))
 	} else {
 		log.Debug("Commit new sealing work", "number", block.Number(), "sealhash", block.Header().SealHash(),
-			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()),
+			"uncles", len(work.uncles), "txs", work.tcount, "etxs", len(block.ExtTransactions()), "utxos", len(block.UTXOs()),
 			"gas", block.GasUsed(), "fees", totalFees(block, work.receipts),
 			"elapsed", common.PrettyDuration(time.Since(start)))
 	}
@@ -917,6 +930,7 @@ func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *typ
 		return nil, err
 	}
 
+	fmt.Println("block utxo here", len(block.UTXOs()))
 	manifestHash := w.ComputeManifestHash(parent.Header())
 
 	if w.hc.ProcessingState() {
@@ -936,6 +950,8 @@ func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *typ
 			etxRollupHash := types.DeriveSha(etxRollup, trie.NewStackTrie(nil))
 			block.Header().SetEtxRollupHash(etxRollupHash)
 		}
+
+		fmt.Println("block body", len(block.Body().Transactions))
 
 		w.AddPendingBlockBody(block.Header(), block.Body())
 	}
@@ -1022,8 +1038,10 @@ func copyReceipts(receipts []*types.Receipt) []*types.Receipt {
 func totalFees(block *types.Block, receipts []*types.Receipt) *big.Float {
 	feesWei := new(big.Int)
 	for i, tx := range block.Transactions() {
-		minerFee, _ := tx.EffectiveGasTip(block.BaseFee())
-		feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), minerFee))
+		if tx.Type() != types.UtxoTxType {
+			minerFee, _ := tx.EffectiveGasTip(block.BaseFee())
+			feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), minerFee))
+		}
 	}
 	return new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
 }

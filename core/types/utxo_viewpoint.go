@@ -204,9 +204,9 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 // it exists and is not provably unspendable.  When the view already has an
 // entry for the output, it will be marked unspent.  All fields will be updated
 // for existing entries since it's possible it has changed during a reorg.
-func (view *UtxoViewpoint) AddTxOut(tx *UTXO, txOutIdx uint32, blockHeight uint64) {
+func (view *UtxoViewpoint) AddTxOut(tx *Transaction, txOutIdx uint32, blockHeight uint64) {
 	// Can't add an output for an out of bounds index.
-	if txOutIdx >= uint32(len(tx.MsgTx().TxOut)) {
+	if txOutIdx >= uint32(len(tx.inner.txOut())) {
 		return
 	}
 
@@ -215,20 +215,20 @@ func (view *UtxoViewpoint) AddTxOut(tx *UTXO, txOutIdx uint32, blockHeight uint6
 	// being replaced by a different transaction with the same hash.  This
 	// is allowed so long as the previous transaction is fully spent.
 	prevOut := OutPoint{Hash: tx.Hash(), Index: txOutIdx}
-	txOut := tx.MsgTx().TxOut[txOutIdx]
-	view.addTxOut(prevOut, txOut, IsCoinBaseTx(tx.MsgTx()), blockHeight)
+	txOut := tx.inner.txOut()[txOutIdx]
+	view.addTxOut(prevOut, txOut, IsCoinBaseTx(tx), blockHeight)
 }
 
 // AddTxOuts adds all outputs in the passed transaction which are not provably
 // unspendable to the view.  When the view already has entries for any of the
 // outputs, they are simply marked unspent.  All fields will be updated for
 // existing entries since it's possible it has changed during a reorg.
-func (view *UtxoViewpoint) AddTxOuts(tx *MsgUTXO, blockHeight uint64) {
+func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, blockHeight uint64) {
 	// Loop all of the transaction outputs and add those which are not
 	// provably unspendable.
 	isCoinBase := IsCoinBaseTx(tx)
-	prevOut := OutPoint{Hash: tx.TxHash()}
-	for txOutIdx, txOut := range tx.TxOut {
+	prevOut := OutPoint{Hash: tx.Hash()}
+	for txOutIdx, txOut := range tx.inner.txOut() {
 		// Update existing entries.  All fields are updated because it's
 		// possible (although extremely unlikely) that the existing
 		// entry is being replaced by a different transaction with the
@@ -251,7 +251,7 @@ func NewUtxoViewpoint() *UtxoViewpoint {
 // spent.  In addition, when the 'stxos' argument is not nil, it will be updated
 // to append an entry for each spent txout.  An error will be returned if the
 // view does not contain the required utxos.
-func (view *UtxoViewpoint) ConnectTransaction(tx *MsgUTXO, blockHeight uint64, stxos *[]SpentTxOut) error {
+func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, blockHeight uint64, stxos *[]SpentTxOut) error {
 	// Coinbase transactions don't have any inputs to spend.
 	if IsCoinBaseTx(tx) {
 		// Add the transaction's outputs as available utxos.
@@ -262,7 +262,7 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *MsgUTXO, blockHeight uint64, s
 	// Spend the referenced utxos by marking them spent in the view and,
 	// if a slice was provided for the spent txout details, append an entry
 	// to it.
-	for _, txIn := range tx.TxIn {
+	for _, txIn := range tx.inner.txIn() {
 		// Ensure the referenced utxo exists in the view.  This should
 		// never happen unless there is a bug is introduced in the code.
 		entry := view.Entries[txIn.PreviousOutPoint]

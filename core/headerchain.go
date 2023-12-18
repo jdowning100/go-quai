@@ -1049,7 +1049,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	txInFlight := map[common.Hash]int{}
 	transactions := block.UTXOs()
 	for i, tx := range transactions {
-		txInFlight[tx.TxHash()] = i
+		txInFlight[tx.Hash()] = i
 	}
 
 	// Loop through all of the transaction inputs (except for the coinbase
@@ -1057,7 +1057,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	// what is already known (in-flight).
 	needed := make([]types.OutPoint, 0, len(transactions))
 	for i, tx := range transactions[1:] {
-		for _, txIn := range tx.TxIn {
+		for _, txIn := range tx.TxIn() {
 			// It is acceptable for a transaction input to reference
 			// the output of another transaction in this block only
 			// if the referenced transaction comes before the
@@ -1175,7 +1175,7 @@ func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, e
 //
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
-func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.MsgUTXO, error) {
+func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
 	// Create the script to pay to the provided payment address if one was
 	// specified.  Otherwise create a script that allows the coinbase to be
 	// redeemable by anyone.
@@ -1196,20 +1196,28 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.
 	// 	}
 	// }
 
-	tx := types.NewMsgTx(types.UTXOVersion)
-	tx.AddTxIn(&types.TxIn{
+	in := &types.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
 		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
 			types.MaxPrevOutIndex),
 		SignatureScript: coinbaseScript,
 		Sequence:        types.MaxTxInSequenceNum,
-	})
-	tx.AddTxOut(&types.TxOut{
+	}
+
+	out := &types.TxOut{
 		Value: 10000000,
 		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
 		PkScript: pkScript,
-	})
+	}
+
+	utxo := &types.UtxoTx{
+		TxIn:  []*types.TxIn{in},
+		TxOut: []*types.TxOut{out},
+	}
+
+	tx := types.NewTx(utxo)
+	fmt.Println("coinbase tx", tx.Hash().Hex())
 	return tx, nil
 }
 
@@ -1227,10 +1235,12 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 	// reverse order.  This is necessary since transactions later in a block
 	// can spend from previous ones.
 	stxoIdx := len(stxos) - 1
-	transactions := block.UTXOs()
-	for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
-		tx := transactions[txIdx]
 
+	transactions := block.UTXOs()
+
+	for txIdx := len(transactions) - 1; txIdx > -1; txIdx-- {
+
+		tx := transactions[txIdx]
 		// All entries will need to potentially be marked as a coinbase.
 		var packedFlags types.TxoFlags
 		isCoinBase := txIdx == 0
@@ -1249,9 +1259,9 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 		// entry for it and then mark it spent.  This is done because
 		// the code relies on its existence in the view in order to
 		// signal modifications have happened.
-		txHash := tx.TxHash()
+		txHash := tx.Hash()
 		prevOut := types.OutPoint{Hash: txHash}
-		for txOutIdx, txOut := range tx.TxOut {
+		for txOutIdx, txOut := range tx.TxOut() {
 			// if txscript.IsUnspendable(txOut.PkScript) {
 			// 	continue
 			// }
@@ -1279,7 +1289,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 		if isCoinBase {
 			continue
 		}
-		for txInIdx := len(tx.TxIn) - 1; txInIdx > -1; txInIdx-- {
+		for txInIdx := len(tx.TxIn()) - 1; txInIdx > -1; txInIdx-- {
 			// Ensure the spent txout index is decremented to stay
 			// in sync with the transaction input.
 			stxo := &stxos[stxoIdx]
@@ -1288,7 +1298,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 			// When there is not already an entry for the referenced
 			// output in the view, it means it was previously spent,
 			// so create a new utxo entry in order to resurrect it.
-			originOut := &tx.TxIn[txInIdx].PreviousOutPoint
+			originOut := &tx.TxIn()[txInIdx].PreviousOutPoint
 			entry := view.Entries[*originOut]
 			if entry == nil {
 				entry = new(types.UtxoEntry)

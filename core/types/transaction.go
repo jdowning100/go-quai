@@ -44,6 +44,7 @@ const (
 	InternalTxType = iota
 	ExternalTxType
 	InternalToExternalTxType
+	UtxoTxType
 )
 
 // Transaction is a Quai transaction.
@@ -74,7 +75,7 @@ func (tx *Transaction) SetInner(inner TxData) {
 
 // TxData is the underlying data of a transaction.
 //
-// This is implemented by InternalTx, ExternalTx and InternalToExternal.
+// This is implemented by InternalTx, ExternalTx, InternalToExternal, and UtxoTx.
 type TxData interface {
 	txType() byte // returns the type ID
 	copy() TxData // creates a deep copy and initializes all fields
@@ -94,7 +95,9 @@ type TxData interface {
 	etxGasTip() *big.Int
 	etxData() []byte
 	etxAccessList() AccessList
-
+	txIn() []*TxIn
+	txOut() []*TxOut
+	// do we need a tx version?
 	rawSignatureValues() (v, r, s *big.Int)
 	setSignatureValues(chainID, v, r, s *big.Int)
 }
@@ -360,6 +363,10 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		var inner InternalToExternalTx
 		err := rlp.DecodeBytes(b[1:], &inner)
 		return &inner, err
+	case UtxoTxType:
+		var inner UtxoTx
+		err := rlp.DecodeBytes(b[1:], &inner)
+		return &inner, err
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -441,6 +448,10 @@ func (tx *Transaction) ETXAccessList() AccessList { return tx.inner.etxAccessLis
 func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 
 func (tx *Transaction) ETXSender() common.Address { return tx.inner.(*ExternalTx).Sender }
+
+func (tx *Transaction) TxOut() []*TxOut { return tx.inner.txOut() }
+
+func (tx *Transaction) TxIn() []*TxIn { return tx.inner.txIn() }
 
 func (tx *Transaction) IsInternalToExternalTx() (inner *InternalToExternalTx, ok bool) {
 	inner, ok = tx.inner.(*InternalToExternalTx)

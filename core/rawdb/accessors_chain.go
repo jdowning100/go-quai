@@ -884,7 +884,7 @@ func ReadBlock(db ethdb.Reader, hash common.Hash, number uint64) *types.Block {
 	if body == nil {
 		return nil
 	}
-	return types.NewBlockWithHeader(header).WithBody(body.Transactions, body.Uncles, body.ExtTransactions, body.UTXOs, body.SubManifest)
+	return types.NewBlockWithHeader(header).WithBody(body.Transactions, body.Uncles, body.ExtTransactions, body.SubManifest)
 }
 
 // WriteBlock serializes a block into the database, header and body separately.
@@ -937,7 +937,7 @@ func ReadBadBlock(db ethdb.Reader, hash common.Hash) *types.Block {
 	}
 	for _, bad := range badBlocks {
 		if bad.Header.Hash() == hash {
-			return types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.UTXOs, bad.Body.SubManifest)
+			return types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.SubManifest)
 		}
 	}
 	return nil
@@ -956,7 +956,7 @@ func ReadAllBadBlocks(db ethdb.Reader) []*types.Block {
 	}
 	var blocks []*types.Block
 	for _, bad := range badBlocks {
-		blocks = append(blocks, types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.UTXOs, bad.Body.SubManifest))
+		blocks = append(blocks, types.NewBlockWithHeader(bad.Header).WithBody(bad.Body.Transactions, bad.Body.Uncles, bad.Body.ExtTransactions, bad.Body.SubManifest))
 	}
 	return blocks
 }
@@ -1418,7 +1418,7 @@ func DeleteUtxo(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
-func WriteSpentUTXOs(db ethdb.KeyValueWriter, hash common.Hash, spentUTXOs []types.SpentTxOut) {
+func WriteSpentUTXOs(db ethdb.KeyValueWriter, hash common.Hash, spentUTXOs *[]types.SpentTxOut) {
 	data, err := rlp.EncodeToBytes(spentUTXOs)
 	if err != nil {
 		log.Fatal("Failed to RLP encode spent utxos", "err", err)

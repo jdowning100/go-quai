@@ -29,7 +29,7 @@ func CountSpentOutputs(block *Block) int {
 	var numSpent int
 	fmt.Println("block.UTXOs(): ", block.UTXOs())
 	for _, tx := range block.UTXOs()[1:] {
-		numSpent += len(tx.TxIn)
+		numSpent += len(tx.TxIn())
 	}
 	return numSpent
 }

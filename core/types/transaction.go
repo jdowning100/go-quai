@@ -256,6 +256,10 @@ func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 
 func (tx *Transaction) ETXSender() common.Address { return tx.inner.(*ExternalTx).Sender }
 
+func (tx *Transaction) TxOut() []*TxOut { return tx.inner.txOut() }
+
+func (tx *Transaction) TxIn() []*TxIn { return tx.inner.txIn() }
+
 func (tx *Transaction) IsInternalToExternalTx() (inner *InternalToExternalTx, ok bool) {
 	inner, ok = tx.inner.(*InternalToExternalTx)
 	return

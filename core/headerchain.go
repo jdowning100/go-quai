@@ -9,14 +9,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
 	"github.com/dominant-strategies/go-quai/core/rawdb"
 	"github.com/dominant-strategies/go-quai/core/state"
-	"github.com/dominant-strategies/go-quai/core/txscript"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
+	"github.com/dominant-strategies/go-quai/crypto"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
 	"github.com/dominant-strategies/go-quai/log"
@@ -1096,6 +1097,38 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	return hc.fetchUtxosMain(view, needed)
 }
 
+func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error {
+	transactions := block.UTXOs()
+
+	for _, tx := range transactions[1:] {
+		for _, txIn := range tx.TxIn() {
+
+			entry := view.LookupEntry(txIn.PreviousOutPoint)
+			if entry == nil {
+				continue
+			}
+
+			// Verify the pubkey
+			address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:])
+			entryAddr := common.BytesToAddress(entry.Address)
+			if !address.Equal(entryAddr) {
+				return errors.New("invalid address")
+			}
+
+			pubkey, err := schnorr.ParsePubKey(txIn.PubKey)
+			if err != nil {
+				return err
+			}
+			valid := tx.UtxoSignatures()[0].Verify(txIn.PreviousOutPoint.Hash.Bytes(), pubkey)
+			if !valid {
+				return errors.New("invalid signature")
+			}
+		}
+	}
+
+	return nil
+}
+
 // writeUtxoViewpoint updates the utxo set in the database based on the provided utxo view contents and state.  In
 // particular, only the entries that have been marked as modified are written
 // to the database.
@@ -1159,56 +1192,24 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 	return nil
 }
 
-// standardCoinbaseScript returns a standard script suitable for use as the
-// signature script of the coinbase transaction of a new block.  In particular,
-// it starts with the block height that is required by version 2 blocks and adds
-// the extra nonce as well as additional coinbase flags.
-func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, error) {
-	return txscript.NewScriptBuilder().AddInt64(int64(nextBlockHeight)).
-		AddInt64(int64(extraNonce)).
-		Script()
-}
-
 // createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy
 // based on the passed block height to the provided address.  When the address
 // is nil, the coinbase transaction will instead be redeemable by anyone.
 //
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
-func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
-	// Create the script to pay to the provided payment address if one was
-	// specified.  Otherwise create a script that allows the coinbase to be
-	// redeemable by anyone.
-	var pkScript []byte
-	if (addr != common.Address{}) {
-		var err error
-		pkScript, err = txscript.PayToAddrScript(addr)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// else {
-	// 	var err error
-	// 	scriptBuilder := txscript.NewScriptBuilder()
-	// 	pkScript, err = scriptBuilder.AddOp(txscript.OP_TRUE).Script()
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-
+func createCoinbaseTx(nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
 	in := &types.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
 		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
 			types.MaxPrevOutIndex),
-		SignatureScript: coinbaseScript,
-		Sequence:        types.MaxTxInSequenceNum,
 	}
 
 	out := &types.TxOut{
 		Value: 10000000,
 		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
-		PkScript: pkScript,
+		Address: addr.Bytes(),
 	}
 
 	utxo := &types.UtxoTx{
@@ -1271,7 +1272,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 			if entry == nil {
 				entry = &types.UtxoEntry{
 					Amount:      txOut.Value,
-					PkScript:    txOut.PkScript,
+					Address:     txOut.Address,
 					BlockHeight: block.NumberU64(),
 					PackedFlags: packedFlags,
 				}
@@ -1308,7 +1309,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 			// Restore the utxo using the stxo data from the spend
 			// journal and mark it as modified.
 			entry.Amount = stxo.Amount
-			entry.PkScript = stxo.PkScript
+			entry.Address = stxo.Address
 			entry.BlockHeight = stxo.Height
 			entry.PackedFlags = types.TfModified
 			if stxo.IsCoinBase {

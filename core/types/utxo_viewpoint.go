@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/dominant-strategies/go-quai/common"
 )
@@ -33,7 +35,7 @@ type UtxoEntry struct {
 	// lot of these in memory, so a few extra bytes of padding adds up.
 
 	Amount      uint64
-	PkScript    []byte // The public key script for the output.
+	Address     []byte // The address of the output holder.
 	BlockHeight uint64 // Height of block containing tx.
 
 	// packedFlags contains additional info about output such as whether it
@@ -96,7 +98,7 @@ func (entry *UtxoEntry) Clone() *UtxoEntry {
 
 	return &UtxoEntry{
 		Amount:      entry.Amount,
-		PkScript:    entry.PkScript,
+		Address:     entry.Address,
 		BlockHeight: entry.BlockHeight,
 		PackedFlags: entry.PackedFlags,
 	}
@@ -112,7 +114,7 @@ func NewUtxoEntry(
 
 	return &UtxoEntry{
 		Amount:      txOut.Value,
-		PkScript:    txOut.PkScript,
+		Address:     txOut.Address,
 		BlockHeight: blockHeight,
 		PackedFlags: cbFlag,
 	}
@@ -166,8 +168,8 @@ func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
 	}
 
 	return &TxOut{
-		Value:    prevOut.Amount,
-		PkScript: prevOut.PkScript,
+		Value:   prevOut.Amount,
+		Address: prevOut.Address,
 	}
 }
 
@@ -176,8 +178,13 @@ func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
 // marked unspent.  All fields will be updated for existing entries since it's
 // possible it has changed during a reorg.
 func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, blockHeight uint64) {
+
+	fmt.Println("AddTxOuts")
+	fmt.Println(outpoint.Hash, outpoint.Index)
+	fmt.Println(txOut.Value, txOut.Address)
+
 	// Don't add provably unspendable outputs.
-	if txscript.IsUnspendable(txOut.PkScript) {
+	if txscript.IsUnspendable(txOut.Address) {
 		return
 	}
 
@@ -192,7 +199,7 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 	}
 
 	entry.Amount = txOut.Value
-	entry.PkScript = txOut.PkScript
+	entry.Address = txOut.Address
 	entry.BlockHeight = blockHeight
 	entry.PackedFlags = TfModified
 	if isCoinBase {
@@ -275,7 +282,7 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, blockHeight uint6
 			// Populate the stxo details using the utxo entry.
 			var stxo = SpentTxOut{
 				Amount:     entry.Amount,
-				PkScript:   entry.PkScript,
+				Address:    entry.Address,
 				Height:     entry.BlockHeight,
 				IsCoinBase: entry.IsCoinBase(),
 			}

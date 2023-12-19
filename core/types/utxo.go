@@ -25,98 +25,10 @@ const (
 	defaultTxInOutAlloc = 15
 )
 
-// Tx defines a bitcoin transaction that provides easier and more efficient
-// manipulation of raw transactions.  It also memoizes the hash for the
-// transaction on its first access so subsequent accesses don't have to repeat
-// the relatively expensive hashing operations.
-type UTXO struct {
-	msgUTXO       *MsgUTXO    // Underlying MsgUTXO
-	txHash        common.Hash // Cached transaction hash
-	txHashWitness common.Hash // Cached transaction witness hash
-	txHasWitness  *bool       // If the transaction has witness data
-	txIndex       int         // Position within a block or TxIndexUnknown
-}
-
-// MsgTx returns the underlying wire.MsgTx for the transaction.
-func (t *UTXO) MsgTx() *MsgUTXO {
-	// Return the cached transaction.
-	return t.msgUTXO
-}
-
-// NewMsgTx returns a new bitcoin tx message that conforms to the Message
-// interface.  The return instance has a default version of TxVersion and there
-// are no transaction inputs or outputs.  Also, the lock time is set to zero
-// to indicate the transaction is valid immediately as opposed to some time in
-// future.
-func NewMsgTx(version uint32) *MsgUTXO {
-	return &MsgUTXO{
-		Version: version,
-		TxIn:    make([]*TxIn, 0, defaultTxInOutAlloc),
-		TxOut:   make([]*TxOut, 0, defaultTxInOutAlloc),
-	}
-}
-
-// Hash returns the hash of the transaction.  This is equivalent to
-// calling TxHash on the underlying wire.MsgTx, however it caches the
-// result so subsequent calls are more efficient.
-func (t *UTXO) Hash() common.Hash {
-	// Return the cached hash if it has already been generated.
-	if (t.txHash != common.Hash{}) {
-		return t.txHash
-	}
-
-	// Cache the hash and return it.
-	hash := t.msgUTXO.TxHash()
-	t.txHash = hash
-	return hash
-}
-
-// MsgUTXO implements the Message interface and represents a bitcoin tx message.
-// It is used to deliver transaction information in response to a getdata
-// message (MsgGetData) for a given transaction.
-//
-// Use the AddTxIn and AddTxOut functions to build up the list of transaction
-// inputs and outputs.
-type MsgUTXO struct {
-	Version  uint32
-	TxIn     []*TxIn
-	TxOut    []*TxOut
-	LockTime uint32
-}
-
-// AddTxIn adds a transaction input to the message.
-func (msg *MsgUTXO) AddTxIn(ti *TxIn) {
-	msg.TxIn = append(msg.TxIn, ti)
-}
-
-// AddTxOut adds a transaction output to the message.
-func (msg *MsgUTXO) AddTxOut(to *TxOut) {
-	msg.TxOut = append(msg.TxOut, to)
-}
-
-// TxHash generates the Hash for the transaction.
-func (msg *MsgUTXO) TxHash() common.Hash {
-	return prefixedRlpHash(3, msg)
-}
-
-// GetBlockTemplateResultTx models the transactions field of the
-// getblocktemplate command.
-type GetBlockTemplateResultTx struct {
-	Data    string   `json:"data"`
-	Hash    string   `json:"hash"`
-	TxID    string   `json:"txid"`
-	Depends []uint64 `json:"depends"`
-	Fee     uint64   `json:"fee"`
-	SigOps  uint64   `json:"sigops"`
-	Weight  uint64   `json:"weight"`
-}
-
 // TxIn defines a bitcoin transaction input.
 type TxIn struct {
 	PreviousOutPoint OutPoint
-	SignatureScript  []byte
-	Witness          TxWitness
-	Sequence         uint32
+	PubKey           []byte
 }
 
 // OutPoint defines a bitcoin data type that is used to track previous
@@ -186,40 +98,17 @@ func NewOutPoint(hash *common.Hash, index uint32) *OutPoint {
 // NewTxIn returns a new bitcoin transaction input with the provided
 // previous outpoint point and signature script with a default sequence of
 // MaxTxInSequenceNum.
-func NewTxIn(prevOut *OutPoint, signatureScript []byte, witness [][]byte) *TxIn {
+func NewTxIn(prevOut *OutPoint, pubkey []byte, witness [][]byte) *TxIn {
 	return &TxIn{
 		PreviousOutPoint: *prevOut,
-		SignatureScript:  signatureScript,
-		Witness:          witness,
-		// Sequence:         MaxTxInSequenceNum,
+		PubKey:           pubkey,
 	}
 }
 
-// TxWitness defines the witness for a TxIn. A witness is to be interpreted as
-// a slice of byte slices, or a stack with one or many elements.
-type TxWitness [][]byte
-
-// SerializeSize returns the number of bytes it would take to serialize the
-// transaction input's witness.
-// func (t TxWitness) SerializeSize() int {
-// 	// A varint to signal the number of elements the witness has.
-// 	n := VarIntSerializeSize(uuint64(len(t)))
-
-// 	// For each element in the witness, we'll need a varint to signal the
-// 	// size of the element, then finally the number of bytes the element
-// 	// itself comprises.
-// 	for _, witItem := range t {
-// 		n += VarIntSerializeSize(uuint64(len(witItem)))
-// 		n += len(witItem)
-// 	}
-
-// 	return n
-// }
-
 // TxOut defines a bitcoin transaction output.
 type TxOut struct {
-	Value    uint64
-	PkScript []byte
+	Value   uint64
+	Address []byte
 }
 
 // SerializeSize returns the number of bytes it would take to serialize the
@@ -232,9 +121,9 @@ type TxOut struct {
 
 // NewTxOut returns a new bitcoin transaction output with the provided
 // transaction value and public key script.
-func NewTxOut(value uint64, pkScript []byte) *TxOut {
+func NewTxOut(value uint64, address []byte) *TxOut {
 	return &TxOut{
-		Value:    value,
-		PkScript: pkScript,
+		Value:   value,
+		Address: address,
 	}
 }

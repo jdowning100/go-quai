@@ -1,6 +1,7 @@
 package types
 
 import (
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 )
 
@@ -114,8 +115,8 @@ type GetBlockTemplateResultTx struct {
 // TxIn defines a bitcoin transaction input.
 type TxIn struct {
 	PreviousOutPoint OutPoint
-	SignatureScript  []byte
-	Witness          TxWitness
+	PubKey           []byte
+	Signature        *schnorr.Signature
 	Sequence         uint32
 }
 
@@ -186,11 +187,10 @@ func NewOutPoint(hash *common.Hash, index uint32) *OutPoint {
 // NewTxIn returns a new bitcoin transaction input with the provided
 // previous outpoint point and signature script with a default sequence of
 // MaxTxInSequenceNum.
-func NewTxIn(prevOut *OutPoint, signatureScript []byte, witness [][]byte) *TxIn {
+func NewTxIn(prevOut *OutPoint, signature *schnorr.Signature, witness [][]byte) *TxIn {
 	return &TxIn{
 		PreviousOutPoint: *prevOut,
-		SignatureScript:  signatureScript,
-		Witness:          witness,
+		Signature:        signature,
 		// Sequence:         MaxTxInSequenceNum,
 	}
 }
@@ -218,8 +218,8 @@ type TxWitness [][]byte
 
 // TxOut defines a bitcoin transaction output.
 type TxOut struct {
-	Value    uint64
-	PkScript []byte
+	Value   uint64
+	Address []byte
 }
 
 // SerializeSize returns the number of bytes it would take to serialize the
@@ -232,9 +232,9 @@ type TxOut struct {
 
 // NewTxOut returns a new bitcoin transaction output with the provided
 // transaction value and public key script.
-func NewTxOut(value uint64, pkScript []byte) *TxOut {
+func NewTxOut(value uint64, address []byte) *TxOut {
 	return &TxOut{
-		Value:    value,
-		PkScript: pkScript,
+		Value:   value,
+		Address: address,
 	}
 }

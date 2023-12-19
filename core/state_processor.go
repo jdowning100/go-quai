@@ -225,6 +225,10 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
 
+	if err != nil {
+		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
+	}
+
 	receipts, allLogs, statedb, usedGas, err := p.processTransactions(block, utxoView, &stxos, etxSet, statedb)
 	if err != nil {
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err

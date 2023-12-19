@@ -520,13 +520,7 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 	}
 	w.current = work
 
-	extraNonce := uint64(0)
-	coinbaseScript, err := standardCoinbaseScript(int32(block.NumberU64()), extraNonce)
-	if err != nil {
-		return nil, err
-	}
-	coinbaseTx, err := createCoinbaseTx(coinbaseScript,
-		int32(work.header.NumberU64()), work.header.Coinbase())
+	coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64()), work.header.Coinbase())
 	if err != nil {
 		return nil, err
 	}

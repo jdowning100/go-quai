@@ -13,8 +13,8 @@ type SpentTxOut struct {
 	// Amount is the amount of the output.
 	Amount uint64
 
-	// PkScipt is the public key script for the output.
-	PkScript []byte
+	// Address is the output holder's address.
+	Address []byte
 
 	// Height is the height of the block containing the creating tx.
 	Height uint64

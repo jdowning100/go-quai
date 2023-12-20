@@ -15,7 +15,6 @@ import (
 	"github.com/dominant-strategies/go-quai/consensus/misc"
 	"github.com/dominant-strategies/go-quai/core/rawdb"
 	"github.com/dominant-strategies/go-quai/core/state"
-	"github.com/dominant-strategies/go-quai/core/txscript"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/crypto"
@@ -1178,16 +1177,6 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 	}
 
 	return nil
-}
-
-// standardCoinbaseScript returns a standard script suitable for use as the
-// signature script of the coinbase transaction of a new block.  In particular,
-// it starts with the block height that is required by version 2 blocks and adds
-// the extra nonce as well as additional coinbase flags.
-func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, error) {
-	return txscript.NewScriptBuilder().AddInt64(int64(nextBlockHeight)).
-		AddInt64(int64(extraNonce)).
-		Script()
 }
 
 // createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy

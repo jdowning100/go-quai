@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/math"
 	"github.com/dominant-strategies/go-quai/crypto"
@@ -92,9 +93,13 @@ type TxData interface {
 	etxAccessList() AccessList
 	txIn() []*TxIn
 	txOut() []*TxOut
+
 	// do we need a tx version?
 	rawSignatureValues() (v, r, s *big.Int)
 	setSignatureValues(chainID, v, r, s *big.Int)
+
+	// Schnorr segregated sigs
+	utxoSignatures() []*schnorr.Signature
 }
 
 // EncodeRLP implements rlp.Encoder
@@ -259,6 +264,8 @@ func (tx *Transaction) ETXSender() common.Address { return tx.inner.(*ExternalTx
 func (tx *Transaction) TxOut() []*TxOut { return tx.inner.txOut() }
 
 func (tx *Transaction) TxIn() []*TxIn { return tx.inner.txIn() }
+
+func (tx *Transaction) UtxoSignatures() []*schnorr.Signature { return tx.inner.utxoSignatures() }
 
 func (tx *Transaction) IsInternalToExternalTx() (inner *InternalToExternalTx, ok bool) {
 	inner, ok = tx.inner.(*InternalToExternalTx)

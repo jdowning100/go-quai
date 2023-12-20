@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/decred/dcrd/dcrec/secp256k1/v4/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
@@ -1106,7 +1106,7 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 			if err != nil {
 				return err
 			}
-			valid := txIn.Signature.Verify(txIn.PreviousOutPoint.Hash.Bytes(), pubkey)
+			valid := tx.UtxoSignatures()[0].Verify(txIn.PreviousOutPoint.Hash.Bytes(), pubkey)
 			if !valid {
 				return errors.New("invalid signature")
 			}
@@ -1191,7 +1191,6 @@ func createCoinbaseTx(nextBlockHeight int32, addr common.Address) (*types.Transa
 		// zero hash and max index.
 		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
 			types.MaxPrevOutIndex),
-		Signature: nil,
 	}
 
 	out := &types.TxOut{

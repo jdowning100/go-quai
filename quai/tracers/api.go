@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/big"
 	"os"
 	"runtime"
 	"sync"
@@ -32,12 +33,11 @@ import (
 	"github.com/dominant-strategies/go-quai/common/hexutil"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/core"
-	"github.com/dominant-strategies/go-quai/core/rawdb"
 	"github.com/dominant-strategies/go-quai/core/state"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
-	"github.com/dominant-strategies/go-quai/internal/ethapi"
+	"github.com/dominant-strategies/go-quai/internal/quaiapi"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/rlp"
@@ -58,17 +58,26 @@ const (
 // Backend interface provides the common API services (that are provided by
 // both full and light clients) with access to necessary functions.
 type Backend interface {
-	HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error)
-	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error)
-	BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error)
-	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
+	HeaderByHash(ctx context.Context, hash common.Hash) (*types.WorkObject, error)
+	GetHeaderOrCandidateByHash(hash common.Hash) *types.WorkObject
+	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.WorkObject, error)
+	BlockByHash(ctx context.Context, hash common.Hash) (*types.WorkObject, error)
+	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.WorkObject, error)
 	GetTransaction(ctx context.Context, txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64, error)
 	RPCGasCap() uint64
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
 	ChainDb() ethdb.Database
-	StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, checkLive bool) (*state.StateDB, error)
-	StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (core.Message, vm.BlockContext, *state.StateDB, error)
+	StateAtBlock(ctx context.Context, block *types.WorkObject, reexec uint64, base *state.StateDB, checkLive bool) (*state.StateDB, error)
+	StateAtTransaction(ctx context.Context, block *types.WorkObject, txIndex int, reexec uint64) (core.Message, vm.BlockContext, *state.StateDB, error)
+	Logger() *log.Logger
+	NodeLocation() common.Location
+	CheckIfEtxIsEligible(hash common.Hash, location common.Location) bool
+	IsGenesisHash(hash common.Hash) bool
+	NodeCtx() int
+	AddToCalcOrderCache(common.Hash, int, *big.Int)
+	CalcBaseFee(wo *types.WorkObject) *big.Int
+	CheckInCalcOrderCache(hash common.Hash) (*big.Int, int, bool)
 }
 
 // API is the collection of tracing APIs exposed over the private debugging endpoint.
@@ -90,7 +99,7 @@ func (context *chainContext) Engine() consensus.Engine {
 	return context.api.backend.Engine()
 }
 
-func (context *chainContext) GetHeader(hash common.Hash, number uint64) *types.Header {
+func (context *chainContext) GetHeader(hash common.Hash, number uint64) *types.WorkObject {
 	header, err := context.api.backend.HeaderByNumber(context.ctx, rpc.BlockNumber(number))
 	if err != nil {
 		return nil
@@ -105,6 +114,50 @@ func (context *chainContext) GetHeader(hash common.Hash, number uint64) *types.H
 	return header
 }
 
+func (context *chainContext) CheckIfEtxIsEligible(hash common.Hash, location common.Location) bool {
+	return context.api.backend.CheckIfEtxIsEligible(hash, location)
+}
+
+func (context *chainContext) GetHeaderByHash(hash common.Hash) *types.WorkObject {
+	header, err := context.api.backend.HeaderByHash(context.ctx, hash)
+	if err != nil {
+		return nil
+	}
+	return header
+}
+
+func (context *chainContext) IsGenesisHash(hash common.Hash) bool {
+	return context.api.backend.IsGenesisHash(hash)
+}
+
+func (context *chainContext) NodeCtx() int {
+	return context.api.backend.NodeCtx()
+}
+
+func (context *chainContext) GetHeaderOrCandidateByHash(hash common.Hash) *types.WorkObject {
+	return context.api.backend.GetHeaderOrCandidateByHash(hash)
+}
+
+func (context *chainContext) GetBlockByHash(hash common.Hash) *types.WorkObject {
+	block, err := context.api.backend.BlockByHash(context.ctx, hash)
+	if err != nil {
+		return nil
+	}
+	return block
+}
+
+func (context *chainContext) AddToCalcOrderCache(hash common.Hash, order int, entropy *big.Int) {
+	context.api.backend.AddToCalcOrderCache(hash, order, entropy)
+}
+
+func (context *chainContext) CalcBaseFee(wo *types.WorkObject) *big.Int {
+	return context.api.backend.CalcBaseFee(wo)
+}
+
+func (context *chainContext) CheckInCalcOrderCache(hash common.Hash) (*big.Int, int, bool) {
+	return context.api.backend.CheckInCalcOrderCache(hash)
+}
+
 // chainContext construts the context reader which is used by the evm for reading
 // the necessary chain context.
 func (api *API) chainContext(ctx context.Context) core.ChainContext {
@@ -113,7 +166,7 @@ func (api *API) chainContext(ctx context.Context) core.ChainContext {
 
 // blockByNumber is the wrapper of the chain access function offered by the backend.
 // It will return an error if the block is not found.
-func (api *API) blockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
+func (api *API) blockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.WorkObject, error) {
 	block, err := api.backend.BlockByNumber(ctx, number)
 	if err != nil {
 		return nil, err
@@ -126,7 +179,7 @@ func (api *API) blockByNumber(ctx context.Context, number rpc.BlockNumber) (*typ
 
 // blockByHash is the wrapper of the chain access function offered by the backend.
 // It will return an error if the block is not found.
-func (api *API) blockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+func (api *API) blockByHash(ctx context.Context, hash common.Hash) (*types.WorkObject, error) {
 	block, err := api.backend.BlockByHash(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -142,7 +195,7 @@ func (api *API) blockByHash(ctx context.Context, hash common.Hash) (*types.Block
 //
 // Note this function is friendly for the light client which can only retrieve the
 // historical(before the CHT) header/block by number.
-func (api *API) blockByNumberAndHash(ctx context.Context, number rpc.BlockNumber, hash common.Hash) (*types.Block, error) {
+func (api *API) blockByNumberAndHash(ctx context.Context, number rpc.BlockNumber, hash common.Hash) (*types.WorkObject, error) {
 	block, err := api.blockByNumber(ctx, number)
 	if err != nil {
 		return nil, err
@@ -168,7 +221,7 @@ type TraceCallConfig struct {
 	Tracer         *string
 	Timeout        *string
 	Reexec         *uint64
-	StateOverrides *ethapi.StateOverride
+	StateOverrides *quaiapi.StateOverride
 }
 
 // StdTraceConfig holds extra parameters to standard-json trace functions.
@@ -187,10 +240,10 @@ type txTraceResult struct {
 // blockTraceTask represents a single block trace task when an entire chain is
 // being traced.
 type blockTraceTask struct {
-	statedb *state.StateDB   // Intermediate state prepped for tracing
-	block   *types.Block     // Block to trace the transactions from
-	rootref common.Hash      // Trie root reference held for this task
-	results []*txTraceResult // Trace results procudes by the task
+	statedb *state.StateDB    // Intermediate state prepped for tracing
+	block   *types.WorkObject // Block to trace the transactions from
+	rootref common.Hash       // Trie root reference held for this task
+	results []*txTraceResult  // Trace results procudes by the task
 }
 
 // blockTraceResult represets the results of tracing a single block when an entire
@@ -219,7 +272,7 @@ func (api *API) TraceChain(ctx context.Context, start, end rpc.BlockNumber, conf
 	if err != nil {
 		return nil, err
 	}
-	if from.Number().Cmp(to.Number()) >= 0 {
+	if from.Number(common.ZONE_CTX).Cmp(to.Number(common.ZONE_CTX)) >= 0 {
 		return nil, fmt.Errorf("end block (#%d) needs to come after start block (#%d)", end, start)
 	}
 	return api.traceChain(ctx, from, to, config)
@@ -228,7 +281,7 @@ func (api *API) TraceChain(ctx context.Context, start, end rpc.BlockNumber, conf
 // traceChain configures a new tracer according to the provided configuration, and
 // executes all the transactions contained within. The return value will be one item
 // per transaction, dependent on the requested tracer.
-func (api *API) traceChain(ctx context.Context, start, end *types.Block, config *TraceConfig) (*rpc.Subscription, error) {
+func (api *API) traceChain(ctx context.Context, start, end *types.WorkObject, config *TraceConfig) (*rpc.Subscription, error) {
 	// Tracing a chain is a **long** operation, only do with subscriptions
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {
@@ -242,7 +295,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 	if config != nil && config.Reexec != nil {
 		reexec = *config.Reexec
 	}
-	blocks := int(end.NumberU64() - start.NumberU64())
+	blocks := int(end.NumberU64(common.ZONE_CTX) - start.NumberU64(common.ZONE_CTX))
 	threads := runtime.NumCPU()
 	if threads > blocks {
 		threads = blocks
@@ -260,10 +313,25 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 
 			// Fetch and execute the next block trace tasks
 			for task := range tasks {
-				signer := types.MakeSigner(api.backend.ChainConfig(), task.block.Number())
-				blockCtx := core.NewEVMBlockContext(task.block.Header(), api.chainContext(localctx), nil)
+				parent, err := api.backend.BlockByHash(ctx, task.block.ParentHash(common.ZONE_CTX))
+				if err != nil {
+					api.backend.Logger().Warn("Tracing failed", "block", task.block.NumberU64(common.ZONE_CTX), "err", err)
+					break
+				}
+				if parent == nil {
+					api.backend.Logger().Warn("Tracing failed", "block", task.block.NumberU64(common.ZONE_CTX), "err", errors.New("parent not found"))
+					break
+				}
+				signer := types.MakeSigner(api.backend.ChainConfig(), task.block.Number(common.ZONE_CTX))
+				blockCtx, err := core.NewEVMBlockContext(task.block, parent, api.chainContext(localctx), nil)
+				if err != nil {
+					break
+				}
 				// Trace all the transactions contained within
 				for i, tx := range task.block.Transactions() {
+					if types.IsCoinBaseTx(tx) || tx.Type() != types.QuaiTxType {
+						continue
+					}
 					msg, _ := tx.AsMessage(signer, task.block.BaseFee())
 					txctx := &Context{
 						BlockHash: task.block.Hash(),
@@ -273,11 +341,11 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 					res, err := api.traceTx(localctx, msg, txctx, blockCtx, task.statedb, config)
 					if err != nil {
 						task.results[i] = &txTraceResult{Error: err.Error()}
-						log.Warn("Tracing failed", "hash", tx.Hash(), "block", task.block.NumberU64(), "err", err)
+						api.backend.Logger().Warn("Tracing failed", "hash", tx.Hash(), "block", task.block.NumberU64(common.ZONE_CTX), "err", err)
 						break
 					}
 					// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
-					task.statedb.Finalise(api.backend.ChainConfig().IsEIP158(task.block.Number()))
+					task.statedb.Finalize(true)
 					task.results[i] = &txTraceResult{Result: res}
 				}
 				// Stream the result back to the user or abort on teardown
@@ -308,16 +376,16 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 
 			switch {
 			case failed != nil:
-				log.Warn("Chain tracing failed", "start", start.NumberU64(), "end", end.NumberU64(), "transactions", traced, "elapsed", time.Since(begin), "err", failed)
-			case number < end.NumberU64():
-				log.Warn("Chain tracing aborted", "start", start.NumberU64(), "end", end.NumberU64(), "abort", number, "transactions", traced, "elapsed", time.Since(begin))
+				api.backend.Logger().Warn("Chain tracing failed", "start", start.NumberU64(common.ZONE_CTX), "end", end.NumberU64(common.ZONE_CTX), "transactions", traced, "elapsed", time.Since(begin), "err", failed)
+			case number < end.NumberU64(common.ZONE_CTX):
+				api.backend.Logger().Warn("Chain tracing aborted", "start", start.NumberU64(common.ZONE_CTX), "end", end.NumberU64(common.ZONE_CTX), "abort", number, "transactions", traced, "elapsed", time.Since(begin))
 			default:
-				log.Info("Chain tracing finished", "start", start.NumberU64(), "end", end.NumberU64(), "transactions", traced, "elapsed", time.Since(begin))
+				api.backend.Logger().Info("Chain tracing finished", "start", start.NumberU64(common.ZONE_CTX), "end", end.NumberU64(common.ZONE_CTX), "transactions", traced, "elapsed", time.Since(begin))
 			}
 			close(results)
 		}()
 		// Feed all the blocks both into the tracer, as well as fast process concurrently
-		for number = start.NumberU64(); number < end.NumberU64(); number++ {
+		for number = start.NumberU64(common.ZONE_CTX); number < end.NumberU64(common.ZONE_CTX); number++ {
 			// Stop tracing if interruption was requested
 			select {
 			case <-notifier.Closed():
@@ -327,7 +395,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			// Print progress logs if long enough time elapsed
 			if time.Since(logged) > 8*time.Second {
 				logged = time.Now()
-				log.Info("Tracing chain segment", "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
+				api.backend.Logger().Info("Tracing chain segment", "start", start.NumberU64(common.ZONE_CTX), "end", end.NumberU64(common.ZONE_CTX), "current", number, "transactions", traced, "elapsed", time.Since(begin))
 			}
 			// Retrieve the parent state to trace on top
 			block, err := api.blockByNumber(localctx, rpc.BlockNumber(number))
@@ -344,14 +412,14 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			}
 			if statedb.Database().TrieDB() != nil {
 				// Hold the reference for tracer, will be released at the final stage
-				statedb.Database().TrieDB().Reference(block.Root(), common.Hash{})
+				statedb.Database().TrieDB().Reference(block.EVMRoot(), common.Hash{})
 
 				// Release the parent state because it's already held by the tracer
 				if parent != (common.Hash{}) {
 					statedb.Database().TrieDB().Dereference(parent)
 				}
 			}
-			parent = block.Root()
+			parent = block.EVMRoot()
 
 			next, err := api.blockByNumber(localctx, rpc.BlockNumber(number+1))
 			if err != nil {
@@ -361,7 +429,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			// Send the block over to the concurrent tracers (if not in the fast-forward phase)
 			txs := next.Transactions()
 			select {
-			case tasks <- &blockTraceTask{statedb: statedb.Copy(), block: next, rootref: block.Root(), results: make([]*txTraceResult, len(txs))}:
+			case tasks <- &blockTraceTask{statedb: statedb.Copy(), block: next, rootref: block.EVMRoot(), results: make([]*txTraceResult, len(txs))}:
 			case <-notifier.Closed():
 				return
 			}
@@ -373,12 +441,12 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 	go func() {
 		var (
 			done = make(map[uint64]*blockTraceResult)
-			next = start.NumberU64() + 1
+			next = start.NumberU64(common.ZONE_CTX) + 1
 		)
 		for res := range results {
 			// Queue up next received result
 			result := &blockTraceResult{
-				Block:  hexutil.Uint64(res.block.NumberU64()),
+				Block:  hexutil.Uint64(res.block.NumberU64(common.ZONE_CTX)),
 				Hash:   res.block.Hash(),
 				Traces: res.results,
 			}
@@ -390,7 +458,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			}
 			// Stream completed traces to the user, aborting on the first error
 			for result, ok := done[next]; ok; result, ok = done[next] {
-				if len(result.Traces) > 0 || next == end.NumberU64() {
+				if len(result.Traces) > 0 || next == end.NumberU64(common.ZONE_CTX) {
 					notifier.Notify(sub.ID, result)
 				}
 				delete(done, next)
@@ -424,7 +492,7 @@ func (api *API) TraceBlockByHash(ctx context.Context, hash common.Hash, config *
 // TraceBlock returns the structured logs created during the execution of EVM
 // and returns them as a JSON object.
 func (api *API) TraceBlock(ctx context.Context, blob []byte, config *TraceConfig) ([]*txTraceResult, error) {
-	block := new(types.Block)
+	block := new(types.WorkObject)
 	if err := rlp.Decode(bytes.NewReader(blob), block); err != nil {
 		return nil, fmt.Errorf("could not decode block: %v", err)
 	}
@@ -441,18 +509,6 @@ func (api *API) TraceBlockFromFile(ctx context.Context, file string, config *Tra
 	return api.TraceBlock(ctx, blob, config)
 }
 
-// TraceBadBlock returns the structured logs created during the execution of
-// EVM against a block pulled from the pool of bad ones and returns them as a JSON
-// object.
-func (api *API) TraceBadBlock(ctx context.Context, hash common.Hash, config *TraceConfig) ([]*txTraceResult, error) {
-	for _, block := range rawdb.ReadAllBadBlocks(api.backend.ChainDb()) {
-		if block.Hash() == hash {
-			return api.traceBlock(ctx, block, config)
-		}
-	}
-	return nil, fmt.Errorf("bad block %#x not found", hash)
-}
-
 // StandardTraceBlockToFile dumps the structured logs created during the
 // execution of EVM to the local file system and returns a list of files
 // to the caller.
@@ -464,26 +520,14 @@ func (api *API) StandardTraceBlockToFile(ctx context.Context, hash common.Hash, 
 	return api.standardTraceBlockToFile(ctx, block, config)
 }
 
-// StandardTraceBadBlockToFile dumps the structured logs created during the
-// execution of EVM against a block pulled from the pool of bad ones to the
-// local file system and returns a list of files to the caller.
-func (api *API) StandardTraceBadBlockToFile(ctx context.Context, hash common.Hash, config *StdTraceConfig) ([]string, error) {
-	for _, block := range rawdb.ReadAllBadBlocks(api.backend.ChainDb()) {
-		if block.Hash() == hash {
-			return api.standardTraceBlockToFile(ctx, block, config)
-		}
-	}
-	return nil, fmt.Errorf("bad block %#x not found", hash)
-}
-
 // traceBlock configures a new tracer according to the provided configuration, and
 // executes all the transactions contained within. The return value will be one item
 // per transaction, dependent on the requestd tracer.
-func (api *API) traceBlock(ctx context.Context, block *types.Block, config *TraceConfig) ([]*txTraceResult, error) {
-	if block.NumberU64() == 0 {
+func (api *API) traceBlock(ctx context.Context, block *types.WorkObject, config *TraceConfig) ([]*txTraceResult, error) {
+	if block.NumberU64(common.ZONE_CTX) == 0 {
 		return nil, errors.New("genesis is not traceable")
 	}
-	parent, err := api.blockByNumberAndHash(ctx, rpc.BlockNumber(block.NumberU64()-1), block.ParentHash())
+	parent, err := api.blockByNumberAndHash(ctx, rpc.BlockNumber(block.NumberU64(common.ZONE_CTX)-1), block.ParentHash(common.ZONE_CTX))
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +541,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	}
 	// Execute all the transaction contained within the block concurrently
 	var (
-		signer  = types.MakeSigner(api.backend.ChainConfig(), block.Number())
+		signer  = types.MakeSigner(api.backend.ChainConfig(), block.Number(common.ZONE_CTX))
 		txs     = block.Transactions()
 		results = make([]*txTraceResult, len(txs))
 
@@ -508,7 +552,10 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	if threads > len(txs) {
 		threads = len(txs)
 	}
-	blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
+	blockCtx, err := core.NewEVMBlockContext(block, parent, api.chainContext(ctx), nil)
+	if err != nil {
+		return nil, err
+	}
 	blockHash := block.Hash()
 	for th := 0; th < threads; th++ {
 		pend.Add(1)
@@ -540,14 +587,14 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 		// Generate the next state snapshot fast without tracing
 		msg, _ := tx.AsMessage(signer, block.BaseFee())
 		statedb.Prepare(tx.Hash(), i)
-		vmenv := vm.NewEVM(blockCtx, core.NewEVMTxContext(msg), statedb, api.backend.ChainConfig(), vm.Config{})
-		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas())); err != nil {
+		vmenv := vm.NewEVM(blockCtx, core.NewEVMTxContext(msg), statedb, api.backend.ChainConfig(), vm.Config{}, nil)
+		if _, err := core.ApplyMessage(vmenv, msg, new(types.GasPool).AddGas(msg.Gas())); err != nil {
 			failed = err
 			break
 		}
 		// Finalize the state so any modifications are written to the trie
 		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
-		statedb.Finalise(vmenv.ChainConfig().IsEIP158(block.Number()))
+		statedb.Finalize(true)
 	}
 	close(jobs)
 	pend.Wait()
@@ -562,17 +609,17 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 // standardTraceBlockToFile configures a new tracer which uses standard JSON output,
 // and traces either a full block or an individual transaction. The return value will
 // be one filename per transaction traced.
-func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block, config *StdTraceConfig) ([]string, error) {
+func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.WorkObject, config *StdTraceConfig) ([]string, error) {
 	// If we're tracing a single transaction, make sure it's present
 	if config != nil && config.TxHash != (common.Hash{}) {
 		if !containsTx(block, config.TxHash) {
 			return nil, fmt.Errorf("transaction %#x not found in block", config.TxHash)
 		}
 	}
-	if block.NumberU64() == 0 {
+	if block.NumberU64(common.ZONE_CTX) == 0 {
 		return nil, errors.New("genesis is not traceable")
 	}
-	parent, err := api.blockByNumberAndHash(ctx, rpc.BlockNumber(block.NumberU64()-1), block.ParentHash())
+	parent, err := api.blockByNumberAndHash(ctx, rpc.BlockNumber(block.NumberU64(common.ZONE_CTX)-1), block.ParentHash(common.ZONE_CTX))
 	if err != nil {
 		return nil, err
 	}
@@ -598,9 +645,9 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 	// Execute transaction, either tracing all or just the requested one
 	var (
 		dumps       []string
-		signer      = types.MakeSigner(api.backend.ChainConfig(), block.Number())
+		signer      = types.MakeSigner(api.backend.ChainConfig(), block.Number(common.ZONE_CTX))
 		chainConfig = api.backend.ChainConfig()
-		vmctx       = core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
+		vmctx, _    = core.NewEVMBlockContext(block, parent, api.chainContext(ctx), nil)
 		canon       = true
 	)
 	// Check if there are any overrides: the caller may wish to enable a future
@@ -615,12 +662,11 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 		chainConfigCopy := new(params.ChainConfig)
 		*chainConfigCopy = *chainConfig
 		chainConfig = chainConfigCopy
-		if berlin := config.LogConfig.Overrides.BerlinBlock; berlin != nil {
-			chainConfig.BerlinBlock = berlin
-			canon = false
-		}
 	}
 	for i, tx := range block.Transactions() {
+		if types.IsCoinBaseTx(tx) || tx.Type() != types.QuaiTxType {
+			continue
+		}
 		// Prepare the trasaction for un-traced execution
 		var (
 			msg, _    = tx.AsMessage(signer, block.BaseFee())
@@ -652,22 +698,22 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 			}
 		}
 		// Execute the transaction and flush any traces to disk
-		vmenv := vm.NewEVM(vmctx, txContext, statedb, chainConfig, vmConf)
+		vmenv := vm.NewEVM(vmctx, txContext, statedb, chainConfig, vmConf, nil)
 		statedb.Prepare(tx.Hash(), i)
-		_, err = core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()))
+		_, err = core.ApplyMessage(vmenv, msg, new(types.GasPool).AddGas(msg.Gas()))
 		if writer != nil {
 			writer.Flush()
 		}
 		if dump != nil {
 			dump.Close()
-			log.Info("Wrote standard trace", "file", dump.Name())
+			api.backend.Logger().Info("Wrote standard trace", "file", dump.Name())
 		}
 		if err != nil {
 			return dumps, err
 		}
 		// Finalize the state so any modifications are written to the trie
 		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
-		statedb.Finalise(vmenv.ChainConfig().IsEIP158(block.Number()))
+		statedb.Finalize(true)
 
 		// If we've traced the transaction we were looking for, abort
 		if tx.Hash() == txHash {
@@ -679,7 +725,7 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 
 // containsTx reports whether the transaction with a certain hash
 // is contained within the specified block.
-func containsTx(block *types.Block, hash common.Hash) bool {
+func containsTx(block *types.WorkObject, hash common.Hash) bool {
 	for _, tx := range block.Transactions() {
 		if tx.Hash() == hash {
 			return true
@@ -723,11 +769,11 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 // created during the execution of EVM if the given transaction was added on
 // top of the provided block and returns them as a JSON object.
 // You can provide -2 as a block number to trace on top of the pending block.
-func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (interface{}, error) {
+func (api *API) TraceCall(ctx context.Context, args quaiapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (interface{}, error) {
 	// Try to retrieve the specified block
 	var (
 		err   error
-		block *types.Block
+		block *types.WorkObject
 	)
 	if hash, ok := blockNrOrHash.Hash(); ok {
 		block, err = api.blockByHash(ctx, hash)
@@ -750,16 +796,26 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	}
 	// Apply the customized state rules if required.
 	if config != nil {
-		if err := config.StateOverrides.Apply(statedb); err != nil {
+		if err := config.StateOverrides.Apply(statedb, api.backend.NodeLocation()); err != nil {
 			return nil, err
 		}
 	}
 	// Execute the trace
-	msg, err := args.ToMessage(api.backend.RPCGasCap(), block.BaseFee())
+	msg, err := args.ToMessage(api.backend.RPCGasCap(), block.BaseFee(), api.backend.NodeLocation())
 	if err != nil {
 		return nil, err
 	}
-	vmctx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
+	parent, err := api.backend.BlockByHash(ctx, block.ParentHash(common.ZONE_CTX))
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil {
+		return nil, errors.New("could not find the parent block")
+	}
+	vmctx, err := core.NewEVMBlockContext(block, parent, api.chainContext(ctx), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	var traceConfig *TraceConfig
 	if config != nil {
@@ -793,7 +849,7 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 			}
 		}
 		// Constuct the JavaScript tracer to execute with
-		if tracer, err = New(*config.Tracer, txctx); err != nil {
+		if tracer, err = New(*config.Tracer, txctx, api.backend.Logger(), api.backend.NodeLocation()); err != nil {
 			return nil, err
 		}
 		// Handle timeouts and RPC cancellations
@@ -813,12 +869,12 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 		tracer = vm.NewStructLogger(config.LogConfig)
 	}
 	// Run the transaction with tracing enabled.
-	vmenv := vm.NewEVM(vmctx, txContext, statedb, api.backend.ChainConfig(), vm.Config{Debug: true, Tracer: tracer, NoBaseFee: true})
+	vmenv := vm.NewEVM(vmctx, txContext, statedb, api.backend.ChainConfig(), vm.Config{Debug: true, Tracer: tracer, NoBaseFee: true}, nil)
 
 	// Call Prepare to clear out the statedb access list
 	statedb.Prepare(txctx.TxHash, txctx.TxIndex)
 
-	result, err := core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas()))
+	result, err := core.ApplyMessage(vmenv, message, new(types.GasPool).AddGas(message.Gas()))
 	if err != nil {
 		return nil, fmt.Errorf("tracing failed: %w", err)
 	}
@@ -831,11 +887,11 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 		if len(result.Revert()) > 0 {
 			returnVal = fmt.Sprintf("%x", result.Revert())
 		}
-		return &ethapi.ExecutionResult{
+		return &quaiapi.ExecutionResult{
 			Gas:         result.UsedGas,
 			Failed:      result.Failed(),
 			ReturnValue: returnVal,
-			StructLogs:  ethapi.FormatLogs(tracer.StructLogs()),
+			StructLogs:  quaiapi.FormatLogs(tracer.StructLogs()),
 		}, nil
 
 	case *Tracer:

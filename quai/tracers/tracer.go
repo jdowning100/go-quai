@@ -90,6 +90,11 @@ func (ow *opWrapper) pushObject(vm *duktape.Context) {
 // memoryWrapper provides a JavaScript wrapper around vm.Memory.
 type memoryWrapper struct {
 	memory *vm.Memory
+	logger *log.Logger
+}
+
+func newMemoryWrapper(logger *log.Logger) *memoryWrapper {
+	return &memoryWrapper{logger: logger}
 }
 
 // slice returns the requested range of memory as a byte slice.
@@ -100,13 +105,13 @@ func (mw *memoryWrapper) slice(begin, end int64) []byte {
 	if end < begin || begin < 0 {
 		// TODO(karalabe): We can't js-throw from Go inside duktape inside Go. The Go
 		// runtime goes belly up https://github.com/golang/go/issues/15639.
-		log.Warn("Tracer accessed out of bound memory", "offset", begin, "end", end)
+		mw.logger.Warn("Tracer accessed out of bound memory", "offset", begin, "end", end)
 		return nil
 	}
 	if mw.memory.Len() < int(end) {
 		// TODO(karalabe): We can't js-throw from Go inside duktape inside Go. The Go
 		// runtime goes belly up https://github.com/golang/go/issues/15639.
-		log.Warn("Tracer accessed out of bound memory", "available", mw.memory.Len(), "offset", begin, "size", end-begin)
+		mw.logger.Warn("Tracer accessed out of bound memory", "available", mw.memory.Len(), "offset", begin, "size", end-begin)
 		return nil
 	}
 	return mw.memory.GetCopy(begin, end-begin)
@@ -117,7 +122,7 @@ func (mw *memoryWrapper) getUint(addr int64) *big.Int {
 	if mw.memory.Len() < int(addr)+32 || addr < 0 {
 		// TODO(karalabe): We can't js-throw from Go inside duktape inside Go. The Go
 		// runtime goes belly up https://github.com/golang/go/issues/15639.
-		log.Warn("Tracer accessed out of bound memory", "available", mw.memory.Len(), "offset", addr, "size", 32)
+		mw.logger.Warn("Tracer accessed out of bound memory", "available", mw.memory.Len(), "offset", addr, "size", 32)
 		return new(big.Int)
 	}
 	return new(big.Int).SetBytes(mw.memory.GetPtr(addr, 32))
@@ -152,7 +157,12 @@ func (mw *memoryWrapper) pushObject(vm *duktape.Context) {
 
 // stackWrapper provides a JavaScript wrapper around vm.Stack.
 type stackWrapper struct {
-	stack *vm.Stack
+	stack  *vm.Stack
+	logger *log.Logger
+}
+
+func newStackWrapper(logger *log.Logger) *stackWrapper {
+	return &stackWrapper{logger: logger}
 }
 
 // peek returns the nth-from-the-top element of the stack.
@@ -160,7 +170,7 @@ func (sw *stackWrapper) peek(idx int) *big.Int {
 	if len(sw.stack.Data()) <= idx || idx < 0 {
 		// TODO(karalabe): We can't js-throw from Go inside duktape inside Go. The Go
 		// runtime goes belly up https://github.com/golang/go/issues/15639.
-		log.Warn("Tracer accessed out of bound stack", "size", len(sw.stack.Data()), "index", idx)
+		sw.logger.Warn("Tracer accessed out of bound stack", "size", len(sw.stack.Data()), "index", idx)
 		return new(big.Int)
 	}
 	return sw.stack.Back(idx).ToBig()
@@ -192,26 +202,29 @@ type dbWrapper struct {
 
 // pushObject assembles a JSVM object wrapping a swappable database and pushes it
 // onto the VM stack.
-func (dw *dbWrapper) pushObject(vm *duktape.Context) {
+func (dw *dbWrapper) pushObject(vm *duktape.Context, nodeLocation common.Location) {
 	obj := vm.PushObject()
 
 	// Push the wrapper for statedb.GetBalance
 	vm.PushGoFunction(func(ctx *duktape.Context) int {
-		pushBigInt(dw.db.GetBalance(common.BytesToAddress(popSlice(ctx))), ctx)
+		addr, _ := common.BytesToAddress(popSlice(ctx), nodeLocation).InternalAddress()
+		pushBigInt(dw.db.GetBalance(addr), ctx)
 		return 1
 	})
 	vm.PutPropString(obj, "getBalance")
 
 	// Push the wrapper for statedb.GetNonce
 	vm.PushGoFunction(func(ctx *duktape.Context) int {
-		ctx.PushInt(int(dw.db.GetNonce(common.BytesToAddress(popSlice(ctx)))))
+		addr, _ := common.BytesToAddress(popSlice(ctx), nodeLocation).InternalAddress()
+		ctx.PushInt(int(dw.db.GetNonce(addr)))
 		return 1
 	})
 	vm.PutPropString(obj, "getNonce")
 
 	// Push the wrapper for statedb.GetCode
 	vm.PushGoFunction(func(ctx *duktape.Context) int {
-		code := dw.db.GetCode(common.BytesToAddress(popSlice(ctx)))
+		addr, _ := common.BytesToAddress(popSlice(ctx), nodeLocation).InternalAddress()
+		code := dw.db.GetCode(addr)
 
 		ptr := ctx.PushFixedBuffer(len(code))
 		copy(makeSlice(ptr, uint(len(code))), code)
@@ -219,12 +232,21 @@ func (dw *dbWrapper) pushObject(vm *duktape.Context) {
 	})
 	vm.PutPropString(obj, "getCode")
 
+	// Push the wrapper for statedb.GetCode
+	vm.PushGoFunction(func(ctx *duktape.Context) int {
+		addr, _ := common.BytesToAddress(popSlice(ctx), nodeLocation).InternalAddress()
+		ctx.PushInt(int(dw.db.GetSize(addr).Uint64()))
+		return 1
+	})
+	vm.PutPropString(obj, "getSize")
+
 	// Push the wrapper for statedb.GetState
 	vm.PushGoFunction(func(ctx *duktape.Context) int {
 		hash := popSlice(ctx)
 		addr := popSlice(ctx)
 
-		state := dw.db.GetState(common.BytesToAddress(addr), common.BytesToHash(hash))
+		iAddr, _ := common.BytesToAddress(addr, nodeLocation).InternalAddress()
+		state := dw.db.GetState(iAddr, common.BytesToHash(hash))
 
 		ptr := ctx.PushFixedBuffer(len(state))
 		copy(makeSlice(ptr, uint(len(state))), state[:])
@@ -234,7 +256,8 @@ func (dw *dbWrapper) pushObject(vm *duktape.Context) {
 
 	// Push the wrapper for statedb.Exists
 	vm.PushGoFunction(func(ctx *duktape.Context) int {
-		ctx.PushBoolean(dw.db.Exist(common.BytesToAddress(popSlice(ctx))))
+		addr, _ := common.BytesToAddress(popSlice(ctx), nodeLocation).InternalAddress()
+		ctx.PushBoolean(dw.db.Exist(addr))
 		return 1
 	})
 	vm.PutPropString(obj, "exists")
@@ -247,7 +270,7 @@ type contractWrapper struct {
 
 // pushObject assembles a JSVM object wrapping a swappable contract and pushes it
 // onto the VM stack.
-func (cw *contractWrapper) pushObject(vm *duktape.Context) {
+func (cw *contractWrapper) pushObject(vm *duktape.Context, nodeLocation common.Location) {
 	obj := vm.PushObject()
 
 	// Push the wrapper for contract.Caller
@@ -312,6 +335,8 @@ type Tracer struct {
 	reason    error  // Textual reason for the interruption
 
 	activePrecompiles []common.Address // Updated on CaptureStart based on given rules
+
+	nodeLocation common.Location
 }
 
 // Context contains some contextual infos for a transaction execution that is not
@@ -325,7 +350,7 @@ type Context struct {
 // New instantiates a new tracer instance. code specifies a Javascript snippet,
 // which must evaluate to an expression returning an object with 'step', 'fault'
 // and 'result' functions.
-func New(code string, ctx *Context) (*Tracer, error) {
+func New(code string, ctx *Context, logger *log.Logger, nodeLocation common.Location) (*Tracer, error) {
 	// Resolve any tracers by name and assemble the tracer object
 	if tracer, ok := tracer(code); ok {
 		code = tracer
@@ -334,8 +359,8 @@ func New(code string, ctx *Context) (*Tracer, error) {
 		vm:              duktape.New(),
 		ctx:             make(map[string]interface{}),
 		opWrapper:       new(opWrapper),
-		stackWrapper:    new(stackWrapper),
-		memoryWrapper:   new(memoryWrapper),
+		stackWrapper:    newStackWrapper(logger),
+		memoryWrapper:   newMemoryWrapper(logger),
 		contractWrapper: new(contractWrapper),
 		dbWrapper:       new(dbWrapper),
 		pcValue:         new(uint),
@@ -343,6 +368,7 @@ func New(code string, ctx *Context) (*Tracer, error) {
 		costValue:       new(uint),
 		depthValue:      new(uint),
 		refundValue:     new(uint),
+		nodeLocation:    nodeLocation,
 	}
 	if ctx.BlockHash != (common.Hash{}) {
 		tracer.ctx["blockHash"] = ctx.BlockHash
@@ -369,11 +395,17 @@ func New(code string, ctx *Context) (*Tracer, error) {
 		return 1
 	})
 	tracer.vm.PushGlobalGoFunction("toAddress", func(ctx *duktape.Context) int {
-		var addr common.Address
+		var addr common.InternalAddress
 		if ptr, size := ctx.GetBuffer(-1); ptr != nil {
-			addr = common.BytesToAddress(makeSlice(ptr, size))
+			addr, _ = common.BytesToAddress(makeSlice(ptr, size), nodeLocation).InternalAddress()
 		} else {
-			addr = common.HexToAddress(ctx.GetString(-1))
+			str := ctx.GetString(-1)
+			if len(str) == 39 {
+				str = "0" + str
+			} else if len(str) == 38 {
+				str = "00" + str
+			}
+			addr, _ = common.HexToAddress(str, nodeLocation).InternalAddress()
 		}
 		ctx.Pop()
 		copy(makeSlice(ctx.PushFixedBuffer(20), 20), addr[:])
@@ -381,24 +413,43 @@ func New(code string, ctx *Context) (*Tracer, error) {
 	})
 	tracer.vm.PushGlobalGoFunction("toContract", func(ctx *duktape.Context) int {
 		var from common.Address
-		if ptr, size := ctx.GetBuffer(-2); ptr != nil {
-			from = common.BytesToAddress(makeSlice(ptr, size))
+		if ptr, size := ctx.GetBuffer(-3); ptr != nil {
+			from = common.BytesToAddress(makeSlice(ptr, size), nodeLocation)
 		} else {
-			from = common.HexToAddress(ctx.GetString(-2))
+			str := ctx.GetString(-2)
+			if len(str) == 39 {
+				str = "0" + str
+			} else if len(str) == 38 {
+				str = "00" + str
+			}
+			from = common.HexToAddress(str, nodeLocation)
 		}
-		nonce := uint64(ctx.GetInt(-1))
-		ctx.Pop2()
+		nonce := uint64(ctx.GetInt(-2))
+		// Retrieve code slice from js stack
+		var code []byte
+		if ptr, size := ctx.GetBuffer(-1); ptr != nil {
+			code = common.CopyBytes(makeSlice(ptr, size))
+		} else {
+			code = common.FromHex(ctx.GetString(-1))
+		}
+		ctx.Pop3()
 
-		contract := crypto.CreateAddress(from, nonce)
+		contract, _ := crypto.CreateAddress(from, nonce, code, nodeLocation).InternalAddress()
 		copy(makeSlice(ctx.PushFixedBuffer(20), 20), contract[:])
 		return 1
 	})
 	tracer.vm.PushGlobalGoFunction("toContract2", func(ctx *duktape.Context) int {
 		var from common.Address
 		if ptr, size := ctx.GetBuffer(-3); ptr != nil {
-			from = common.BytesToAddress(makeSlice(ptr, size))
+			from = common.BytesToAddress(makeSlice(ptr, size), nodeLocation)
 		} else {
-			from = common.HexToAddress(ctx.GetString(-3))
+			str := ctx.GetString(-2)
+			if len(str) == 39 {
+				str = "0" + str
+			} else if len(str) == 38 {
+				str = "00" + str
+			}
+			from = common.HexToAddress(str, nodeLocation)
 		}
 		// Retrieve salt hex string from js stack
 		salt := common.HexToHash(ctx.GetString(-2))
@@ -411,12 +462,12 @@ func New(code string, ctx *Context) (*Tracer, error) {
 		}
 		codeHash := crypto.Keccak256(code)
 		ctx.Pop3()
-		contract := crypto.CreateAddress2(from, salt, codeHash)
+		contract, _ := crypto.CreateAddress2(from, salt, codeHash, nodeLocation).InternalAddress()
 		copy(makeSlice(ctx.PushFixedBuffer(20), 20), contract[:])
 		return 1
 	})
 	tracer.vm.PushGlobalGoFunction("isPrecompiled", func(ctx *duktape.Context) int {
-		addr := common.BytesToAddress(popSlice(ctx))
+		addr := common.BytesToAddress(popSlice(ctx), nodeLocation)
 		for _, p := range tracer.activePrecompiles {
 			if p == addr {
 				ctx.PushBoolean(true)
@@ -436,7 +487,7 @@ func New(code string, ctx *Context) (*Tracer, error) {
 		if start < 0 || start > end || end > len(blob) {
 			// TODO(karalabe): We can't js-throw from Go inside duktape inside Go. The Go
 			// runtime goes belly up https://github.com/golang/go/issues/15639.
-			log.Warn("Tracer accessed out of bound memory", "available", len(blob), "offset", start, "size", size)
+			logger.Warn("Tracer accessed out of bound memory", "available", len(blob), "offset", start, "size", size)
 			ctx.PushFixedBuffer(0)
 			return 1
 		}
@@ -445,7 +496,7 @@ func New(code string, ctx *Context) (*Tracer, error) {
 	})
 	// Push the JavaScript tracer as object #0 onto the JSVM stack and validate it
 	if err := tracer.vm.PevalString("(" + code + ")"); err != nil {
-		log.Warn("Failed to compile tracer", "err", err)
+		logger.Warn("Failed to compile tracer", "err", err)
 		return nil, err
 	}
 	tracer.tracerObject = 0 // yeah, nice, eval can't return the index itself
@@ -483,7 +534,7 @@ func New(code string, ctx *Context) (*Tracer, error) {
 	tracer.memoryWrapper.pushObject(tracer.vm)
 	tracer.vm.PutPropString(logObject, "memory")
 
-	tracer.contractWrapper.pushObject(tracer.vm)
+	tracer.contractWrapper.pushObject(tracer.vm, nodeLocation)
 	tracer.vm.PutPropString(logObject, "contract")
 
 	tracer.vm.PushGoFunction(func(ctx *duktape.Context) int { ctx.PushUint(*tracer.pcValue); return 1 })
@@ -513,7 +564,7 @@ func New(code string, ctx *Context) (*Tracer, error) {
 
 	tracer.vm.PutPropString(tracer.stateObject, "log")
 
-	tracer.dbWrapper.pushObject(tracer.vm)
+	tracer.dbWrapper.pushObject(tracer.vm, nodeLocation)
 	tracer.vm.PutPropString(tracer.stateObject, "db")
 
 	return tracer, nil
@@ -580,12 +631,9 @@ func (jst *Tracer) CaptureStart(env *vm.EVM, from common.Address, to common.Addr
 	jst.dbWrapper.db = env.StateDB
 	// Update list of precompiles based on current block
 	rules := env.ChainConfig().Rules(env.Context.BlockNumber)
-	jst.activePrecompiles = vm.ActivePrecompiles(rules)
+	jst.activePrecompiles = vm.ActivePrecompiles(rules, jst.nodeLocation)
 
-	// Compute intrinsic gas
-	isHomestead := env.ChainConfig().IsHomestead(env.Context.BlockNumber)
-	isIstanbul := env.ChainConfig().IsIstanbul(env.Context.BlockNumber)
-	intrinsicGas, err := core.IntrinsicGas(input, nil, jst.ctx["type"] == "CREATE", isHomestead, isIstanbul)
+	intrinsicGas, err := core.IntrinsicGas(input, nil, jst.ctx["type"] == "CREATE")
 	if err != nil {
 		return
 	}
@@ -593,7 +641,7 @@ func (jst *Tracer) CaptureStart(env *vm.EVM, from common.Address, to common.Addr
 }
 
 // CaptureState implements the Tracer interface to trace a single step of VM execution.
-func (jst *Tracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
+func (jst *Tracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error, nodeLocation common.Location) {
 	if jst.err != nil {
 		return
 	}
@@ -668,7 +716,8 @@ func (jst *Tracer) GetResult() (json.RawMessage, error) {
 
 		case common.Address:
 			ptr := jst.vm.PushFixedBuffer(20)
-			copy(makeSlice(ptr, 20), val[:])
+			addr, _ := val.InternalAddress()
+			copy(makeSlice(ptr, 20), addr[:])
 
 		case *big.Int:
 			pushBigInt(val, jst.vm)

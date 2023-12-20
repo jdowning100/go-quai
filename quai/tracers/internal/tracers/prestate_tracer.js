@@ -20,27 +20,30 @@
 	// prestate is the genesis that we're building.
 	prestate: null,
 
-	// lookupAccount injects the specified account into the prestate object.
-	lookupAccount: function(addr, db){
-		var acc = toHex(addr);
-		if (this.prestate[acc] === undefined) {
-			this.prestate[acc] = {
-				balance: '0x' + db.getBalance(addr).toString(16),
-				nonce:   db.getNonce(addr),
-				code:    toHex(db.getCode(addr)),
-				storage: {}
-			};
-		}
-	},
+		// lookupAccount injects the specified account into the prestate object.
+		lookupAccount: function(addr, db) {
+			var acc = toHex(addr);
+			if (this.prestate[acc] === undefined) {
+				this.prestate[acc] = {
+					balance: '0x' + db.getBalance(addr).toString(16),
+					nonce: db.getNonce(addr),
+					code: toHex(db.getCode(addr)),
+					size: db.getSize(addr),
+					storage: {}
+				};
+			}
+		},
 
 	// lookupStorage injects the specified storage entry of the given account into
 	// the prestate object.
-	lookupStorage: function(addr, key, db){
+	lookupStorage: function(addr, key, db) {
 		var acc = toHex(addr);
 		var idx = toHex(key);
 
-		if (this.prestate[acc].storage[idx] === undefined) {
-			this.prestate[acc].storage[idx] = toHex(db.getState(addr, key));
+		if (this.prestate[acc] !== undefined) {
+			if (this.prestate[acc].storage[idx] === undefined) {
+				this.prestate[acc].storage[idx] = toHex(db.getState(addr, key));
+			}
 		}
 	},
 
@@ -52,10 +55,10 @@
 		this.lookupAccount(ctx.from, db);
 
 		var fromBal = bigInt(this.prestate[toHex(ctx.from)].balance.slice(2), 16);
-		var toBal   = bigInt(this.prestate[toHex(ctx.to)].balance.slice(2), 16);
+		var toBal = bigInt(this.prestate[toHex(ctx.to)].balance.slice(2), 16);
 
-		this.prestate[toHex(ctx.to)].balance   = '0x'+toBal.subtract(ctx.value).toString(16);
-		this.prestate[toHex(ctx.from)].balance = '0x'+fromBal.add(ctx.value).add((ctx.gasUsed + ctx.intrinsicGas) * ctx.gasPrice).toString(16);
+		this.prestate[toHex(ctx.to)].balance = '0x' + toBal.subtract(ctx.value).toString(16);
+		this.prestate[toHex(ctx.from)].balance = '0x' + fromBal.add(ctx.value).add((ctx.gasUsed + ctx.intrinsicGas) * ctx.gasPrice).toString(16);
 
 		// Decrement the caller's nonce, and remove empty create targets
 		this.prestate[toHex(ctx.from)].nonce--;
@@ -71,7 +74,7 @@
 	// step is invoked for every opcode that the VM executes.
 	step: function(log, db) {
 		// Add the current account if we just started tracing
-		if (this.prestate === null){
+		if (this.prestate === null) {
 			this.prestate = {};
 			// Balance will potentially be wrong here, since this will include the value
 			// sent along with the message. We fix that in 'result()'.
@@ -97,12 +100,12 @@
 			case "CALL": case "CALLCODE": case "DELEGATECALL": case "STATICCALL":
 				this.lookupAccount(toAddress(log.stack.peek(1).toString(16)), db);
 				break;
-			case 'SSTORE':case 'SLOAD':
+			case 'SSTORE': case 'SLOAD':
 				this.lookupStorage(log.contract.getAddress(), toWord(log.stack.peek(0).toString(16)), db);
 				break;
 		}
 	},
 
 	// fault is invoked when the actual execution of an opcode fails.
-	fault: function(log, db) {}
+	fault: function(log, db) { }
 }

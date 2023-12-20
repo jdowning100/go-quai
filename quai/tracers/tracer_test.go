@@ -26,7 +26,12 @@ import (
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/core/state"
 	"github.com/dominant-strategies/go-quai/core/vm"
+	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
+)
+
+var (
+	nodeLocation = common.Location{0, 0}
 )
 
 type account struct{}
@@ -46,8 +51,10 @@ type dummyStatedb struct {
 	state.StateDB
 }
 
-func (*dummyStatedb) GetRefund() uint64                       { return 1337 }
-func (*dummyStatedb) GetBalance(addr common.Address) *big.Int { return new(big.Int) }
+func (*dummyStatedb) GetRefund() uint64 { return 1337 }
+func (*dummyStatedb) GetBalance(addr common.InternalAddress) *big.Int {
+	return new(big.Int)
+}
 
 type vmContext struct {
 	blockCtx vm.BlockContext
@@ -59,7 +66,7 @@ func testCtx() *vmContext {
 }
 
 func runTrace(tracer *Tracer, vmctx *vmContext, chaincfg *params.ChainConfig) (json.RawMessage, error) {
-	env := vm.NewEVM(vmctx.blockCtx, vmctx.txCtx, &dummyStatedb{}, chaincfg, vm.Config{Debug: true, Tracer: tracer})
+	env := vm.NewEVM(vmctx.blockCtx, vmctx.txCtx, &dummyStatedb{}, chaincfg, vm.Config{Debug: true, Tracer: tracer}, nil)
 	var (
 		startGas uint64 = 10000
 		value           = big.NewInt(0)
@@ -79,7 +86,7 @@ func runTrace(tracer *Tracer, vmctx *vmContext, chaincfg *params.ChainConfig) (j
 func TestTracer(t *testing.T) {
 	execTracer := func(code string) ([]byte, string) {
 		t.Helper()
-		tracer, err := New(code, new(Context))
+		tracer, err := New(code, new(Context), log.Global, nodeLocation)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +140,7 @@ func TestHalt(t *testing.T) {
 	t.Skip("duktape doesn't support abortion")
 
 	timeout := errors.New("stahp")
-	tracer, err := New("{step: function() { while(1); }, result: function() { return null; }}", new(Context))
+	tracer, err := New("{step: function() { while(1); }, result: function() { return null; }}", new(Context), log.Global, nodeLocation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,18 +154,18 @@ func TestHalt(t *testing.T) {
 }
 
 func TestHaltBetweenSteps(t *testing.T) {
-	tracer, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }}", new(Context))
+	tracer, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }}", new(Context), log.Global, nodeLocation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := vm.NewEVM(vm.BlockContext{BlockNumber: big.NewInt(1)}, vm.TxContext{}, &dummyStatedb{}, params.TestChainConfig, vm.Config{Debug: true, Tracer: tracer})
+	env := vm.NewEVM(vm.BlockContext{BlockNumber: big.NewInt(1)}, vm.TxContext{}, &dummyStatedb{}, params.TestChainConfig, vm.Config{Debug: true, Tracer: tracer}, nil)
 	scope := &vm.ScopeContext{
 		Contract: vm.NewContract(&account{}, &account{}, big.NewInt(0), 0),
 	}
-	tracer.CaptureState(env, 0, 0, 0, 0, scope, nil, 0, nil)
+	tracer.CaptureState(env, 0, 0, 0, 0, scope, nil, 0, nil, nodeLocation)
 	timeout := errors.New("stahp")
 	tracer.Stop(timeout)
-	tracer.CaptureState(env, 0, 0, 0, 0, scope, nil, 0, nil)
+	tracer.CaptureState(env, 0, 0, 0, 0, scope, nil, 0, nil, nodeLocation)
 
 	if _, err := tracer.GetResult(); err.Error() != timeout.Error() {
 		t.Errorf("Expected timeout error, got %v", err)
@@ -169,7 +176,7 @@ func TestHaltBetweenSteps(t *testing.T) {
 // in 'result'
 func TestNoStepExec(t *testing.T) {
 	runEmptyTrace := func(tracer *Tracer, vmctx *vmContext) (json.RawMessage, error) {
-		env := vm.NewEVM(vmctx.blockCtx, vmctx.txCtx, &dummyStatedb{}, params.TestChainConfig, vm.Config{Debug: true, Tracer: tracer})
+		env := vm.NewEVM(vmctx.blockCtx, vmctx.txCtx, &dummyStatedb{}, params.TestChainConfig, vm.Config{Debug: true, Tracer: tracer}, nil)
 		startGas := uint64(10000)
 		contract := vm.NewContract(account{}, account{}, big.NewInt(0), startGas)
 		tracer.CaptureStart(env, contract.Caller(), contract.Address(), false, []byte{}, startGas, big.NewInt(0))
@@ -178,7 +185,7 @@ func TestNoStepExec(t *testing.T) {
 	}
 	execTracer := func(code string) []byte {
 		t.Helper()
-		tracer, err := New(code, new(Context))
+		tracer, err := New(code, new(Context), log.Global, nodeLocation)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -207,12 +214,9 @@ func TestNoStepExec(t *testing.T) {
 }
 
 func TestIsPrecompile(t *testing.T) {
-	chaincfg := &params.ChainConfig{ChainID: big.NewInt(1), HomesteadBlock: big.NewInt(0), DAOForkBlock: nil, DAOForkSupport: false, EIP150Block: big.NewInt(0), EIP150Hash: common.Hash{}, EIP155Block: big.NewInt(0), EIP158Block: big.NewInt(0), ByzantiumBlock: big.NewInt(100), ConstantinopleBlock: big.NewInt(0), PetersburgBlock: big.NewInt(0), IstanbulBlock: big.NewInt(200), MuirGlacierBlock: big.NewInt(0), BerlinBlock: big.NewInt(300), LondonBlock: big.NewInt(0), CatalystBlock: nil, Blake3pow: new(params.Blake3powConfig)}
-	chaincfg.ByzantiumBlock = big.NewInt(100)
-	chaincfg.IstanbulBlock = big.NewInt(200)
-	chaincfg.BerlinBlock = big.NewInt(300)
+	chaincfg := &params.ChainConfig{ChainID: big.NewInt(1), Blake3Pow: new(params.Blake3powConfig)}
 	txCtx := vm.TxContext{GasPrice: big.NewInt(100000)}
-	tracer, err := New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", new(Context))
+	tracer, err := New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", new(Context), log.Global, nodeLocation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +230,7 @@ func TestIsPrecompile(t *testing.T) {
 		t.Errorf("Tracer should not consider blake2f as precompile in byzantium")
 	}
 
-	tracer, _ = New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", new(Context))
+	tracer, _ = New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", new(Context), log.Global, nodeLocation)
 	blockCtx = vm.BlockContext{BlockNumber: big.NewInt(250)}
 	res, err = runTrace(tracer, &vmContext{blockCtx, txCtx}, chaincfg)
 	if err != nil {

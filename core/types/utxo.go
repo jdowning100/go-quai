@@ -1,7 +1,6 @@
 package types
 
 import (
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 )
 
@@ -30,7 +29,6 @@ const (
 type TxIn struct {
 	PreviousOutPoint OutPoint
 	PubKey           []byte
-	Signature        *schnorr.Signature
 }
 
 // OutPoint defines a bitcoin data type that is used to track previous
@@ -100,11 +98,10 @@ func NewOutPoint(hash *common.Hash, index uint32) *OutPoint {
 // NewTxIn returns a new bitcoin transaction input with the provided
 // previous outpoint point and signature script with a default sequence of
 // MaxTxInSequenceNum.
-func NewTxIn(prevOut *OutPoint, signature *schnorr.Signature, witness [][]byte) *TxIn {
+func NewTxIn(prevOut *OutPoint, pubkey []byte, witness [][]byte) *TxIn {
 	return &TxIn{
 		PreviousOutPoint: *prevOut,
-		Signature:        signature,
-		// Sequence:         MaxTxInSequenceNum,
+		PubKey:           pubkey,
 	}
 }
 

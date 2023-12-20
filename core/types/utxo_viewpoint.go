@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/dominant-strategies/go-quai/common"
 )
@@ -176,6 +178,11 @@ func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
 // marked unspent.  All fields will be updated for existing entries since it's
 // possible it has changed during a reorg.
 func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, blockHeight uint64) {
+
+	fmt.Println("AddTxOuts")
+	fmt.Println(outpoint.Hash, outpoint.Index)
+	fmt.Println(txOut.Value, txOut.Address)
+
 	// Don't add provably unspendable outputs.
 	if txscript.IsUnspendable(txOut.Address) {
 		return

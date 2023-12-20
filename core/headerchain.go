@@ -1185,14 +1185,13 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 //
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
-func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
+func createCoinbaseTx(nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
 	in := &types.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
 		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
 			types.MaxPrevOutIndex),
 		Signature: nil,
-		Sequence:  types.MaxTxInSequenceNum,
 	}
 
 	out := &types.TxOut{

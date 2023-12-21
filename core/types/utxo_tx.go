@@ -9,8 +9,8 @@ import (
 
 type UtxoTx struct {
 	ChainID *big.Int // replay protection
-	TxIn    []*TxIn
-	TxOut   []*TxOut
+	TxIn    []TxIn
+	TxOut   []TxOut
 
 	Signatures *schnorr.Signature
 }
@@ -24,8 +24,8 @@ func (tx *UtxoTx) copy() TxData {
 		cpy.ChainID.Set(tx.ChainID)
 	}
 
-	cpy.TxIn = make([]*TxIn, len(tx.TxIn))
-	cpy.TxOut = make([]*TxOut, len(tx.TxOut))
+	cpy.TxIn = make([]TxIn, len(tx.TxIn))
+	cpy.TxOut = make([]TxOut, len(tx.TxOut))
 	copy(cpy.TxIn, tx.TxIn)
 	copy(cpy.TxOut, tx.TxOut)
 	return cpy
@@ -49,8 +49,8 @@ func (tx *UtxoTx) etxGasPrice() *big.Int             { panic("internal TX does n
 func (tx *UtxoTx) etxGasTip() *big.Int               { panic("internal TX does not have etxGasTip") }
 func (tx *UtxoTx) etxData() []byte                   { panic("internal TX does not have etxData") }
 func (tx *UtxoTx) etxAccessList() AccessList         { panic("internal TX does not have etxAccessList") }
-func (tx *UtxoTx) txIn() []*TxIn                     { return tx.TxIn }
-func (tx *UtxoTx) txOut() []*TxOut                   { return tx.TxOut }
+func (tx *UtxoTx) txIn() []TxIn                      { return tx.TxIn }
+func (tx *UtxoTx) txOut() []TxOut                    { return tx.TxOut }
 func (tx *UtxoTx) utxoSignature() *schnorr.Signature { return tx.Signatures }
 
 func (tx *UtxoTx) rawSignatureValues() (v, r, s *big.Int) {

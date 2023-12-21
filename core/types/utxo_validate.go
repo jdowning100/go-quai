@@ -13,7 +13,7 @@ import (
 //
 // This function only differs from IsCoinBase in that it works with a raw wire
 // transaction as opposed to a higher level util transaction.
-func IsCoinBaseTx(msgTx *Transaction) bool {
+func IsCoinBaseTx(msgTx *Transaction) bool { // remove this function
 	// A coin base must only have one transaction input.
 	if len(msgTx.inner.txIn()) != 1 {
 		return false
@@ -50,7 +50,7 @@ func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoView
 	for _, txIn := range tx.inner.txIn() {
 		// Ensure the referenced input transaction is available.
 		utxo := utxoView.LookupEntry(txIn.PreviousOutPoint)
-		if utxo == nil || utxo.IsSpent() {
+		if utxo == nil || utxo.IsSpent() { // why comment this out?
 			// str := fmt.Sprintf("output %v referenced from "+
 			// 	"transaction %s:%d either does not exist or "+
 			// 	"has already been spent", txIn.PreviousOutPoint,

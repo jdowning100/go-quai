@@ -40,31 +40,31 @@ func TestSingleSigner(t *testing.T) {
 
 	fmt.Println(coinbaseOutput)
 
-	coinbaseBlockHash := common.HexToHash("00000000000000000000000000000000000000000000000000000")
+	coinbaseBlockHash := common.HexToHash("000000000000000000000000000000000000000000000000000012")
 	coinbaseIndex := uint32(0)
 
 	// key = hash(blockHash, index)
 	// Find hash / index for originUtxo / imagine this is block hash
 	prevOut := *NewOutPoint(&coinbaseBlockHash, coinbaseIndex)
 
-	in := &TxIn{
+	in := TxIn{
 		PreviousOutPoint: prevOut,
 		PubKey:           crypto.FromECDSAPub(&key.PublicKey),
 	}
 
-	newOut := &TxOut{
+	newOut := TxOut{
 		Value: 10000000,
 		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
 		Address: addr.Bytes(),
 	}
 
 	utxo := &UtxoTx{
-		TxIn:  []*TxIn{in},
-		TxOut: []*TxOut{newOut},
+		TxIn:  []TxIn{in},
+		TxOut: []TxOut{newOut},
 	}
 
 	tx := NewTx(utxo)
-	txHash := sha256.Sum256(tx.Hash().Bytes())
+	txHash := tx.Hash().Bytes()
 
 	sig, err := schnorr.Sign(btcecKey, txHash[:])
 	if err != nil {
@@ -128,29 +128,29 @@ func TestMultiSigners(t *testing.T) {
 	prevOut1 := *NewOutPoint(&coinbaseBlockHash1, coinbaseIndex)
 	prevOut2 := *NewOutPoint(&coinbaseBlockHash2, coinbaseIndex)
 
-	in1 := &TxIn{
+	in1 := TxIn{
 		PreviousOutPoint: prevOut1,
 		PubKey:           crypto.FromECDSAPub(&key1.PublicKey),
 	}
 
-	in2 := &TxIn{
+	in2 := TxIn{
 		PreviousOutPoint: prevOut2,
 		PubKey:           crypto.FromECDSAPub(&key2.PublicKey),
 	}
 
-	newOut1 := &TxOut{
+	newOut1 := TxOut{
 		Value:   10000000,
 		Address: addr1.Bytes(),
 	}
 
-	newOut2 := &TxOut{
+	newOut2 := TxOut{
 		Value:   10000000,
 		Address: addr1.Bytes(),
 	}
 
 	utxo := &UtxoTx{
-		TxIn:  []*TxIn{in1, in2},
-		TxOut: []*TxOut{newOut1, newOut2},
+		TxIn:  []TxIn{in1, in2},
+		TxOut: []TxOut{newOut1, newOut2},
 	}
 
 	tx := NewTx(utxo)

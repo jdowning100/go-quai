@@ -223,7 +223,7 @@ func (view *UtxoViewpoint) AddTxOut(tx *Transaction, txOutIdx uint32, block *Blo
 	// is allowed so long as the previous transaction is fully spent.
 	prevOut := OutPoint{Hash: block.ParentHash(), Index: txOutIdx}
 	txOut := tx.inner.txOut()[txOutIdx]
-	view.addTxOut(prevOut, txOut, IsCoinBaseTx(tx), block)
+	view.addTxOut(prevOut, &txOut, IsCoinBaseTx(tx), block)
 }
 
 // AddTxOuts adds all outputs in the passed transaction which are not provably
@@ -242,7 +242,7 @@ func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, block *Block) {
 		// same hash.  This is allowed so long as the previous
 		// transaction is fully spent.
 		prevOut.Index = uint32(txOutIdx)
-		view.addTxOut(prevOut, txOut, isCoinBase, block)
+		view.addTxOut(prevOut, &txOut, isCoinBase, block)
 	}
 }
 

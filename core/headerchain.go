@@ -339,7 +339,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 
 	// If head is the normal extension of canonical head, we can return by just wiring the canonical hash.
 	if prevHeader.Hash() == head.ParentHash() {
-		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head)
+		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head) // why was this added?
 		if err != nil {
 			return err
 		}
@@ -1087,7 +1087,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	return hc.fetchUtxosMain(view, needed)
 }
 
-func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error {
+func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error { // should this be used instead of Verify
 	transactions := block.UTXOs()
 
 	for _, tx := range transactions[1:] {
@@ -1193,22 +1193,22 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
 func createCoinbaseTx(nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
-	in := &types.TxIn{
+	in := types.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
 		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
 			types.MaxPrevOutIndex),
 	}
 
-	out := &types.TxOut{
+	out := types.TxOut{
 		Value: 10000000,
 		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
 		Address: addr.Bytes(),
 	}
 
 	utxo := &types.UtxoTx{
-		TxIn:  []*types.TxIn{in},
-		TxOut: []*types.TxOut{out},
+		TxIn:  []types.TxIn{in},
+		TxOut: []types.TxOut{out},
 	}
 
 	tx := types.NewTx(utxo)

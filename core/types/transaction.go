@@ -91,8 +91,8 @@ type TxData interface {
 	etxGasTip() *big.Int
 	etxData() []byte
 	etxAccessList() AccessList
-	txIn() []*TxIn
-	txOut() []*TxOut
+	txIn() []TxIn
+	txOut() []TxOut
 
 	// do we need a tx version?
 	rawSignatureValues() (v, r, s *big.Int)
@@ -261,9 +261,9 @@ func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 
 func (tx *Transaction) ETXSender() common.Address { return tx.inner.(*ExternalTx).Sender }
 
-func (tx *Transaction) TxOut() []*TxOut { return tx.inner.txOut() }
+func (tx *Transaction) TxOut() []TxOut { return tx.inner.txOut() }
 
-func (tx *Transaction) TxIn() []*TxIn { return tx.inner.txIn() }
+func (tx *Transaction) TxIn() []TxIn { return tx.inner.txIn() }
 
 func (tx *Transaction) UtxoSignature() *schnorr.Signature { return tx.inner.utxoSignature() }
 

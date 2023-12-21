@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -9,7 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
@@ -1088,6 +1091,8 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 	transactions := block.UTXOs()
 
 	for _, tx := range transactions[1:] {
+
+		pubKeys := make([]*btcec.PublicKey, 0)
 		for _, txIn := range tx.TxIn() {
 
 			entry := view.LookupEntry(txIn.PreviousOutPoint)
@@ -1106,11 +1111,28 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 			if err != nil {
 				return err
 			}
-			valid := tx.UtxoSignatures()[0].Verify(txIn.PreviousOutPoint.Hash.Bytes(), pubkey)
-			if !valid {
-				return errors.New("invalid signature")
-			}
+			pubKeys = append(pubKeys, pubkey)
 		}
+
+		var finalKey *btcec.PublicKey
+		if len(tx.TxIn()) > 1 {
+			aggKey, _, _, err := musig2.AggregateKeys(
+				pubKeys, false,
+			)
+			if err != nil {
+				return err
+			}
+			finalKey = aggKey.FinalKey
+		} else {
+			finalKey = pubKeys[0]
+		}
+
+		txHash := sha256.Sum256(tx.Hash().Bytes())
+		valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
+		if !valid {
+			return errors.New("invalid signature")
+		}
+
 	}
 
 	return nil

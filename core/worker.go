@@ -520,7 +520,7 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 	}
 	w.current = work
 
-	coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64()), work.header.Coinbase())
+	coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64()), work.header.Coinbase()) // need to fix this
 	if err != nil {
 		return nil, err
 	}

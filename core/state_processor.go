@@ -231,6 +231,7 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
 
+	err = p.hc.verifyInputUtxos(utxoView, block)
 	if err != nil {
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
@@ -318,7 +319,7 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 			// provably unspendable as available utxos.  Also, the passed
 			// spent txos slice is updated to contain an entry for each
 			// spent txout in the order each transaction spends them.
-			err = utxoView.ConnectTransaction(tx, block.Header().NumberU64(), &stxos)
+			err = utxoView.ConnectTransaction(tx, block, &stxos)
 			if err != nil {
 				return nil, nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}

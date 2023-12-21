@@ -177,7 +177,7 @@ func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
 // unspendable.  When the view already has an entry for the output, it will be
 // marked unspent.  All fields will be updated for existing entries since it's
 // possible it has changed during a reorg.
-func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, blockHeight uint64) {
+func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, block *Block) {
 
 	fmt.Println("AddTxOuts")
 	fmt.Println(outpoint.Hash, outpoint.Index)
@@ -200,7 +200,7 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 
 	entry.Amount = txOut.Value
 	entry.Address = txOut.Address
-	entry.BlockHeight = blockHeight
+	entry.BlockHeight = block.NumberU64()
 	entry.PackedFlags = TfModified
 	if isCoinBase {
 		entry.PackedFlags |= TfCoinBase
@@ -211,7 +211,7 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 // it exists and is not provably unspendable.  When the view already has an
 // entry for the output, it will be marked unspent.  All fields will be updated
 // for existing entries since it's possible it has changed during a reorg.
-func (view *UtxoViewpoint) AddTxOut(tx *Transaction, txOutIdx uint32, blockHeight uint64) {
+func (view *UtxoViewpoint) AddTxOut(tx *Transaction, txOutIdx uint32, block *Block) {
 	// Can't add an output for an out of bounds index.
 	if txOutIdx >= uint32(len(tx.inner.txOut())) {
 		return
@@ -221,20 +221,20 @@ func (view *UtxoViewpoint) AddTxOut(tx *Transaction, txOutIdx uint32, blockHeigh
 	// possible (although extremely unlikely) that the existing entry is
 	// being replaced by a different transaction with the same hash.  This
 	// is allowed so long as the previous transaction is fully spent.
-	prevOut := OutPoint{Hash: tx.Hash(), Index: txOutIdx}
+	prevOut := OutPoint{Hash: block.ParentHash(), Index: txOutIdx}
 	txOut := tx.inner.txOut()[txOutIdx]
-	view.addTxOut(prevOut, txOut, IsCoinBaseTx(tx), blockHeight)
+	view.addTxOut(prevOut, txOut, IsCoinBaseTx(tx), block)
 }
 
 // AddTxOuts adds all outputs in the passed transaction which are not provably
 // unspendable to the view.  When the view already has entries for any of the
 // outputs, they are simply marked unspent.  All fields will be updated for
 // existing entries since it's possible it has changed during a reorg.
-func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, blockHeight uint64) {
+func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, block *Block) {
 	// Loop all of the transaction outputs and add those which are not
 	// provably unspendable.
 	isCoinBase := IsCoinBaseTx(tx)
-	prevOut := OutPoint{Hash: tx.Hash()}
+	prevOut := OutPoint{Hash: block.ParentHash()}
 	for txOutIdx, txOut := range tx.inner.txOut() {
 		// Update existing entries.  All fields are updated because it's
 		// possible (although extremely unlikely) that the existing
@@ -242,7 +242,7 @@ func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, blockHeight uint64) {
 		// same hash.  This is allowed so long as the previous
 		// transaction is fully spent.
 		prevOut.Index = uint32(txOutIdx)
-		view.addTxOut(prevOut, txOut, isCoinBase, blockHeight)
+		view.addTxOut(prevOut, txOut, isCoinBase, block)
 	}
 }
 
@@ -258,11 +258,11 @@ func NewUtxoViewpoint() *UtxoViewpoint {
 // spent.  In addition, when the 'stxos' argument is not nil, it will be updated
 // to append an entry for each spent txout.  An error will be returned if the
 // view does not contain the required utxos.
-func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, blockHeight uint64, stxos *[]SpentTxOut) error {
+func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, block *Block, stxos *[]SpentTxOut) error {
 	// Coinbase transactions don't have any inputs to spend.
 	if IsCoinBaseTx(tx) {
 		// Add the transaction's outputs as available utxos.
-		view.AddTxOuts(tx, blockHeight)
+		view.AddTxOuts(tx, block)
 		return nil
 	}
 
@@ -296,6 +296,6 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, blockHeight uint6
 	}
 
 	// Add the transaction's outputs as available utxos.
-	view.AddTxOuts(tx, blockHeight)
+	view.AddTxOuts(tx, block)
 	return nil
 }

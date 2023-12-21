@@ -1065,7 +1065,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 				i >= inFlightIndex {
 
 				originTx := transactions[inFlightIndex]
-				view.AddTxOuts(originTx, block.Header().NumberU64())
+				view.AddTxOuts(originTx, block)
 				continue
 			}
 
@@ -1091,7 +1091,6 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 	transactions := block.UTXOs()
 
 	for _, tx := range transactions[1:] {
-
 		pubKeys := make([]*btcec.PublicKey, 0)
 		for _, txIn := range tx.TxIn() {
 
@@ -1154,6 +1153,7 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 			continue
 		}
 
+		fmt.Println("write utxo", outpoint.Hash.Hex())
 		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, entry)
 	}
 
@@ -1254,8 +1254,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 		// entry for it and then mark it spent.  This is done because
 		// the code relies on its existence in the view in order to
 		// signal modifications have happened.
-		txHash := tx.Hash()
-		prevOut := types.OutPoint{Hash: txHash}
+		prevOut := types.OutPoint{Hash: block.ParentHash()}
 		for txOutIdx, txOut := range tx.TxOut() {
 			// if txscript.IsUnspendable(txOut.PkScript) {
 			// 	continue

@@ -117,8 +117,8 @@ func (tx *ExternalTx) etxData() []byte           { panic("external TX does not h
 func (tx *ExternalTx) etxAccessList() AccessList { panic("external TX does not have etxAccessList") }
 func (tx *ExternalTx) txIn() []*TxIn             { panic("internal TX does not have txIn") }
 func (tx *ExternalTx) txOut() []*TxOut           { panic("internal TX does not have txOut") }
-func (tx *ExternalTx) utxoSignatures() []*schnorr.Signature {
-	panic("interal TX does not have utxoSignatures")
+func (tx *ExternalTx) utxoSignature() *schnorr.Signature {
+	panic("interal TX does not have utxoSignature")
 }
 
 func (tx *ExternalTx) rawSignatureValues() (v, r, s *big.Int) {

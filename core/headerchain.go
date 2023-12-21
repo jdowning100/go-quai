@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -9,7 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
@@ -336,7 +339,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 
 	// If head is the normal extension of canonical head, we can return by just wiring the canonical hash.
 	if prevHeader.Hash() == head.ParentHash() {
-		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head)
+		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head) // why was this added?
 		if err != nil {
 			return err
 		}
@@ -1062,7 +1065,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 				i >= inFlightIndex {
 
 				originTx := transactions[inFlightIndex]
-				view.AddTxOuts(originTx, block.Header().NumberU64())
+				view.AddTxOuts(originTx, block)
 				continue
 			}
 
@@ -1084,10 +1087,11 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	return hc.fetchUtxosMain(view, needed)
 }
 
-func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error {
+func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error { // should this be used instead of Verify
 	transactions := block.UTXOs()
 
 	for _, tx := range transactions[1:] {
+		pubKeys := make([]*btcec.PublicKey, 0)
 		for _, txIn := range tx.TxIn() {
 
 			entry := view.LookupEntry(txIn.PreviousOutPoint)
@@ -1106,11 +1110,28 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 			if err != nil {
 				return err
 			}
-			valid := tx.UtxoSignatures()[0].Verify(txIn.PreviousOutPoint.Hash.Bytes(), pubkey)
-			if !valid {
-				return errors.New("invalid signature")
-			}
+			pubKeys = append(pubKeys, pubkey)
 		}
+
+		var finalKey *btcec.PublicKey
+		if len(tx.TxIn()) > 1 {
+			aggKey, _, _, err := musig2.AggregateKeys(
+				pubKeys, false,
+			)
+			if err != nil {
+				return err
+			}
+			finalKey = aggKey.FinalKey
+		} else {
+			finalKey = pubKeys[0]
+		}
+
+		txHash := sha256.Sum256(tx.Hash().Bytes())
+		valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
+		if !valid {
+			return errors.New("invalid signature")
+		}
+
 	}
 
 	return nil
@@ -1132,22 +1153,8 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 			continue
 		}
 
-		// // Serialize and store the utxo entry.
-		// serialized, err := serializeUtxoEntry(entry)
-		// if err != nil {
-		// 	return err
-		// }
-		// key := outpointKey(outpoint)
-		// err = utxoBucket.Put(*key, serialized)
-
+		fmt.Println("write utxo", outpoint.Hash.Hex())
 		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, entry)
-		// NOTE: The key is intentionally not recycled here since the
-		// database interface contract prohibits modifications.  It will
-		// be garbage collected normally when the database is done with
-		// it.
-		// if err != nil {
-		// 	return err
-		// }
 	}
 
 	return nil
@@ -1186,22 +1193,22 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 // See the comment for NewBlockTemplate for more information about why the nil
 // address handling is useful.
 func createCoinbaseTx(nextBlockHeight int32, addr common.Address) (*types.Transaction, error) {
-	in := &types.TxIn{
+	in := types.TxIn{
 		// Coinbase transactions have no inputs, so previous outpoint is
 		// zero hash and max index.
 		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
 			types.MaxPrevOutIndex),
 	}
 
-	out := &types.TxOut{
+	out := types.TxOut{
 		Value: 10000000,
 		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
 		Address: addr.Bytes(),
 	}
 
 	utxo := &types.UtxoTx{
-		TxIn:  []*types.TxIn{in},
-		TxOut: []*types.TxOut{out},
+		TxIn:  []types.TxIn{in},
+		TxOut: []types.TxOut{out},
 	}
 
 	tx := types.NewTx(utxo)
@@ -1247,8 +1254,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 		// entry for it and then mark it spent.  This is done because
 		// the code relies on its existence in the view in order to
 		// signal modifications have happened.
-		txHash := tx.Hash()
-		prevOut := types.OutPoint{Hash: txHash}
+		prevOut := types.OutPoint{Hash: block.ParentHash()}
 		for txOutIdx, txOut := range tx.TxOut() {
 			// if txscript.IsUnspendable(txOut.PkScript) {
 			// 	continue

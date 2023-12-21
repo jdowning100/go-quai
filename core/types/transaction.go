@@ -91,15 +91,15 @@ type TxData interface {
 	etxGasTip() *big.Int
 	etxData() []byte
 	etxAccessList() AccessList
-	txIn() []*TxIn
-	txOut() []*TxOut
+	txIn() []TxIn
+	txOut() []TxOut
 
 	// do we need a tx version?
 	rawSignatureValues() (v, r, s *big.Int)
 	setSignatureValues(chainID, v, r, s *big.Int)
 
 	// Schnorr segregated sigs
-	utxoSignatures() []*schnorr.Signature
+	utxoSignature() *schnorr.Signature
 }
 
 // EncodeRLP implements rlp.Encoder
@@ -261,11 +261,11 @@ func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 
 func (tx *Transaction) ETXSender() common.Address { return tx.inner.(*ExternalTx).Sender }
 
-func (tx *Transaction) TxOut() []*TxOut { return tx.inner.txOut() }
+func (tx *Transaction) TxOut() []TxOut { return tx.inner.txOut() }
 
-func (tx *Transaction) TxIn() []*TxIn { return tx.inner.txIn() }
+func (tx *Transaction) TxIn() []TxIn { return tx.inner.txIn() }
 
-func (tx *Transaction) UtxoSignatures() []*schnorr.Signature { return tx.inner.utxoSignatures() }
+func (tx *Transaction) UtxoSignature() *schnorr.Signature { return tx.inner.utxoSignature() }
 
 func (tx *Transaction) IsInternalToExternalTx() (inner *InternalToExternalTx, ok bool) {
 	inner, ok = tx.inner.(*InternalToExternalTx)

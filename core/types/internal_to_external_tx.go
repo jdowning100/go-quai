@@ -118,10 +118,10 @@ func (tx *InternalToExternalTx) etxGasPrice() *big.Int     { return tx.ETXGasPri
 func (tx *InternalToExternalTx) etxGasTip() *big.Int       { return tx.ETXGasTip }
 func (tx *InternalToExternalTx) etxData() []byte           { return tx.ETXData }
 func (tx *InternalToExternalTx) etxAccessList() AccessList { return tx.ETXAccessList }
-func (tx *InternalToExternalTx) txIn() []*TxIn             { panic("internal TX does not have txIn") }
-func (tx *InternalToExternalTx) txOut() []*TxOut           { panic("internal TX does not have txOut") }
-func (tx *InternalToExternalTx) utxoSignatures() []*schnorr.Signature {
-	panic("interal TX does not have utxoSignatures")
+func (tx *InternalToExternalTx) txIn() []TxIn              { panic("internal TX does not have txIn") }
+func (tx *InternalToExternalTx) txOut() []TxOut            { panic("internal TX does not have txOut") }
+func (tx *InternalToExternalTx) utxoSignature() *schnorr.Signature {
+	panic("interal TX does not have utxoSignature")
 }
 
 func (tx *InternalToExternalTx) rawSignatureValues() (v, r, s *big.Int) {

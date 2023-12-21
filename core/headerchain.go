@@ -1154,22 +1154,7 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 			continue
 		}
 
-		// // Serialize and store the utxo entry.
-		// serialized, err := serializeUtxoEntry(entry)
-		// if err != nil {
-		// 	return err
-		// }
-		// key := outpointKey(outpoint)
-		// err = utxoBucket.Put(*key, serialized)
-
 		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, entry)
-		// NOTE: The key is intentionally not recycled here since the
-		// database interface contract prohibits modifications.  It will
-		// be garbage collected normally when the database is done with
-		// it.
-		// if err != nil {
-		// 	return err
-		// }
 	}
 
 	return nil

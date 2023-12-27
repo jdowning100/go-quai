@@ -15,6 +15,12 @@ type UtxoTx struct {
 	Signatures *schnorr.Signature
 }
 
+type UtxoTxWithMinerFee struct {
+	Tx       *Transaction
+	Fee      uint64
+	FeePerKB uint64
+}
+
 // copy creates a deep copy of the transaction data and initializes all fields.
 func (tx *UtxoTx) copy() TxData {
 	cpy := &UtxoTx{

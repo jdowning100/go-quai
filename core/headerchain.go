@@ -1001,7 +1001,7 @@ func (hc *HeaderChain) GetUtxo(hash common.Hash) *types.UtxoEntry {
 // Upon completion of this function, the view will contain an entry for each
 // requested outpoint.  Spent outputs, or those which otherwise don't exist,
 // will result in a nil entry in the view.
-func (hc *HeaderChain) fetchUtxosMain(view *types.UtxoViewpoint, outpoints []types.OutPoint) error {
+func (hc *HeaderChain) FetchUtxosMain(view *types.UtxoViewpoint, outpoints []types.OutPoint) error {
 	// Nothing to do if there are no requested outputs.
 	if len(outpoints) == 0 {
 		return nil
@@ -1084,7 +1084,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	}
 
 	// Request the input utxos from the database.
-	return hc.fetchUtxosMain(view, needed)
+	return hc.FetchUtxosMain(view, needed)
 }
 
 func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error { // should this be used instead of Verify

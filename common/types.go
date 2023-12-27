@@ -57,6 +57,7 @@ var (
 	// The zero address (0x0)
 	ZeroInternal    = InternalAddress{}
 	ZeroAddr        = Address{&ZeroInternal}
+	ZeroHash        Hash
 	ErrInvalidScope = errors.New("address is not in scope")
 )
 

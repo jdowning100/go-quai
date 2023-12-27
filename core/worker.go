@@ -689,6 +689,12 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 		if tx == nil {
 			break
 		}
+		if tx.Type() == types.UtxoTxType {
+			gasUsed := env.header.GasUsed()
+			env.header.SetGasUsed(gasUsed + 21000) // set utxo tx gas to 21000 for now
+			env.txs = append(env.txs, tx)
+			continue
+		}
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance is the transaction pool.
 		//
@@ -876,8 +882,13 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, block *typ
 	if err != nil {
 		return
 	}
-	if len(pending) > 0 {
+	pendingUtxoTxs := w.txPool.UTXOPoolPending()
+
+	if len(pending) > 0 && len(pendingUtxoTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, pending, env.header.BaseFee(), true)
+		for _, tx := range pendingUtxoTxs {
+			txs.AppendNoSort(tx) // put all utxos at the top for now
+		}
 		if w.commitTransactions(env, txs, interrupt) {
 			return
 		}

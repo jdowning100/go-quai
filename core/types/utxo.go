@@ -1,6 +1,10 @@
 package types
 
 import (
+	"errors"
+	"fmt"
+	"math"
+
 	"github.com/dominant-strategies/go-quai/common"
 )
 
@@ -16,6 +20,15 @@ const (
 	// MaxPrevOutIndex is the maximum index the index field of a previous
 	// outpoint can be.
 	MaxPrevOutIndex uint32 = 0xffffffff
+
+	// SatoshiPerBitcent is the number of satoshi in one bitcoin cent.
+	SatoshiPerBitcent = 1e6
+
+	// SatoshiPerBitcoin is the number of satoshi in one bitcoin (1 BTC).
+	SatoshiPerBitcoin = 1e8
+
+	// MaxSatoshi is the maximum transaction amount allowed in satoshi.
+	MaxSatoshi = 21e6 * SatoshiPerBitcoin
 )
 
 // TxIn defines a bitcoin transaction input.
@@ -71,4 +84,71 @@ func NewTxOut(value uint64, address []byte) *TxOut {
 		Value:   value,
 		Address: address,
 	}
+}
+
+// CheckTransactionSanity performs some preliminary checks on a transaction to
+// ensure it is sane.  These checks are context free.
+func CheckUTXOTransactionSanity(tx *Transaction) error {
+	// A transaction must have at least one input.
+	if len(tx.TxIn()) == 0 {
+		return errors.New("transaction has no inputs")
+	}
+
+	// A transaction must have at least one output.
+	if len(tx.TxOut()) == 0 {
+		return errors.New("transaction has no outputs")
+	}
+
+	// TODO: A transaction must not exceed the maximum allowed block payload when
+	// serialized.
+
+	// Ensure the transaction amounts are in range.  Each transaction
+	// output must not be negative or more than the max allowed per
+	// transaction.  Also, the total of all outputs must abide by the same
+	// restrictions.  All amounts in a transaction are in a unit value known
+	// as a satoshi.  One bitcoin is a quantity of satoshi as defined by the
+	// SatoshiPerBitcoin constant.
+	var totalSatoshi uint64
+	for _, txOut := range tx.TxOut() {
+		satoshi := txOut.Value
+		if satoshi > MaxSatoshi {
+			str := fmt.Sprintf("transaction output value of %v is "+
+				"higher than max allowed value of %v", satoshi,
+				MaxSatoshi)
+			return errors.New(str)
+		}
+
+		// Two's complement int64 overflow guarantees that any overflow
+		// is detected and reported.  This is impossible for Bitcoin, but
+		// perhaps possible if an alt increases the total money supply.
+		totalSatoshi += satoshi
+		if totalSatoshi > MaxSatoshi {
+			str := fmt.Sprintf("total value of all transaction "+
+				"outputs is %v which is higher than max "+
+				"allowed value of %v", totalSatoshi,
+				MaxSatoshi)
+			return errors.New(str)
+		}
+	}
+
+	// Check for duplicate transaction inputs.
+	existingTxOut := make(map[OutPoint]struct{})
+	for _, txIn := range tx.TxIn() {
+		if _, exists := existingTxOut[txIn.PreviousOutPoint]; exists {
+			return errors.New("transaction contains duplicate inputs")
+		}
+		existingTxOut[txIn.PreviousOutPoint] = struct{}{}
+	}
+
+	// Previous transaction outputs referenced by the inputs to this
+	// transaction must not be null.
+	for _, txIn := range tx.TxIn() {
+		if txIn.PreviousOutPoint.Index == math.MaxUint32 && txIn.PreviousOutPoint.Hash == common.ZeroHash {
+			return errors.New("transaction " +
+				"input refers to previous output that " +
+				"is null")
+		}
+	}
+
+	return nil
 }

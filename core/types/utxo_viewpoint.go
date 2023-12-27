@@ -1,8 +1,16 @@
 package types
 
 import (
+	"crypto/sha256"
+
+	"github.com/dominant-strategies/go-quai/crypto"
+
+	"errors"
 	"fmt"
 
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/dominant-strategies/go-quai/common"
 )
@@ -297,5 +305,48 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, block *Block, stx
 
 	// Add the transaction's outputs as available utxos.
 	view.AddTxOuts(tx, block)
+	return nil
+}
+
+func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
+	pubKeys := make([]*btcec.PublicKey, 0)
+	for _, txIn := range tx.TxIn() {
+		entry := view.LookupEntry(txIn.PreviousOutPoint)
+		if entry == nil {
+			return errors.New("utxo not found")
+		}
+
+		// Verify the pubkey
+		address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:])
+		entryAddr := common.BytesToAddress(entry.Address)
+		if !address.Equal(entryAddr) {
+			return errors.New("invalid address")
+		}
+
+		pubkey, err := schnorr.ParsePubKey(txIn.PubKey)
+		if err != nil {
+			return err
+		}
+		pubKeys = append(pubKeys, pubkey)
+	}
+
+	var finalKey *btcec.PublicKey
+	if len(tx.TxIn()) > 1 {
+		aggKey, _, _, err := musig2.AggregateKeys(
+			pubKeys, false,
+		)
+		if err != nil {
+			return err
+		}
+		finalKey = aggKey.FinalKey
+	} else {
+		finalKey = pubKeys[0]
+	}
+
+	txHash := sha256.Sum256(tx.Hash().Bytes())
+	valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
+	if !valid {
+		return errors.New("invalid signature")
+	}
 	return nil
 }

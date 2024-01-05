@@ -339,11 +339,11 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 
 	// If head is the normal extension of canonical head, we can return by just wiring the canonical hash.
 	if prevHeader.Hash() == head.ParentHash() {
-		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head) // why was this added?
+		/*utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head) // why was this added?
 		if err != nil {
 			return err
 		}
-		hc.WriteUtxoViewpoint(utxoView)
+		hc.WriteUtxoViewpoint(utxoView)*/
 		rawdb.WriteCanonicalHash(hc.headerDb, head.Hash(), head.NumberU64())
 		return nil
 	}
@@ -384,11 +384,11 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 
 	// Run through the hash stack to update canonicalHash and forward state processor
 	for i := len(hashStack) - 1; i >= 0; i-- {
-		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(hashStack[i])
+		/*utxoView, err := hc.ReadInboundEtxsAndAppendBlock(hashStack[i])
 		if err != nil {
 			return err
 		}
-		hc.WriteUtxoViewpoint(utxoView)
+		hc.WriteUtxoViewpoint(utxoView)*/
 		rawdb.WriteCanonicalHash(hc.headerDb, hashStack[i].Hash(), hashStack[i].NumberU64())
 	}
 
@@ -425,10 +425,11 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 
 	// Run through the hash stack to update canonicalHash and forward state processor
 	for i := len(headersWithoutState) - 1; i >= 0; i-- {
-		_, err := hc.ReadInboundEtxsAndAppendBlock(headersWithoutState[i])
+		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(headersWithoutState[i])
 		if err != nil {
 			return err
 		}
+		hc.WriteUtxoViewpoint(utxoView)
 	}
 	return nil
 }

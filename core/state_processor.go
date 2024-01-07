@@ -236,7 +236,7 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 		return types.Receipts{}, []*types.Log{}, nil, nil, 0, err
 	}
 
-	var timeSenders, timeSign, timePrepare, timeEtx, timeTx time.Duration
+	var timeSenders, timeSign, timePrepare, timeEtx, timeTx, timeUtxo time.Duration
 	startTimeSenders := time.Now()
 	senders := make(map[common.Hash]*common.InternalAddress) // temporary cache for senders of internal txs
 	numInternalTxs := 0
@@ -268,6 +268,28 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 	}
 
 	for i, tx := range block.Transactions() {
+
+		if tx.Type() == types.UtxoTxType {
+			startTimeUtxo := time.Now()
+			_, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), utxoView)
+			if err != nil {
+				return nil, nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+
+			// Add all of the outputs for this transaction which are not
+			// provably unspendable as available utxos.  Also, the passed
+			// spent txos slice is updated to contain an entry for each
+			// spent txout in the order each transaction spends them.
+			err = utxoView.ConnectTransaction(tx, block, &stxos)
+			if err != nil {
+				return nil, nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+			timeUtxoDelta := time.Since(startTimeUtxo)
+			timeUtxo += timeUtxoDelta
+
+			continue
+		}
+
 		startProcess := time.Now()
 		msg, err := tx.AsMessageWithSender(types.MakeSigner(p.config, header.Number()), header.BaseFee(), senders[tx.Hash()])
 		if err != nil {
@@ -309,20 +331,6 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 			}
 			timeTxDelta := time.Since(startTimeTx)
 			timeTx += timeTxDelta
-		} else if tx.Type() == types.UtxoTxType {
-			_, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(), utxoView)
-			if err != nil {
-				return nil, nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-			}
-
-			// Add all of the outputs for this transaction which are not
-			// provably unspendable as available utxos.  Also, the passed
-			// spent txos slice is updated to contain an entry for each
-			// spent txout in the order each transaction spends them.
-			err = utxoView.ConnectTransaction(tx, block, &stxos)
-			if err != nil {
-				return nil, nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-			}
 		} else {
 			return nil, nil, nil, nil, 0, ErrTxTypeNotSupported
 		}
@@ -339,7 +347,7 @@ func (p *StateProcessor) Process(block *types.Block, etxSet types.EtxSet) (types
 	log.Debug("Total Tx Processing Time", "signing time", common.PrettyDuration(timeSign), "prepare state time", common.PrettyDuration(timePrepare), "etx time", common.PrettyDuration(timeEtx), "tx time", common.PrettyDuration(timeTx))
 	log.Debug("Time taken in Process", "time1", time1, "time2", time2, "time3", time3, "time4", time4, "time5", time5)
 
-	log.Debug("Total Tx Processing Time", "signing time", common.PrettyDuration(timeSign), "senders cache time", common.PrettyDuration(timeSenders), "percent cached internal txs", fmt.Sprintf("%.2f", float64(len(senders))/float64(numInternalTxs)*100), "prepare state time", common.PrettyDuration(timePrepare), "etx time", common.PrettyDuration(timeEtx), "tx time", common.PrettyDuration(timeTx))
+	log.Debug("Total Tx Processing Time", "signing time", common.PrettyDuration(timeSign), "senders cache time", common.PrettyDuration(timeSenders), "percent cached internal txs", fmt.Sprintf("%.2f", float64(len(senders))/float64(numInternalTxs)*100), "prepare state time", common.PrettyDuration(timePrepare), "etx time", common.PrettyDuration(timeEtx), "tx time", common.PrettyDuration(timeTx), "utxo time", common.PrettyDuration(timeUtxo))
 
 	return receipts, allLogs, statedb, utxoView, *usedGas, nil
 }

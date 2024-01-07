@@ -12,7 +12,7 @@ type UtxoTx struct {
 	TxIn    []TxIn
 	TxOut   []TxOut
 
-	Signatures *schnorr.Signature
+	Signature *schnorr.Signature
 }
 
 type UtxoTxWithMinerFee struct {
@@ -24,7 +24,8 @@ type UtxoTxWithMinerFee struct {
 // copy creates a deep copy of the transaction data and initializes all fields.
 func (tx *UtxoTx) copy() TxData {
 	cpy := &UtxoTx{
-		ChainID: new(big.Int),
+		ChainID:   new(big.Int),
+		Signature: tx.Signature,
 	}
 	if tx.ChainID != nil {
 		cpy.ChainID.Set(tx.ChainID)
@@ -57,7 +58,7 @@ func (tx *UtxoTx) etxData() []byte                   { panic("internal TX does n
 func (tx *UtxoTx) etxAccessList() AccessList         { panic("internal TX does not have etxAccessList") }
 func (tx *UtxoTx) txIn() []TxIn                      { return tx.TxIn }
 func (tx *UtxoTx) txOut() []TxOut                    { return tx.TxOut }
-func (tx *UtxoTx) utxoSignature() *schnorr.Signature { return tx.Signatures }
+func (tx *UtxoTx) utxoSignature() *schnorr.Signature { return tx.Signature }
 
 func (tx *UtxoTx) rawSignatureValues() (v, r, s *big.Int) {
 	panic("UTXO TX does not have raw signature values")

@@ -3,15 +3,14 @@ package types
 import (
 	"crypto/sha256"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/schnorr"
 	"github.com/dominant-strategies/go-quai/crypto"
 
 	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
-	"github.com/btcsuite/btcd/txscript"
 	"github.com/dominant-strategies/go-quai/common"
 )
 
@@ -189,12 +188,7 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 
 	fmt.Println("AddTxOuts")
 	fmt.Println(outpoint.Hash, outpoint.Index)
-	fmt.Println(txOut.Value, txOut.Address)
-
-	// Don't add provably unspendable outputs.
-	if txscript.IsUnspendable(txOut.Address) {
-		return
-	}
+	fmt.Println(txOut.Value, common.BytesToAddress(txOut.Address))
 
 	// Update existing entries.  All fields are updated because it's
 	// possible (although extremely unlikely) that the existing entry is
@@ -204,6 +198,7 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 	if entry == nil {
 		entry = new(UtxoEntry)
 		view.Entries[outpoint] = entry
+		fmt.Println("new entry", outpoint.Hash, outpoint.Index)
 	}
 
 	entry.Amount = txOut.Value
@@ -317,20 +312,35 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
 		}
 
 		// Verify the pubkey
-		address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:])
+		pubKey, err := crypto.UnmarshalPubkey(txIn.PubKey)
+		if err != nil {
+			return err
+		}
+
+		address := crypto.PubkeyToAddress(*pubKey)
 		entryAddr := common.BytesToAddress(entry.Address)
 		if !address.Equal(entryAddr) {
 			return errors.New("invalid address")
 		}
 
-		pubkey, err := schnorr.ParsePubKey(txIn.PubKey)
+		// We have the Public Key as 65 bytes uncompressed, need to make it 32 bytes
+		tempPub, err := btcec.ParsePubKey(txIn.PubKey)
 		if err != nil {
 			return err
 		}
+
+		compressed := tempPub.SerializeCompressed()
+
+		pubkey, err := schnorr.ParsePubKey(compressed)
+		if err != nil {
+			return err
+		}
+
 		pubKeys = append(pubKeys, pubkey)
 	}
 
 	var finalKey *btcec.PublicKey
+	fmt.Println("len tx.TxIn()", len(tx.TxIn()))
 	if len(tx.TxIn()) > 1 {
 		aggKey, _, _, err := musig2.AggregateKeys(
 			pubKeys, false,
@@ -344,8 +354,8 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
 	}
 
 	txHash := sha256.Sum256(tx.Hash().Bytes())
-	valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
-	if !valid {
+	fmt.Println(tx.UtxoSignature().Serialize())
+	if !tx.UtxoSignature().Verify(txHash[:], finalKey) {
 		return errors.New("invalid signature")
 	}
 	return nil

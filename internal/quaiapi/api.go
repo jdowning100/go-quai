@@ -1438,27 +1438,35 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	if !b.ProcessingState() {
 		return common.Hash{}, errors.New("submitTransaction call can only be made on chain processing the state")
 	}
-	// If the transaction fee cap is already specified, ensure the
-	// fee of the given transaction is _reasonable_.
-	if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
-		return common.Hash{}, err
-	}
-	if err := b.SendTx(ctx, tx); err != nil {
-		return common.Hash{}, err
-	}
-	// Print a log with full tx details for manual investigations and interventions
-	signer := types.MakeSigner(b.ChainConfig(), b.CurrentHeader().Number())
-	from, err := types.Sender(signer, tx)
-	if err != nil {
-		return common.Hash{}, err
+
+	if tx.Type() == types.UtxoTxType {
+		if err := b.SendTx(ctx, tx); err != nil {
+			return common.Hash{}, err
+		}
+	} else {
+		// If the transaction fee cap is already specified, ensure the
+		// fee of the given transaction is _reasonable_.
+		if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
+			return common.Hash{}, err
+		}
+		if err := b.SendTx(ctx, tx); err != nil {
+			return common.Hash{}, err
+		}
+		// Print a log with full tx details for manual investigations and interventions
+		signer := types.MakeSigner(b.ChainConfig(), b.CurrentHeader().Number())
+		from, err := types.Sender(signer, tx)
+		if err != nil {
+			return common.Hash{}, err
+		}
+
+		if tx.To() == nil {
+			addr := crypto.CreateAddress(from, tx.Nonce(), tx.Data())
+			log.Debug("Submitted contract creation", "hash", tx.Hash().Hex(), "from", from, "nonce", tx.Nonce(), "contract", addr.Hex(), "value", tx.Value())
+		} else {
+			log.Debug("Submitted transaction", "hash", tx.Hash().Hex(), "from", from, "nonce", tx.Nonce(), "recipient", tx.To(), "value", tx.Value())
+		}
 	}
 
-	if tx.To() == nil {
-		addr := crypto.CreateAddress(from, tx.Nonce(), tx.Data())
-		log.Debug("Submitted contract creation", "hash", tx.Hash().Hex(), "from", from, "nonce", tx.Nonce(), "contract", addr.Hex(), "value", tx.Value())
-	} else {
-		log.Debug("Submitted transaction", "hash", tx.Hash().Hex(), "from", from, "nonce", tx.Nonce(), "recipient", tx.To(), "value", tx.Value())
-	}
 	return tx.Hash(), nil
 }
 

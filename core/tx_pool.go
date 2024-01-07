@@ -955,6 +955,7 @@ func (pool *TxPool) addTxs(txs []*types.Transaction, local, sync bool) []error {
 		}
 		if tx.Type() == types.UtxoTxType {
 			pool.addUtxoTx(tx)
+			continue
 		}
 		// Exclude transactions with invalid signatures as soon as
 		// possible and cache senders in transactions before

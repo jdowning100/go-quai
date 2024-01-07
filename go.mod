@@ -5,11 +5,13 @@ go 1.20
 require (
 	github.com/Azure/azure-storage-blob-go v0.7.0
 	github.com/VictoriaMetrics/fastcache v1.6.0
-	github.com/btcsuite/btcd v0.23.4
+	github.com/btcsuite/btcd v0.24.0
+	github.com/btcsuite/btcd/btcec/v2 v2.3.2
 	github.com/cespare/cp v0.1.0
 	github.com/cockroachdb/pebble v0.0.0-20230701135918-609ae80aea41
 	github.com/davecgh/go-spew v1.1.1
 	github.com/deckarep/golang-set v1.8.0
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/docker/docker v1.6.2
 	github.com/dominant-strategies/bn256 v0.0.0-20220930122411-fbf930a7493d
@@ -17,7 +19,7 @@ require (
 	github.com/fjl/memsize v0.0.0-20190710130421-bcb5799ab5e5
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb
 	github.com/google/gofuzz v1.1.1-0.20200604201612-c04b05f3adfa
-	github.com/gorilla/websocket v1.4.2
+	github.com/gorilla/websocket v1.5.0
 	github.com/hashicorp/golang-lru v0.5.5-0.20210104140557-80c98217689d
 	github.com/hnlq715/golang-lru v0.4.0
 	github.com/holiman/bloomfilter/v2 v2.0.3
@@ -42,7 +44,6 @@ require (
 	golang.org/x/sync v0.1.0
 	golang.org/x/sys v0.7.0
 	golang.org/x/time v0.0.0-20220922220347-f3bd1da661af
-	gopkg.in/olebedev/go-duktape.v3 v3.0.0-20210326210528-650f7c854440
 	gopkg.in/urfave/cli.v1 v1.20.0
 	lukechampine.com/blake3 v1.1.7
 	modernc.org/mathutil v1.5.0
@@ -62,9 +63,8 @@ require (
 	github.com/DataDog/zstd v1.5.2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
-	github.com/btcsuite/btcd/btcutil v1.1.0 // indirect
-	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1 // indirect
+	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cockroachdb/errors v1.9.1 // indirect
@@ -72,7 +72,6 @@ require (
 	github.com/cockroachdb/redact v1.1.3 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230613231145-182959a1fad6 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.0.0 // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/getsentry/sentry-go v0.18.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

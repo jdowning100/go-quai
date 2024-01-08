@@ -353,9 +353,23 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
 		finalKey = pubKeys[0]
 	}
 
-	txHash := sha256.Sum256(tx.Hash().Bytes())
-	fmt.Println(tx.UtxoSignature().Serialize())
-	if !tx.UtxoSignature().Verify(txHash[:], finalKey) {
+	fmt.Println("sig", common.Bytes2Hex(tx.UtxoSignature()))
+	sig, err := schnorr.ParseSignature(tx.UtxoSignature())
+	if err != nil {
+		return err
+	}
+
+	rawUtxo := &UtxoTx{
+		TxIn:  tx.TxIn(),
+		TxOut: tx.TxOut(),
+	}
+
+	rawTx := NewTx(rawUtxo)
+
+	txHash := sha256.Sum256(rawTx.Hash().Bytes())
+
+	fmt.Println("utxo_view: sig.Verify(txHash[:], finalKey)", common.Bytes2Hex(txHash[:]), common.Bytes2Hex(finalKey.SerializeUncompressed()))
+	if !sig.Verify(txHash[:], finalKey) {
 		return errors.New("invalid signature")
 	}
 	return nil

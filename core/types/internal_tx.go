@@ -19,7 +19,6 @@ package types
 import (
 	"math/big"
 
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 )
 
@@ -102,7 +101,7 @@ func (tx *InternalTx) etxData() []byte           { panic("internal TX does not h
 func (tx *InternalTx) etxAccessList() AccessList { panic("internal TX does not have etxAccessList") }
 func (tx *InternalTx) txIn() []TxIn              { panic("internal TX does not have txIn") }
 func (tx *InternalTx) txOut() []TxOut            { panic("internal TX does not have txOut") }
-func (tx *InternalTx) utxoSignature() *schnorr.Signature {
+func (tx *InternalTx) utxoSignature() []byte {
 	panic("internal TX does not have utxoSignature")
 }
 

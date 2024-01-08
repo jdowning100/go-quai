@@ -1128,8 +1128,12 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 		}
 
 		txHash := sha256.Sum256(tx.Hash().Bytes())
-		valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
-		if !valid {
+		sig, err := schnorr.ParseSignature(tx.UtxoSignature())
+		if err != nil {
+			return err
+		}
+		fmt.Println("headerchain: sig.Verify(txHash[:], finalKey)", common.Bytes2Hex(txHash[:]), common.Bytes2Hex(finalKey.SerializeUncompressed()))
+		if !sig.Verify(txHash[:], finalKey) {
 			return errors.New("invalid signature")
 		}
 

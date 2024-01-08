@@ -1474,6 +1474,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 // The sender is responsible for signing the transaction and using the correct nonce.
 func (s *PublicTransactionPoolAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
 	tx := new(types.Transaction)
+	fmt.Println("input", input)
 	if err := tx.UnmarshalBinary(input); err != nil {
 		return common.Hash{}, err
 	}

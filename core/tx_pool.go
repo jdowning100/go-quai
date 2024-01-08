@@ -1029,14 +1029,17 @@ func (pool *TxPool) addUtxoTx(tx *types.Transaction) error {
 	}
 	pool.chain.FetchUtxosMain(view, needed)
 	if err := view.VerifyTxSignature(tx); err != nil {
+		fmt.Println("err sig", err)
 		return types.ErrInvalidSchnorrSig
 	}
 	if err := types.CheckUTXOTransactionSanity(tx); err != nil {
+		fmt.Println("err check utxo sanity", err)
 		return err
 	}
 	height := pool.chain.CurrentBlock().NumberU64()
 	fee, err := types.CheckTransactionInputs(tx, height, view)
 	if err != nil {
+		fmt.Println("err check tx inputs", err)
 		return err
 	}
 	pool.mu.Lock()

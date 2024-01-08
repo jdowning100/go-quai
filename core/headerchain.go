@@ -1,7 +1,6 @@
 package core
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -1127,7 +1126,7 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 			finalKey = pubKeys[0]
 		}
 
-		txHash := sha256.Sum256(tx.Hash().Bytes())
+		txHash := tx.Hash().Bytes()
 		sig, err := schnorr.ParseSignature(tx.UtxoSignature())
 		if err != nil {
 			return err

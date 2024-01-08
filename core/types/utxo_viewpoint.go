@@ -1,8 +1,6 @@
 package types
 
 import (
-	"crypto/sha256"
-
 	"github.com/decred/dcrd/dcrec/secp256k1/v4/schnorr"
 	"github.com/dominant-strategies/go-quai/crypto"
 
@@ -366,10 +364,13 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
 
 	rawTx := NewTx(rawUtxo)
 
-	txHash := sha256.Sum256(rawTx.Hash().Bytes())
+	txHash := rawTx.Hash().Bytes()
 
-	fmt.Println("utxo_view: sig.Verify(txHash[:], finalKey)", common.Bytes2Hex(txHash[:]), common.Bytes2Hex(finalKey.SerializeUncompressed()))
-	if !sig.Verify(txHash[:], finalKey) {
+	fmt.Println("UTXO VIEW")
+	fmt.Println("Signature:", common.Bytes2Hex(sig.Serialize()))
+	fmt.Println("TX Hash", common.Bytes2Hex(txHash[:]))
+	fmt.Println("Pubkey", common.Bytes2Hex(finalKey.SerializeUncompressed()))
+	if !sig.Verify(txHash, finalKey) {
 		return errors.New("invalid signature")
 	}
 	return nil

@@ -15,6 +15,13 @@ type UtxoTx struct {
 	Signature *schnorr.Signature
 }
 
+type WireUtxoTx struct {
+	ChainID   *big.Int // replay protection
+	TxIn      []TxIn
+	TxOut     []TxOut
+	Signature []byte
+}
+
 type UtxoTxWithMinerFee struct {
 	Tx       *Transaction
 	Fee      uint64
@@ -32,7 +39,52 @@ func (tx *UtxoTx) copy() TxData {
 
 	cpy.TxIn = make([]TxIn, len(tx.TxIn))
 	cpy.TxOut = make([]TxOut, len(tx.TxOut))
-	cpy.Signature, _ = schnorr.ParseSignature(tx.Signature.Serialize()) // optional: fatal if error is not nil
+	if tx.Signature != nil {
+		cpy.Signature, _ = schnorr.ParseSignature(tx.Signature.Serialize()) // optional: fatal if error is not nil
+	} else {
+		cpy.Signature = new(schnorr.Signature)
+	}
+	copy(cpy.TxIn, tx.TxIn)
+	copy(cpy.TxOut, tx.TxOut)
+	return cpy
+}
+
+func (tx *UtxoTx) copyToWire() *WireUtxoTx {
+	cpy := &WireUtxoTx{
+		ChainID:   new(big.Int),
+		Signature: make([]byte, 64),
+	}
+	if tx.ChainID != nil {
+		cpy.ChainID.Set(tx.ChainID)
+	}
+
+	cpy.TxIn = make([]TxIn, len(tx.TxIn))
+	cpy.TxOut = make([]TxOut, len(tx.TxOut))
+	if tx.Signature != nil {
+		copy(cpy.Signature, tx.Signature.Serialize())
+	} else {
+		copy(cpy.Signature, make([]byte, 64))
+	}
+	copy(cpy.TxIn, tx.TxIn)
+	copy(cpy.TxOut, tx.TxOut)
+	return cpy
+}
+
+func (tx *WireUtxoTx) copyFromWire() *UtxoTx {
+	cpy := &UtxoTx{
+		ChainID: new(big.Int),
+	}
+	if tx.ChainID != nil {
+		cpy.ChainID.Set(tx.ChainID)
+	}
+
+	cpy.TxIn = make([]TxIn, len(tx.TxIn))
+	cpy.TxOut = make([]TxOut, len(tx.TxOut))
+	if tx.Signature != nil {
+		cpy.Signature, _ = schnorr.ParseSignature(tx.Signature) // optional: fatal if error is not nil
+	} else {
+		cpy.Signature = new(schnorr.Signature)
+	}
 	copy(cpy.TxIn, tx.TxIn)
 	copy(cpy.TxOut, tx.TxOut)
 	return cpy

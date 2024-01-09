@@ -1,6 +1,9 @@
 package types
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/math"
 )
@@ -47,15 +50,15 @@ func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoView
 	}
 
 	var totalSatoshiIn uint64
-	for _, txIn := range tx.inner.txIn() {
+	for index, txIn := range tx.inner.txIn() {
 		// Ensure the referenced input transaction is available.
 		utxo := utxoView.LookupEntry(txIn.PreviousOutPoint)
 		if utxo == nil || utxo.IsSpent() { // why comment this out?
-			// str := fmt.Sprintf("output %v referenced from "+
-			// 	"transaction %s:%d either does not exist or "+
-			// 	"has already been spent", txIn.PreviousOutPoint,
-			// 	tx.Hash(), txInIndex)
-			// return 0, ruleError(ErrMissingTxOut, str)
+			str := fmt.Sprintf("output %v referenced from "+
+				"transaction %s:%d either does not exist or "+
+				"has already been spent", txIn.PreviousOutPoint,
+				tx.Hash(), index)
+			return 0, errors.New(str)
 		}
 
 		// Ensure the transaction is not spending coins which have not

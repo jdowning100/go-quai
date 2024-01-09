@@ -502,6 +502,12 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 			w.fillTransactionsRollingAverage.Add(time.Since(start))
 			log.Info("Filled and sorted pending transactions", "count", len(work.txs), "elapsed", common.PrettyDuration(time.Since(start)), "average", common.PrettyDuration(w.fillTransactionsRollingAverage.Average()))
 		}
+		coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64()), work.header.Coinbase())
+		if err != nil {
+			return nil, err
+		}
+
+		work.txs = append(work.txs, coinbaseTx)
 	}
 
 	// Swap out the old work with the new one, terminating any leftover
@@ -510,13 +516,6 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 		w.current.discard()
 	}
 	w.current = work
-
-	coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64()), work.header.Coinbase()) // need to fix this
-	if err != nil {
-		return nil, err
-	}
-
-	work.txs = append(work.txs, coinbaseTx)
 
 	// Create a local environment copy, avoid the data race with snapshot state.
 	newBlock, err := w.FinalizeAssemble(w.hc, work.header, block, work.state, work.txs, work.unclelist(), work.etxs, work.subManifest, work.receipts)

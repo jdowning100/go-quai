@@ -118,6 +118,14 @@ func (tx *Transaction) EncodeRLP(w io.Writer) error {
 // encodeTyped writes the canonical encoding of a typed transaction to w.
 func (tx *Transaction) encodeTyped(w *bytes.Buffer) error {
 	w.WriteByte(tx.Type())
+	if tx.Type() == UtxoTxType {
+		// custom encode for schnorr signature
+		if utxoTx, ok := tx.inner.(*UtxoTx); ok {
+			return rlp.Encode(w, utxoTx.copyToWire())
+		} else {
+			return errors.New("failed to encode utxo tx: improper type")
+		}
+	}
 	return rlp.Encode(w, tx.inner)
 }
 
@@ -178,9 +186,10 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		err := rlp.DecodeBytes(b[1:], &inner)
 		return &inner, err
 	case UtxoTxType:
-		var inner UtxoTx
-		err := rlp.DecodeBytes(b[1:], &inner)
-		return &inner, err
+		var wire WireUtxoTx
+		err := rlp.DecodeBytes(b[1:], &wire)
+		inner := wire.copyFromWire()
+		return inner, err
 	default:
 		return nil, ErrTxTypeNotSupported
 	}

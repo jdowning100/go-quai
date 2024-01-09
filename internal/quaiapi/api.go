@@ -1435,38 +1435,44 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	if !b.ProcessingState() {
 		return common.Hash{}, errors.New("submitTransaction call can only be made on chain processing the state")
 	}
-	// If the transaction fee cap is already specified, ensure the
-	// fee of the given transaction is _reasonable_.
-	if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
-		return common.Hash{}, err
-	}
+if tx.Type() == types.UtxoTxType {
 	if err := b.SendTx(ctx, tx); err != nil {
 		return common.Hash{}, err
 	}
-	// Print a log with full tx details for manual investigations and interventions
-	signer := types.MakeSigner(b.ChainConfig(), b.CurrentHeader().Number(nodeCtx))
-	from, err := types.Sender(signer, tx)
-	if err != nil {
-		return common.Hash{}, err
-	}
+} else {	
+		// If the transaction fee cap is already specified, ensure the
+		// fee of the given transaction is _reasonable_.
+		if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
+			return common.Hash{}, err
+		}
+		if err := b.SendTx(ctx, tx); err != nil {
+			return common.Hash{}, err
+		}
+		// Print a log with full tx details for manual investigations and interventions
+		signer := types.MakeSigner(b.ChainConfig(), b.CurrentHeader().Number(nodeCtx))
+		from, err := types.Sender(signer, tx)
+		if err != nil {
+			return common.Hash{}, err
+		}
 
-	if tx.To() == nil {
-		addr := crypto.CreateAddress(from, tx.Nonce(), tx.Data(), nodeLocation)
-		log.WithFields(logrus.Fields{
-			"hash":     tx.Hash().Hex(),
-			"from":     from,
-			"nonce":    tx.Nonce(),
-			"contract": addr.Hex(),
-			"value":    tx.Value(),
-		}).Debug("Submitted contract creation")
-	} else {
-		log.WithFields(logrus.Fields{
-			"hash":      tx.Hash().Hex(),
-			"from":      from,
-			"nonce":     tx.Nonce(),
-			"recipient": tx.To(),
-			"value":     tx.Value(),
-		}).Debug("Submitted transaction")
+		if tx.To() == nil {
+			addr := crypto.CreateAddress(from, tx.Nonce(), tx.Data(), nodeLocation)
+			log.WithFields(logrus.Fields{
+				"hash":     tx.Hash().Hex(),
+				"from":     from,
+				"nonce":    tx.Nonce(),
+				"contract": addr.Hex(),
+				"value":    tx.Value(),
+			}).Debug("Submitted contract creation")
+		} else {
+			log.WithFields(logrus.Fields{
+				"hash":      tx.Hash().Hex(),
+				"from":      from,
+				"nonce":     tx.Nonce(),
+				"recipient": tx.To(),
+				"value":     tx.Value(),
+			}).Debug("Submitted transaction")
+		}
 	}
 	return tx.Hash(), nil
 }

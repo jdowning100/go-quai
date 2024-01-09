@@ -1,17 +1,13 @@
 package types
 
 import (
-	"crypto/sha256"
-
 	"github.com/dominant-strategies/go-quai/crypto"
 
 	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
-	"github.com/btcsuite/btcd/txscript"
 	"github.com/dominant-strategies/go-quai/common"
 )
 
@@ -191,11 +187,6 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 	fmt.Println(outpoint.Hash, outpoint.Index)
 	fmt.Println(txOut.Value, txOut.Address)
 
-	// Don't add provably unspendable outputs.
-	if txscript.IsUnspendable(txOut.Address) {
-		return
-	}
-
 	// Update existing entries.  All fields are updated because it's
 	// possible (although extremely unlikely) that the existing entry is
 	// being replaced by a different transaction with the same hash.  This
@@ -308,12 +299,12 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, block *Block, stx
 	return nil
 }
 
-func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
+func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction, signer Signer) error {
 	pubKeys := make([]*btcec.PublicKey, 0)
 	for _, txIn := range tx.TxIn() {
 		entry := view.LookupEntry(txIn.PreviousOutPoint)
 		if entry == nil {
-			return errors.New("utxo not found")
+			return errors.New("utxo not found " + txIn.PreviousOutPoint.Hash.String())
 		}
 
 		// Verify the pubkey
@@ -323,11 +314,13 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
 			return errors.New("invalid address")
 		}
 
-		pubkey, err := schnorr.ParsePubKey(txIn.PubKey)
+		// We have the Public Key as 65 bytes uncompressed, need to make it 32 bytes (why do we?)
+		pub, err := btcec.ParsePubKey(txIn.PubKey)
 		if err != nil {
 			return err
 		}
-		pubKeys = append(pubKeys, pubkey)
+
+		pubKeys = append(pubKeys, pub)
 	}
 
 	var finalKey *btcec.PublicKey
@@ -343,9 +336,13 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction) error {
 		finalKey = pubKeys[0]
 	}
 
-	txHash := sha256.Sum256(tx.Hash().Bytes())
-	valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
-	if !valid {
+	fmt.Println("sig", common.Bytes2Hex(tx.UtxoSignature().Serialize()))
+	txDigestHash := signer.Hash(tx)
+
+	fmt.Println("UTXO VIEW")
+	fmt.Println("TX Digest Hash", common.Bytes2Hex(txDigestHash[:]))
+	fmt.Println("Pubkey", common.Bytes2Hex(finalKey.SerializeUncompressed()))
+	if !tx.UtxoSignature().Verify(txDigestHash[:], finalKey) {
 		return errors.New("invalid signature")
 	}
 	return nil

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -1100,7 +1099,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 	return hc.FetchUtxosMain(view, needed)
 }
 
-func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block) error { // should this be used instead of Verify
+func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.Block, signer types.Signer) error { // should this be used instead of Verify
 	transactions := block.UTXOs()
 
 	for _, tx := range transactions[1:] {
@@ -1109,7 +1108,7 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 
 			entry := view.LookupEntry(txIn.PreviousOutPoint)
 			if entry == nil {
-				continue
+				return errors.New("utxo not found " + txIn.PreviousOutPoint.Hash.String())
 			}
 
 			// Verify the pubkey
@@ -1139,8 +1138,8 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 			finalKey = pubKeys[0]
 		}
 
-		txHash := sha256.Sum256(tx.Hash().Bytes())
-		valid := tx.UtxoSignature().Verify(txHash[:], finalKey)
+		txDigestHash := signer.Hash(tx)
+		valid := tx.UtxoSignature().Verify(txDigestHash[:], finalKey)
 		if !valid {
 			return errors.New("invalid signature")
 		}

@@ -1053,6 +1053,7 @@ func (pool *TxPool) addTxs(txs []*types.Transaction, local, sync bool) []error {
 		}
 		if tx.Type() == types.UtxoTxType {
 			pool.addUtxoTx(tx)
+			continue
 		}
 		// Exclude transactions with invalid signatures as soon as
 		// possible and cache senders in transactions before
@@ -1131,7 +1132,8 @@ func (pool *TxPool) addUtxoTx(tx *types.Transaction) error {
 		needed = append(needed, txIn.PreviousOutPoint)
 	}
 	pool.chain.FetchUtxosMain(view, needed)
-	if err := view.VerifyTxSignature(tx); err != nil {
+	if err := view.VerifyTxSignature(tx, pool.signer); err != nil {
+		fmt.Println("err sig", err)
 		return types.ErrInvalidSchnorrSig
 	}
 	if err := types.CheckUTXOTransactionSanity(tx); err != nil {
@@ -1145,6 +1147,7 @@ func (pool *TxPool) addUtxoTx(tx *types.Transaction) error {
 	pool.mu.Lock()
 	pool.utxoPool[tx.Hash()] = &types.UtxoTxWithMinerFee{tx, fee, 0}
 	pool.mu.Unlock()
+	log.Info("Added utxo tx to pool", "tx", tx.Hash().String(), "fee", fee)
 	return nil
 }
 

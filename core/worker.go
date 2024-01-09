@@ -984,7 +984,7 @@ func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *typ
 		return nil, err
 	}
 
-	fmt.Println("block utxo here", len(block.UTXOs()))
+	fmt.Println("block utxo len", len(block.UTXOs()))
 	manifestHash := w.ComputeManifestHash(parent.Header())
 
 	if w.hc.ProcessingState() {

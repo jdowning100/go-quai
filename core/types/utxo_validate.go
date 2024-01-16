@@ -85,11 +85,7 @@ func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoView
 		// bitcoin is a quantity of satoshi as defined by the
 		// SatoshiPerBitcoin constant.
 		originTxSatoshi := utxo.Amount
-		if originTxSatoshi < 0 {
-			// str := fmt.Sprintf("transaction output has negative "+
-			// 	"value of %v", btcutil.Amount(originTxSatoshi))
-			// return 0, ruleError(ErrBadTxOutValue, str)
-		}
+
 		// if originTxSatoshi > btcutil.MaxSatoshi {
 		// str := fmt.Sprintf("transaction output value of %v is "+
 		// 	"higher than max allowed value of %v",
@@ -101,16 +97,15 @@ func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoView
 		// The total of all outputs must not be more than the max
 		// allowed per transaction.  Also, we could potentially overflow
 		// the accumulator so check for overflow.
-		// lastSatoshiIn := totalSatoshiIn
-		// totalSatoshiIn += originTxSatoshi
-		// if totalSatoshiIn < lastSatoshiIn ||
-		// totalSatoshiIn > btcutil.MaxSatoshi {
-		// str := fmt.Sprintf("total value of all transaction "+
-		// 	"inputs is %v which is higher than max "+
-		// 	"allowed value of %v", totalSatoshiIn,
-		// 	btcutil.MaxSatoshi)
-		// return 0, ruleError(ErrBadTxOutValue, str)
-		// }
+		lastSatoshiIn := totalSatoshiIn
+		totalSatoshiIn += originTxSatoshi
+		if totalSatoshiIn < lastSatoshiIn ||
+			totalSatoshiIn > math.MaxUint64 {
+			str := fmt.Sprintf("total value of all transaction "+
+				"inputs is %v which is higher than max "+
+				"allowed value", totalSatoshiIn)
+			return 0, errors.New(str)
+		}
 	}
 
 	// Calculate the total output amount for this transaction.  It is safe
@@ -119,14 +114,17 @@ func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoView
 	var totalSatoshiOut uint64
 	for _, txOut := range tx.inner.txOut() {
 		totalSatoshiOut += txOut.Value
+		if _, err := common.BytesToAddress(txOut.Address, utxoView.Location).InternalAddress(); err != nil {
+			return 0, errors.New("invalid output address: " + err.Error())
+		}
 	}
 
 	// Ensure the transaction does not spend more than its inputs.
 	if totalSatoshiIn < totalSatoshiOut {
-		// str := fmt.Sprintf("total value of all transaction inputs for "+
-		// 	"transaction %v is %v which is less than the amount "+
-		// 	"spent of %v", tx.Hash(), totalSatoshiIn, totalSatoshiOut)
-		// return 0, ruleError(ErrSpendTooHigh, str)
+		str := fmt.Sprintf("total value of all transaction inputs for "+
+			"transaction %v is %v which is less than the amount "+
+			"spent of %v", tx.Hash(), totalSatoshiIn, totalSatoshiOut)
+		return 0, errors.New(str)
 	}
 
 	// NOTE: bitcoind checks if the transaction fees are < 0 here, but that

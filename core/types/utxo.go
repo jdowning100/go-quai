@@ -88,7 +88,7 @@ func NewTxOut(value uint64, address []byte) *TxOut {
 
 // CheckTransactionSanity performs some preliminary checks on a transaction to
 // ensure it is sane.  These checks are context free.
-func CheckUTXOTransactionSanity(tx *Transaction) error {
+func CheckUTXOTransactionSanity(tx *Transaction, location common.Location) error {
 	// A transaction must have at least one input.
 	if len(tx.TxIn()) == 0 {
 		return errors.New("transaction has no inputs")
@@ -128,6 +128,10 @@ func CheckUTXOTransactionSanity(tx *Transaction) error {
 				"allowed value of %v", totalSatoshi,
 				MaxSatoshi)
 			return errors.New(str)
+		}
+
+		if _, err := common.BytesToAddress(txOut.Address, location).InternalAddress(); err != nil {
+			return errors.New("invalid output address: " + err.Error())
 		}
 	}
 

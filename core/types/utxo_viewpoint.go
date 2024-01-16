@@ -134,6 +134,7 @@ func NewUtxoEntry(
 type UtxoViewpoint struct {
 	Entries  map[OutPoint]*UtxoEntry
 	bestHash common.Hash
+	Location common.Location
 }
 
 // BestHash returns the hash of the best block in the chain the view currently
@@ -181,7 +182,7 @@ func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
 // unspendable.  When the view already has an entry for the output, it will be
 // marked unspent.  All fields will be updated for existing entries since it's
 // possible it has changed during a reorg.
-func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, block *Block) {
+func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, blockHeight uint64) {
 
 	fmt.Println("AddTxOuts")
 	fmt.Println(outpoint.Hash, outpoint.Index)
@@ -199,30 +200,11 @@ func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase 
 
 	entry.Amount = txOut.Value
 	entry.Address = txOut.Address
-	entry.BlockHeight = block.NumberU64()
+	entry.BlockHeight = blockHeight
 	entry.PackedFlags = TfModified
 	if isCoinBase {
 		entry.PackedFlags |= TfCoinBase
 	}
-}
-
-// AddTxOut adds the specified output of the passed transaction to the view if
-// it exists and is not provably unspendable.  When the view already has an
-// entry for the output, it will be marked unspent.  All fields will be updated
-// for existing entries since it's possible it has changed during a reorg.
-func (view *UtxoViewpoint) AddTxOut(tx *Transaction, txOutIdx uint32, block *Block) {
-	// Can't add an output for an out of bounds index.
-	if txOutIdx >= uint32(len(tx.inner.txOut())) {
-		return
-	}
-
-	// Update existing entries.  All fields are updated because it's
-	// possible (although extremely unlikely) that the existing entry is
-	// being replaced by a different transaction with the same hash.  This
-	// is allowed so long as the previous transaction is fully spent.
-	prevOut := OutPoint{Hash: block.ParentHash(), Index: txOutIdx}
-	txOut := tx.inner.txOut()[txOutIdx]
-	view.addTxOut(prevOut, &txOut, IsCoinBaseTx(tx), block)
 }
 
 // AddTxOuts adds all outputs in the passed transaction which are not provably
@@ -233,7 +215,12 @@ func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, block *Block) {
 	// Loop all of the transaction outputs and add those which are not
 	// provably unspendable.
 	isCoinBase := IsCoinBaseTx(tx)
-	prevOut := OutPoint{Hash: block.ParentHash()}
+	var prevOut OutPoint
+	if isCoinBase {
+		prevOut = OutPoint{Hash: block.ParentHash(view.Location.Context())}
+	} else {
+		prevOut = OutPoint{Hash: tx.Hash()}
+	}
 	for txOutIdx, txOut := range tx.inner.txOut() {
 		// Update existing entries.  All fields are updated because it's
 		// possible (although extremely unlikely) that the existing
@@ -241,14 +228,15 @@ func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, block *Block) {
 		// same hash.  This is allowed so long as the previous
 		// transaction is fully spent.
 		prevOut.Index = uint32(txOutIdx)
-		view.addTxOut(prevOut, &txOut, isCoinBase, block)
+		view.addTxOut(prevOut, &txOut, isCoinBase, block.NumberU64(view.Location.Context()))
 	}
 }
 
 // NewUtxoViewpoint returns a new empty unspent transaction output view.
-func NewUtxoViewpoint() *UtxoViewpoint {
+func NewUtxoViewpoint(Location common.Location) *UtxoViewpoint {
 	return &UtxoViewpoint{
-		Entries: make(map[OutPoint]*UtxoEntry),
+		Entries:  make(map[OutPoint]*UtxoEntry),
+		Location: Location,
 	}
 }
 
@@ -273,7 +261,7 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, block *Block, stx
 		// never happen unless there is a bug is introduced in the code.
 		entry := view.Entries[txIn.PreviousOutPoint]
 		if entry == nil {
-			return nil
+			return errors.New("unable to find unspent output " + txIn.PreviousOutPoint.Hash.String())
 		}
 
 		// Only create the stxo details if requested.
@@ -299,6 +287,16 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, block *Block, stx
 	return nil
 }
 
+func (view *UtxoViewpoint) ConnectTransactions(block *Block, stxos *[]SpentTxOut) error {
+	for _, tx := range block.UTXOs() {
+		view.ConnectTransaction(tx, block, stxos)
+	}
+	// Update the best hash for view to include this block since all of its
+	// transactions have been connected.
+	view.SetBestHash(block.Hash())
+	return nil
+}
+
 func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction, signer Signer) error {
 	pubKeys := make([]*btcec.PublicKey, 0)
 	for _, txIn := range tx.TxIn() {
@@ -308,13 +306,13 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction, signer Signer) erro
 		}
 
 		// Verify the pubkey
-		address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:])
-		entryAddr := common.BytesToAddress(entry.Address)
+		address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:], view.Location)
+		entryAddr := common.BytesToAddress(entry.Address, view.Location)
 		if !address.Equal(entryAddr) {
 			return errors.New("invalid address")
 		}
 
-		// We have the Public Key as 65 bytes uncompressed, need to make it 32 bytes (why do we?)
+		// We have the Public Key as 65 bytes uncompressed
 		pub, err := btcec.ParsePubKey(txIn.PubKey)
 		if err != nil {
 			return err

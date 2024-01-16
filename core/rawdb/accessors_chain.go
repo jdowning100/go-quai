@@ -107,6 +107,29 @@ func ReadAllCanonicalHashes(db ethdb.Iteratee, from uint64, to uint64, limit int
 	return numbers, hashes
 }
 
+// ReadCurrentStateHeaderHashByNumber reads the hash assigned to a block number based on the current state that the pending block is based upon.
+func ReadCurrentStateHeaderHashByNumber(db ethdb.Reader, number uint64) common.Hash {
+	data, _ := db.Get(currentStateHeaderHashKey(number))
+	if len(data) == 0 {
+		return common.Hash{}
+	}
+	return common.BytesToHash(data)
+}
+
+// WriteCurrentStateHeaderHashByNumber stores the hash assigned to a block number based on the current state that the pending block is based upon.
+func WriteCurrentStateHeaderHashByNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Put(currentStateHeaderHashKey(number), hash.Bytes()); err != nil {
+		log.Fatal("Failed to store current state number to hash mapping", "err", err)
+	}
+}
+
+// DeleteCurrentStateHeaderHashByNumber removes the number to hash current state mapping.
+func DeleteCurrentStateHeaderHashByNumber(db ethdb.KeyValueWriter, number uint64) {
+	if err := db.Delete(currentStateHeaderHashKey(number)); err != nil {
+		log.Fatal("Failed to delete current state number to hash mapping", "err", err)
+	}
+}
+
 // ReadHeaderNumber returns the header number assigned to a hash.
 func ReadHeaderNumber(db ethdb.KeyValueReader, hash common.Hash) *uint64 {
 	data, _ := db.Get(headerNumberKey(hash))

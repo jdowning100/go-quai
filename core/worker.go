@@ -499,6 +499,11 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 	}
 
 	if nodeCtx == common.ZONE_CTX && w.hc.ProcessingState() {
+		coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64(w.hc.NodeCtx())), work.header.Coinbase())
+		if err != nil {
+			return nil, err
+		}
+		work.txs = append(work.txs, coinbaseTx)
 		// Fill pending transactions from the txpool
 		w.adjustGasLimit(nil, work, block)
 		if fill {
@@ -511,12 +516,6 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 				"average": common.PrettyDuration(w.fillTransactionsRollingAverage.Average()),
 			}).Info("Filled and sorted pending transactions")
 		}
-		coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64()), work.header.Coinbase())
-		if err != nil {
-			return nil, err
-		}
-
-		work.txs = append(work.txs, coinbaseTx)
 	}
 
 	// Swap out the old work with the new one, terminating any leftover
@@ -720,9 +719,21 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 			break
 		}
 		if tx.Type() == types.UtxoTxType {
+			if err := w.hc.VerifyUTXOsForTx(tx); err != nil { // No need to do sig verification again. Perhaps it should be cached?
+				w.logger.WithField("err", err).Error("UTXO tx verification failed")
+				txs.PopNoSort()
+				continue
+			}
+			txGas := types.CalculateUtxoTxGas(tx)
 			gasUsed := env.header.GasUsed()
-			env.header.SetGasUsed(gasUsed + 21000) // set utxo tx gas to 21000 for now
+			env.header.SetGasUsed(gasUsed + txGas)            // set utxo tx gas to 21000 for now
+			if err := env.gasPool.SubGas(txGas); err != nil { // set utxo tx gas to 21000 for now
+				w.logger.WithField("err", err).Error("UTXO tx gas pool error")
+				txs.PopNoSort()
+				continue
+			}
 			env.txs = append(env.txs, tx)
+			txs.PopNoSort()
 			continue
 		}
 		// Error may be ignored here. The error has already been checked
@@ -933,7 +944,7 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, block *typ
 	}
 	pendingUtxoTxs := w.txPool.UTXOPoolPending()
 
-	if len(pending) > 0 && len(pendingUtxoTxs) > 0 {
+	if len(pending) > 0 || len(pendingUtxoTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, pending, env.header.BaseFee(), true)
 		for _, tx := range pendingUtxoTxs {
 			txs.AppendNoSort(tx) // put all utxos at the top for now

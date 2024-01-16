@@ -140,6 +140,7 @@ const (
 // some pre checks in tx pool and event subscribers.
 type blockChain interface {
 	CurrentBlock() *types.Block
+	CurrentStateHeader() *types.Header
 	GetBlock(hash common.Hash, number uint64) *types.Block
 	StateAt(root common.Hash) (*state.StateDB, error)
 	FetchUtxosMain(view *types.UtxoViewpoint, outpoints []types.OutPoint) error
@@ -1035,7 +1036,7 @@ func (pool *TxPool) addUtxoTx(tx *types.Transaction) error {
 	if err := types.CheckUTXOTransactionSanity(tx); err != nil {
 		return err
 	}
-	height := pool.chain.CurrentBlock().NumberU64()
+	height := pool.chain.CurrentStateHeader().NumberU64()
 	fee, err := types.CheckTransactionInputs(tx, height, view)
 	if err != nil {
 		return err
@@ -1045,6 +1046,19 @@ func (pool *TxPool) addUtxoTx(tx *types.Transaction) error {
 	pool.mu.Unlock()
 	log.Info("Added utxo tx to pool", "tx", tx.Hash().String(), "fee", fee)
 	return nil
+}
+
+func (pool *TxPool) removeUtxoTx(tx *types.Transaction) {
+	pool.mu.Lock()
+	delete(pool.utxoPool, tx.Hash())
+	pool.mu.Unlock()
+}
+
+// Mempool lock must be held.
+func (pool *TxPool) removeUtxoTxsLocked(txs []*types.Transaction) {
+	for _, tx := range txs {
+		delete(pool.utxoPool, tx.Hash())
+	}
 }
 
 // addTxsLocked attempts to queue a batch of transactions if they are valid.
@@ -1364,6 +1378,7 @@ func (pool *TxPool) runReorg(done chan struct{}, cancel chan struct{}, reset *tx
 
 // reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
+// The mempool lock must be held by the caller.
 func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	var start time.Time
 	if pool.reOrgCounter == c_reorgCounterThreshold {
@@ -1435,6 +1450,10 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 				reinject = types.TxDifference(discarded, included)
 			}
 		}
+	} else {
+		block := pool.chain.GetBlock(newHead.Hash(), newHead.Number().Uint64())
+		pool.removeUtxoTxsLocked(block.UTXOs())
+		log.Debug("Removed utxo txs from pool", "count", len(block.UTXOs()))
 	}
 	// Initialize the internal state to the current head
 	if newHead == nil {

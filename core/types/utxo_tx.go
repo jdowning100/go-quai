@@ -5,6 +5,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
+	"github.com/dominant-strategies/go-quai/params"
 )
 
 type UtxoTx struct {
@@ -118,4 +119,11 @@ func (tx *UtxoTx) rawSignatureValues() (v, r, s *big.Int) {
 
 func (tx *UtxoTx) setSignatureValues(chainID, v, r, s *big.Int) {
 	panic("UTXO TX does not have set signature values")
+}
+
+func CalculateUtxoTxGas(transaction *Transaction) uint64 {
+	if transaction.Type() != UtxoTxType {
+		panic("CalculateUtxoTxGas called on a transaction that is not a UTXO transaction")
+	}
+	return uint64(len(transaction.TxIn()))*params.SloadGas + uint64(len(transaction.TxOut()))*params.CallValueTransferGas + params.EcrecoverGas
 }

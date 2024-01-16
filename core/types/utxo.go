@@ -129,6 +129,10 @@ func CheckUTXOTransactionSanity(tx *Transaction) error {
 				MaxSatoshi)
 			return errors.New(str)
 		}
+
+		if _, err := common.BytesToAddress(txOut.Address).InternalAddress(); err != nil {
+			return errors.New("invalid output address: " + err.Error())
+		}
 	}
 
 	// Check for duplicate transaction inputs.

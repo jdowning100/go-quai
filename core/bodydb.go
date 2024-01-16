@@ -83,7 +83,7 @@ func NewBodyDb(db ethdb.Database, engine consensus.Engine, hc *HeaderChain, chai
 }
 
 // Append
-func (bc *BodyDb) Append(block *types.Block, newInboundEtxs types.Transactions) (*types.UtxoViewpoint, []*types.Log, error) {
+func (bc *BodyDb) Append(block *types.Block, newInboundEtxs types.Transactions) ([]*types.Log, error) {
 	bc.chainmu.Lock()
 	defer bc.chainmu.Unlock()
 
@@ -92,20 +92,19 @@ func (bc *BodyDb) Append(block *types.Block, newInboundEtxs types.Transactions) 
 	nodeCtx := common.NodeLocation.Context()
 	var logs []*types.Log
 	var err error
-	var utxoView *types.UtxoViewpoint
 	if nodeCtx == common.ZONE_CTX && bc.ProcessingState() {
 		// Process our block
-		utxoView, logs, err = bc.processor.Apply(batch, block, newInboundEtxs)
+		logs, err = bc.processor.Apply(batch, block, newInboundEtxs)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		rawdb.WriteTxLookupEntriesByBlock(batch, block)
 	}
 	log.Debug("Time taken to", "apply state:", common.PrettyDuration(time.Since(stateApply)))
 	if err = batch.Write(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return utxoView, logs, nil
+	return logs, nil
 }
 
 func (bc *BodyDb) ProcessingState() bool {

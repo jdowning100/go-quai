@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus"
@@ -56,10 +55,10 @@ type HeaderChain struct {
 	headerDb      ethdb.Database
 	genesisHeader *types.Header
 
-	currentHeader atomic.Value // Current head of the header chain (may be above the block chain!)
-
-	headerCache *lru.Cache // Cache for the most recent block headers
-	numberCache *lru.Cache // Cache for the most recent block numbers
+	currentHeader      atomic.Value // Current head of the header chain (may be above the block chain!)
+	currentStateHeader atomic.Value // Current head of the header chain (may be different than currentHeader)
+	headerCache        *lru.Cache   // Cache for the most recent block headers
+	numberCache        *lru.Cache   // Cache for the most recent block numbers
 
 	fetchPEtxRollup getPendingEtxsRollup
 	fetchPEtx       getPendingEtxs
@@ -311,12 +310,12 @@ func (hc *HeaderChain) ProcessingState() bool {
 }
 
 // Append
-func (hc *HeaderChain) AppendBlock(block *types.Block, newInboundEtxs types.Transactions) (*types.UtxoViewpoint, error) {
+func (hc *HeaderChain) AppendBlock(block *types.Block, newInboundEtxs types.Transactions) error {
 	blockappend := time.Now()
 	// Append block else revert header append
-	utxoView, logs, err := hc.bc.Append(block, newInboundEtxs)
+	logs, err := hc.bc.Append(block, newInboundEtxs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	hc.logger.WithField("append block", common.PrettyDuration(time.Since(blockappend))).Debug("Time taken to")
 
@@ -325,7 +324,7 @@ func (hc *HeaderChain) AppendBlock(block *types.Block, newInboundEtxs types.Tran
 		hc.bc.logsFeed.Send(logs)
 	}
 
-	return utxoView, nil
+	return nil
 }
 
 // SetCurrentHeader sets the current header based on the POEM choice
@@ -349,11 +348,6 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 
 	// If head is the normal extension of canonical head, we can return by just wiring the canonical hash.
 	if prevHeader.Hash() == head.ParentHash(hc.NodeCtx()) {
-		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(head)
-		if err != nil {
-			return err
-		}
-		hc.WriteUtxoViewpoint(utxoView)
 		rawdb.WriteCanonicalHash(hc.headerDb, head.Hash(), head.NumberU64(hc.NodeCtx()))
 		return nil
 	}
@@ -371,7 +365,9 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 		}
 		hashStack = append(hashStack, newHeader)
 		newHeader = hc.GetHeader(newHeader.ParentHash(hc.NodeCtx()), newHeader.NumberU64(hc.NodeCtx())-1)
-
+		if newHeader == nil {
+			return ErrSubNotSyncedToDom
+		}
 		// genesis check to not delete the genesis block
 		if newHeader.Hash() == hc.config.GenesisHash {
 			break
@@ -383,9 +379,10 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 			break
 		}
 		rawdb.DeleteCanonicalHash(hc.headerDb, prevHeader.NumberU64(hc.NodeCtx()))
-		hc.DeleteUtxoViewpoint(prevHeader.Hash())
-		prevHeader = hc.GetHeader(prevHeader.ParentHash(), prevHeader.NumberU64(hc.NodeCtx())-1)
-
+		prevHeader = hc.GetHeader(prevHeader.ParentHash(hc.NodeCtx()), prevHeader.NumberU64(hc.NodeCtx())-1)
+		if prevHeader == nil {
+			return errors.New("Could not find previously canonical header during reorg")
+		}
 		// genesis check to not delete the genesis block
 		if prevHeader.Hash() == hc.config.GenesisHash {
 			break
@@ -394,19 +391,13 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) error {
 
 	// Run through the hash stack to update canonicalHash and forward state processor
 	for i := len(hashStack) - 1; i >= 0; i-- {
-		utxoView, err := hc.ReadInboundEtxsAndAppendBlock(hashStack[i])
-		if err != nil {
-			return err
-		}
-		hc.WriteUtxoViewpoint(utxoView)
 		rawdb.WriteCanonicalHash(hc.headerDb, hashStack[i].Hash(), hashStack[i].NumberU64(hc.NodeCtx()))
 	}
 
 	return nil
 }
 
-// SetCurrentHeader sets the in-memory head header marker of the canonical chan
-// as the given header.
+// SetCurrentState updates the current state and UTXO set upon which the current pending block is built
 func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 	hc.headermu.Lock()
 	defer hc.headermu.Unlock()
@@ -414,6 +405,10 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 	nodeCtx := hc.NodeCtx()
 	if nodeCtx != common.ZONE_CTX || !hc.ProcessingState() {
 		return nil
+	}
+
+	if err := hc.setCurrentUTXOSet(head); err != nil {
+		return err
 	}
 
 	current := types.CopyHeader(head)
@@ -435,7 +430,7 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 
 	// Run through the hash stack to update canonicalHash and forward state processor
 	for i := len(headersWithoutState) - 1; i >= 0; i-- {
-		_, err := hc.ReadInboundEtxsAndAppendBlock(headersWithoutState[i])
+		err := hc.ReadInboundEtxsAndAppendBlock(headersWithoutState[i])
 		if err != nil {
 			return err
 		}
@@ -443,15 +438,159 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 	return nil
 }
 
+// This function MUST be called with the header mutex locked.
+func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
+	nodeCtx := hc.NodeCtx()
+	prevHeader := hc.CurrentStateHeader()
+	// if trying to set the same header, escape
+	if prevHeader.Hash() == head.Hash() {
+		return nil
+	}
+
+	// If head is the normal extension of current state head, we can return by just updating the UTXO set.
+	if prevHeader.Hash() == head.ParentHash(nodeCtx) {
+		// Set up UTXO processing
+		block := hc.GetBlockOrCandidateByHash(head.Hash())
+		utxoView := types.NewUtxoViewpoint(hc.NodeLocation())
+		utxoView.SetBestHash(prevHeader.Hash()) // this is kind of dumb/irrelevant and is taken from btcd
+		stxos := make([]types.SpentTxOut, 0, types.CountSpentOutputs(block))
+		err := hc.fetchInputUtxos(utxoView, block)
+		if err != nil {
+			return err
+		}
+
+		err = hc.verifyInputUtxos(utxoView, block, hc.pool.signer)
+		if err != nil {
+			return err
+		}
+		coinbase := false
+		for _, tx := range block.UTXOs() {
+			if types.IsCoinBaseTx(tx) && !coinbase {
+				coinbase = true
+			} else if types.IsCoinBaseTx(tx) && coinbase {
+				return errors.New("multiple coinbase transactions in block")
+			}
+			_, err = types.CheckTransactionInputs(tx, block.Header().NumberU64(nodeCtx), utxoView)
+			if err != nil {
+				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err)
+			}
+
+			// Add all of the outputs for this transaction which are not
+			// provably unspendable as available utxos.  Also, the passed
+			// spent txos slice is updated to contain an entry for each
+			// spent txout in the order each transaction spends them.
+			err = utxoView.ConnectTransaction(tx, block, &stxos)
+			if err != nil {
+				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err)
+			}
+		}
+		// Update the best hash for view to include this block since all of its
+		// transactions have been connected.
+		utxoView.SetBestHash(block.Hash())
+		// Write the updated utxo set and spent utxos to the database
+		hc.WriteUtxoViewpoint(utxoView)
+		rawdb.WriteSpentUTXOs(hc.bc.db, block.Hash(), &stxos)
+		// Make sure to update the current state header
+		rawdb.WriteCurrentStateHeaderHashByNumber(hc.headerDb, block.Hash(), block.NumberU64(nodeCtx))
+		hc.currentStateHeader.Store(head)
+		return nil
+	}
+
+	//Find a common header
+	commonHeader := hc.findCommonStateHeadAncestor(head)
+	newBlock := hc.GetBlockOrCandidateByHash(head.Hash())
+	if newBlock == nil {
+		return errors.New("Could not find block during reorg")
+	}
+	// Accumulate the new chain from the new head to the common header
+	var newChain []*types.Block
+	for {
+		if newBlock.Hash() == commonHeader.Hash() {
+			break
+		}
+		newChain = append(newChain, newBlock)
+		newBlock = hc.GetBlockOrCandidate(newBlock.ParentHash(nodeCtx), newBlock.NumberU64(nodeCtx)-1)
+		if newBlock == nil {
+			return ErrSubNotSyncedToDom
+		}
+		// genesis check to not delete the genesis block
+		if newBlock.Hash() == hc.config.GenesisHash {
+			break
+		}
+	}
+
+	// Delete each old header and rollback utxo set until common header
+	for {
+		if prevHeader.Hash() == commonHeader.Hash() {
+			break
+		}
+		rawdb.DeleteCurrentStateHeaderHashByNumber(hc.headerDb, prevHeader.NumberU64(nodeCtx))
+		// Unspend previously spent UTXOs and spend created UTXOs for this block
+		hc.DeleteUtxoViewpoint(prevHeader.Hash())
+		prevHeader = hc.GetHeader(prevHeader.ParentHash(nodeCtx), prevHeader.NumberU64(nodeCtx)-1)
+		if prevHeader == nil {
+			return errors.New("Could not find previously canonical header during reorg")
+		}
+		// genesis check to not delete the genesis block
+		if prevHeader.Hash() == hc.config.GenesisHash {
+			break
+		}
+	}
+
+	// Run through the hash stack in order to update utxo set
+	for _, block := range newChain {
+		// Set up UTXO processing
+		utxoView := types.NewUtxoViewpoint(hc.NodeLocation())
+		utxoView.SetBestHash(block.ParentHash(nodeCtx))
+		stxos := make([]types.SpentTxOut, 0, types.CountSpentOutputs(block))
+		err := hc.fetchInputUtxos(utxoView, block)
+		if err != nil {
+			return err
+		}
+
+		err = hc.verifyInputUtxos(utxoView, block, hc.pool.signer)
+		if err != nil {
+			return err
+		}
+		for _, tx := range block.UTXOs() {
+			_, err = types.CheckTransactionInputs(tx, block.Header().NumberU64(nodeCtx), utxoView)
+			if err != nil {
+				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err) // TODO: snapshot UTXO set before block processing and reset to snapshot on error
+			}
+
+			// Add all of the outputs for this transaction which are not
+			// provably unspendable as available utxos.  Also, the passed
+			// spent txos slice is updated to contain an entry for each
+			// spent txout in the order each transaction spends them.
+			err = utxoView.ConnectTransaction(tx, block, &stxos)
+			if err != nil {
+				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err)
+			}
+		}
+		// Update the best hash for view to include this block since all of its
+		// transactions have been connected.
+		utxoView.SetBestHash(block.Hash())
+		// Write the updated utxo set and spent utxos to the database
+		hc.WriteUtxoViewpoint(utxoView)
+		rawdb.WriteSpentUTXOs(hc.bc.db, block.Hash(), &stxos)
+		rawdb.WriteCurrentStateHeaderHashByNumber(hc.headerDb, block.Hash(), block.NumberU64(nodeCtx))
+	}
+
+	// Reorg complete, update the current state header
+	hc.currentStateHeader.Store(head)
+	return nil
+}
+
 // ReadInboundEtxsAndAppendBlock reads the inbound etxs from database and appends the block
-func (hc *HeaderChain) ReadInboundEtxsAndAppendBlock(header *types.Header) (*types.UtxoViewpoint, error) {
+func (hc *HeaderChain) ReadInboundEtxsAndAppendBlock(header *types.Header) error {
+	nodeCtx := hc.NodeCtx()
 	block := hc.GetBlockOrCandidate(header.Hash(), header.NumberU64(nodeCtx))
 	if block == nil {
-		return nil, errors.New("Could not find block during reorg")
+		return errors.New("Could not find block during reorg")
 	}
 	_, order, err := hc.engine.CalcOrder(block.Header())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var inboundEtxs types.Transactions
 	if order < nodeCtx {
@@ -470,6 +609,22 @@ func (hc *HeaderChain) findCommonAncestor(header *types.Header) *types.Header {
 		canonicalHash := rawdb.ReadCanonicalHash(hc.headerDb, current.NumberU64(hc.NodeCtx()))
 		if canonicalHash == current.Hash() {
 			return hc.GetHeaderByHash(canonicalHash)
+		}
+		current = hc.GetHeader(current.ParentHash(hc.NodeCtx()), current.NumberU64(hc.NodeCtx())-1)
+	}
+
+}
+
+// findCommonAncestor
+func (hc *HeaderChain) findCommonStateHeadAncestor(header *types.Header) *types.Header {
+	current := types.CopyHeader(header)
+	for {
+		if current == nil {
+			return nil
+		}
+		currentStateHeaderHash := rawdb.ReadCurrentStateHeaderHashByNumber(hc.headerDb, current.NumberU64(hc.NodeCtx()))
+		if currentStateHeaderHash == current.Hash() {
+			return hc.GetHeaderByHash(currentStateHeaderHash)
 		}
 		current = hc.GetHeader(current.ParentHash(hc.NodeCtx()), current.NumberU64(hc.NodeCtx())-1)
 	}
@@ -520,13 +675,19 @@ func (hc *HeaderChain) loadLastState() error {
 			// This is only done if during the stop, currenthead hash was not stored
 			// properly and it doesn't crash the nodes
 			hc.currentHeader.Store(hc.genesisHeader)
+			if hc.currentStateHeader.Load() == nil {
+				hc.currentStateHeader.Store(hc.genesisHeader) // this may cause an issue (not consistent with ph cache)
+			}
 		}
 	} else {
 		// Recover the current header
 		hc.logger.Warn("Recovering Current Header")
-		recoverdHeader := hc.RecoverCurrentHeader()
-		rawdb.WriteHeadBlockHash(hc.headerDb, recoverdHeader.Hash())
-		hc.currentHeader.Store(recoverdHeader)
+		recoveredHeader := hc.RecoverCurrentHeader()
+		rawdb.WriteHeadBlockHash(hc.headerDb, recoveredHeader.Hash())
+		hc.currentHeader.Store(recoveredHeader)
+		if hc.currentStateHeader.Load() == nil {
+			hc.currentStateHeader.Store(recoveredHeader) // this may cause an issue (not consistent with ph cache)
+		}
 	}
 
 	heads := make([]*types.Header, 0)
@@ -773,6 +934,14 @@ func (hc *HeaderChain) GetCanonicalHash(number uint64) common.Hash {
 // header is retrieved from the HeaderChain's internal cache.
 func (hc *HeaderChain) CurrentHeader() *types.Header {
 	return hc.currentHeader.Load().(*types.Header)
+}
+
+// CurrentStateHeader retrieves the current state header of the chain that the pending block is based upon.
+// The header is retrieved from the HeaderChain's internal cache.
+// This is cached only and is not stored in the database.
+// Upon node startup, the current state header is *always* the current canonical header.
+func (hc *HeaderChain) CurrentStateHeader() *types.Header {
+	return hc.currentStateHeader.Load().(*types.Header)
 }
 
 // CurrentBlock returns the block for the current header.
@@ -1040,6 +1209,19 @@ func (hc *HeaderChain) FetchUtxosMain(view *types.UtxoViewpoint, outpoints []typ
 	return nil
 }
 
+func (hc *HeaderChain) VerifyUTXOsForTx(tx *types.Transaction) error {
+	if tx.Type() != types.UtxoTxType {
+		return errors.New("invalid tx type")
+	}
+	for _, txIn := range tx.TxIn() {
+		utxo := hc.GetUtxo(txIn.PreviousOutPoint.Hash)
+		if utxo == nil {
+			return errors.New("utxo not found")
+		}
+	}
+	return nil
+}
+
 // fetchInputUtxos loads the unspent transaction outputs for the inputs
 // referenced by the transactions in the given block into the view from the
 // database as needed.  In particular, referenced entries that are earlier in
@@ -1083,11 +1265,7 @@ func (hc *HeaderChain) fetchInputUtxos(view *types.UtxoViewpoint, block *types.B
 
 			// Don't request entries that are already in the view
 			// from the database.
-			// if _, ok := view.entries[txIn.PreviousOutPoint]; ok {
-			// 	continue
-			// }
-			entry := view.LookupEntry(txIn.PreviousOutPoint)
-			if entry == nil {
+			if _, ok := view.Entries[txIn.PreviousOutPoint]; ok {
 				continue
 			}
 
@@ -1112,17 +1290,17 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 			}
 
 			// Verify the pubkey
-			address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:])
-			entryAddr := common.BytesToAddress(entry.Address)
+			address := common.BytesToAddress(crypto.Keccak256(txIn.PubKey[1:])[12:], hc.NodeLocation())
+			entryAddr := common.BytesToAddress(entry.Address, hc.NodeLocation())
 			if !address.Equal(entryAddr) {
 				return errors.New("invalid address")
 			}
 
-			pubkey, err := schnorr.ParsePubKey(txIn.PubKey)
+			pubKey, err := btcec.ParsePubKey(txIn.PubKey)
 			if err != nil {
 				return err
 			}
-			pubKeys = append(pubKeys, pubkey)
+			pubKeys = append(pubKeys, pubKey)
 		}
 
 		var finalKey *btcec.PublicKey
@@ -1139,8 +1317,7 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 		}
 
 		txDigestHash := signer.Hash(tx)
-		valid := tx.UtxoSignature().Verify(txDigestHash[:], finalKey)
-		if !valid {
+		if !tx.UtxoSignature().Verify(txDigestHash[:], finalKey) {
 			return errors.New("invalid signature")
 		}
 
@@ -1178,7 +1355,7 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 		return errors.New("block not found")
 	}
 
-	view := types.NewUtxoViewpoint()
+	view := types.NewUtxoViewpoint(hc.NodeLocation())
 
 	err := hc.fetchInputUtxos(view, block)
 	if err != nil {
@@ -1188,7 +1365,7 @@ func (hc *HeaderChain) DeleteUtxoViewpoint(hash common.Hash) error {
 	// Load all of the spent txos for the block from the spend
 	// journal.
 	stxos := rawdb.ReadSpentUTXOs(hc.bc.db, hash)
-
+	// Unspend all of the previously spent UTXOs.
 	hc.disconnectTransactions(view, block, stxos)
 	err = hc.WriteUtxoViewpoint(view)
 	if err != nil {
@@ -1250,9 +1427,11 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 		tx := transactions[txIdx]
 		// All entries will need to potentially be marked as a coinbase.
 		var packedFlags types.TxoFlags
+		outPointHash := tx.Hash()
 		isCoinBase := txIdx == 0
 		if isCoinBase {
 			packedFlags |= types.TfCoinBase
+			outPointHash = block.Hash()
 		}
 
 		// Mark all of the spendable outputs originally created by the
@@ -1266,7 +1445,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 		// entry for it and then mark it spent.  This is done because
 		// the code relies on its existence in the view in order to
 		// signal modifications have happened.
-		prevOut := types.OutPoint{Hash: block.ParentHash()}
+		prevOut := types.OutPoint{Hash: outPointHash}
 		for txOutIdx, txOut := range tx.TxOut() {
 			// if txscript.IsUnspendable(txOut.PkScript) {
 			// 	continue
@@ -1278,7 +1457,7 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 				entry = &types.UtxoEntry{
 					Amount:      txOut.Value,
 					Address:     txOut.Address,
-					BlockHeight: block.NumberU64(),
+					BlockHeight: block.NumberU64(hc.NodeCtx()),
 					PackedFlags: packedFlags,
 				}
 
@@ -1325,6 +1504,6 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 
 	// Update the best hash for view to the previous block since all of the
 	// transactions for the current block have been disconnected.
-	view.SetBestHash(block.Header().ParentHash())
+	view.SetBestHash(block.Header().ParentHash(hc.NodeCtx()))
 	return nil
 }

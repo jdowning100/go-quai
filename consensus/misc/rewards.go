@@ -18,6 +18,11 @@ func CalculateRewardForQi(header *types.Header) map[uint8]uint8 {
 	return findMinDenominations(rewardFromDifficulty)
 }
 
+func CalculateRewardForQiWithFees(header *types.Header, fees *big.Int) map[uint8]uint8 {
+	reward := new(big.Int).Add(CalculateReward(header), fees)
+	return findMinDenominations(reward)
+}
+
 // findMinDenominations finds the minimum number of denominations to make up the reward
 func findMinDenominations(reward *big.Int) map[uint8]uint8 {
 	// Store the count of each denomination used (map denomination to count)

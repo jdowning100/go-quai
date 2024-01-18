@@ -1148,7 +1148,7 @@ func (pool *TxPool) addUtxoTx(tx *types.Transaction) error {
 	pool.mu.Lock()
 	pool.utxoPool[tx.Hash()] = &types.UtxoTxWithMinerFee{tx, fee, 0}
 	pool.mu.Unlock()
-	pool.logger.WithFields(logrus.Fields{
+	pool.logger.WithFields(log.Fields{
 		"tx":  tx.Hash().String(),
 		"fee": fee,
 	}).Info("Added utxo tx to pool")

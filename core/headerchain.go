@@ -438,6 +438,9 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 	return nil
 }
 
+// This function performs all of the logic to update and/or re-org the UTXO set with the given header.
+// Currently, the UTXO set follows the current state/pending header, not the canonical current header.
+// An improvement could be to use a batch instead of the db in case of an error during re-org requiring a reset.
 // This function MUST be called with the header mutex locked.
 func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 	nodeCtx := hc.NodeCtx()
@@ -464,17 +467,17 @@ func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 			return err
 		}
 		coinbase := false
+		totalFees := big.NewInt(0)
 		for _, tx := range block.UTXOs() {
 			if types.IsCoinBaseTx(tx) && !coinbase {
 				coinbase = true
 			} else if types.IsCoinBaseTx(tx) && coinbase {
 				return errors.New("multiple coinbase transactions in block")
 			}
-			_, err = types.CheckTransactionInputs(tx, block.Header().NumberU64(nodeCtx), utxoView)
+			fee, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(nodeCtx), utxoView)
 			if err != nil {
 				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err)
 			}
-
 			// Add all of the outputs for this transaction which are not
 			// provably unspendable as available utxos.  Also, the passed
 			// spent txos slice is updated to contain an entry for each
@@ -482,6 +485,17 @@ func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 			err = utxoView.ConnectTransaction(tx, block, &stxos)
 			if err != nil {
 				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err)
+			}
+			totalFees.Add(totalFees, fee)
+		}
+		if types.IsCoinBaseTx(block.UTXOs()[0]) {
+			totalCoinbaseOut := big.NewInt(0)
+			for _, txOut := range block.UTXOs()[0].TxOut() {
+				totalCoinbaseOut.Add(totalCoinbaseOut, types.Denominations[txOut.Denomination])
+			}
+			maxCoinbaseOut := new(big.Int).Add(misc.CalculateReward(block.Header()), totalFees)
+			if totalCoinbaseOut.Cmp(maxCoinbaseOut) == 1 {
+				return fmt.Errorf("coinbase output value of %v is higher than expected value of %v", totalCoinbaseOut, maxCoinbaseOut)
 			}
 		}
 		// Update the best hash for view to include this block since all of its
@@ -552,8 +566,15 @@ func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 		if err != nil {
 			return err
 		}
+		coinbase := false
+		totalFees := big.NewInt(0)
 		for _, tx := range block.UTXOs() {
-			_, err = types.CheckTransactionInputs(tx, block.Header().NumberU64(nodeCtx), utxoView)
+			if types.IsCoinBaseTx(tx) && !coinbase {
+				coinbase = true
+			} else if types.IsCoinBaseTx(tx) && coinbase {
+				return errors.New("multiple coinbase transactions in block")
+			}
+			fee, err := types.CheckTransactionInputs(tx, block.Header().NumberU64(nodeCtx), utxoView)
 			if err != nil {
 				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err) // TODO: snapshot UTXO set before block processing and reset to snapshot on error
 			}
@@ -565,6 +586,17 @@ func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 			err = utxoView.ConnectTransaction(tx, block, &stxos)
 			if err != nil {
 				return fmt.Errorf("could not apply tx %v: %w", tx.Hash().Hex(), err)
+			}
+			totalFees.Add(totalFees, fee)
+		}
+		if types.IsCoinBaseTx(block.UTXOs()[0]) {
+			totalCoinbaseOut := big.NewInt(0)
+			for _, txOut := range block.UTXOs()[0].TxOut() {
+				totalCoinbaseOut.Add(totalCoinbaseOut, types.Denominations[txOut.Denomination])
+			}
+			maxCoinbaseOut := new(big.Int).Add(misc.CalculateReward(block.Header()), totalFees)
+			if totalCoinbaseOut.Cmp(maxCoinbaseOut) == 1 {
+				return fmt.Errorf("coinbase output value of %v is higher than expected value of %v", totalCoinbaseOut, maxCoinbaseOut)
 			}
 		}
 		// Update the best hash for view to include this block since all of its
@@ -1390,6 +1422,51 @@ func createCoinbaseTx(header *types.Header) (*types.Transaction, error) {
 	}
 
 	denominations := misc.CalculateRewardForQi(header)
+	fmt.Printf("denominations: %v\n", denominations)
+
+	outs := make([]types.TxOut, 0, len(denominations))
+
+	// Iterate over the denominations in descending order (by key)
+	for i := 15; i >= 0; i-- {
+		// If the denomination count is zero, skip it
+		if denominations[uint8(i)] == 0 {
+			continue
+		}
+		for j := uint8(0); j < denominations[uint8(i)]; j++ {
+			// Create the output for the denomination
+			out := types.TxOut{
+				Denomination: uint8(i),
+				Address:      header.Coinbase().Bytes(),
+			}
+			outs = append(outs, out)
+		}
+	}
+
+	utxo := &types.UtxoTx{
+		TxIn:  []types.TxIn{in},
+		TxOut: outs,
+	}
+
+	tx := types.NewTx(utxo)
+	fmt.Println("coinbase tx", tx.Hash().Hex())
+	return tx, nil
+}
+
+// createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy
+// based on the passed block height to the provided address.  When the address
+// is nil, the coinbase transaction will instead be redeemable by anyone.
+//
+// See the comment for NewBlockTemplate for more information about why the nil
+// address handling is useful.
+func createCoinbaseTxWithFees(header *types.Header, fees *big.Int) (*types.Transaction, error) {
+	in := types.TxIn{
+		// Coinbase transactions have no inputs, so previous outpoint is
+		// zero hash and max index.
+		PreviousOutPoint: *types.NewOutPoint(&common.Hash{},
+			types.MaxPrevOutIndex),
+	}
+
+	denominations := misc.CalculateRewardForQiWithFees(header, fees)
 	fmt.Printf("denominations: %v\n", denominations)
 
 	outs := make([]types.TxOut, 0, len(denominations))

@@ -12,3 +12,35 @@ func CalculateReward(header *types.Header) *big.Int {
 	//// with the Mainnet Schedule
 	return new(big.Int).Mul(header.Difficulty(), big.NewInt(10e8))
 }
+
+func CalculateRewardForQi(header *types.Header) map[uint8]uint8 {
+	rewardFromDifficulty := CalculateReward(header)
+	return findMinDenominations(rewardFromDifficulty)
+}
+
+// findMinDenominations finds the minimum number of denominations to make up the reward
+func findMinDenominations(reward *big.Int) map[uint8]uint8 {
+	// Store the count of each denomination used (map denomination to count)
+	denominationCount := make(map[uint8]uint8)
+	amount := new(big.Int).Set(reward)
+
+	// Iterate over the denominations in descending order (by key)
+	for i := 15; i >= 0; i-- {
+		denom := types.Denominations[uint8(i)]
+
+		// Calculate the number of times the denomination fits into the remaining amount
+		count := new(big.Int).Div(amount, denom)
+
+		// Ensure that the amount never goes below zero
+		totalValue := new(big.Int).Mul(count, denom)
+		newAmount := new(big.Int).Sub(amount, totalValue)
+		if newAmount.Cmp(big.NewInt(0)) >= 0 {
+			if count.Cmp(big.NewInt(0)) > 0 {
+				denominationCount[uint8(i)] = uint8(count.Uint64())
+				amount = newAmount
+			}
+		}
+	}
+
+	return denominationCount
+}

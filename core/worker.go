@@ -499,7 +499,7 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 	}
 
 	if nodeCtx == common.ZONE_CTX && w.hc.ProcessingState() {
-		coinbaseTx, err := createCoinbaseTx(int32(work.header.NumberU64(w.hc.NodeCtx())), work.header.Coinbase())
+		coinbaseTx, err := createCoinbaseTx(work.header)
 		if err != nil {
 			return nil, err
 		}

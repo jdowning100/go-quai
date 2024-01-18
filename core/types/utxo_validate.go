@@ -18,15 +18,18 @@ import (
 //
 // This function only differs from IsCoinBase in that it works with a raw wire
 // transaction as opposed to a higher level util transaction.
-func IsCoinBaseTx(msgTx *Transaction) bool { // remove this function
+func IsCoinBaseTx(tx *Transaction) bool {
+	if tx == nil || tx.inner == nil || tx.Type() != UtxoTxType {
+		return false
+	}
 	// A coin base must only have one transaction input.
-	if len(msgTx.inner.txIn()) != 1 {
+	if len(tx.inner.txIn()) != 1 {
 		return false
 	}
 
 	// The previous output of a coin base must have a max value index and
 	// a zero hash.
-	prevOut := &msgTx.inner.txIn()[0].PreviousOutPoint
+	prevOut := &tx.inner.txIn()[0].PreviousOutPoint
 	if (prevOut.Index != math.MaxUint32 || prevOut.Hash != common.Hash{}) {
 		return false
 	}
@@ -48,7 +51,7 @@ func IsCoinBaseTx(msgTx *Transaction) bool { // remove this function
 func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoViewpoint) (*big.Int, error) {
 	// Coinbase transactions have no inputs.
 	if IsCoinBaseTx(tx) {
-		return nil, nil
+		return big.NewInt(0), nil
 	}
 
 	totalSatoshiIn := big.NewInt(0)

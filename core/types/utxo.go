@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 
 	"github.com/dominant-strategies/go-quai/common"
+	"github.com/dominant-strategies/go-quai/params"
 )
 
 const (
@@ -27,9 +29,34 @@ const (
 	// SatoshiPerBitcoin is the number of satoshi in one bitcoin (1 BTC).
 	SatoshiPerBitcoin = 1e8
 
-	// MaxSatoshi is the maximum transaction amount allowed in satoshi.
-	MaxSatoshi = 21e6 * SatoshiPerBitcoin
+	MaxDenomination = 15
 )
+
+var MaxQi = new(big.Int).Mul(big.NewInt(math.MaxInt64), big.NewInt(params.Ether)) // This is just a default; determine correct value later
+
+// Denominations is a map of denomination to number of Qi
+var Denominations map[uint8]*big.Int
+
+func init() {
+	// Initialize denominations
+	Denominations = make(map[uint8]*big.Int)
+	Denominations[0] = big.NewInt(5000000000000000)                                    // 0.005 Qi
+	Denominations[1] = big.NewInt(10000000000000000)                                   // 0.01 Qi
+	Denominations[2] = big.NewInt(50000000000000000)                                   // 0.05 Qi
+	Denominations[3] = big.NewInt(100000000000000000)                                  // 0.1 Qi
+	Denominations[4] = big.NewInt(500000000000000000)                                  // 0.5 Qi
+	Denominations[5] = new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether))       // 1 Qi
+	Denominations[6] = new(big.Int).Mul(big.NewInt(5), big.NewInt(params.Ether))       // 5 Qi
+	Denominations[7] = new(big.Int).Mul(big.NewInt(10), big.NewInt(params.Ether))      // 10 Qi
+	Denominations[8] = new(big.Int).Mul(big.NewInt(50), big.NewInt(params.Ether))      // 50 Qi
+	Denominations[9] = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))     // 100 Qi
+	Denominations[10] = new(big.Int).Mul(big.NewInt(500), big.NewInt(params.Ether))    // 500 Qi
+	Denominations[11] = new(big.Int).Mul(big.NewInt(1000), big.NewInt(params.Ether))   // 1000 Qi
+	Denominations[12] = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))   // 5000 Qi
+	Denominations[13] = new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))  // 10000 Qi
+	Denominations[14] = new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))  // 50000 Qi
+	Denominations[15] = new(big.Int).Mul(big.NewInt(100000), big.NewInt(params.Ether)) // 100000 Qi
+}
 
 // TxIn defines a bitcoin transaction input.
 type TxIn struct {
@@ -65,8 +92,8 @@ func NewTxIn(prevOut *OutPoint, pubkey []byte, witness [][]byte) *TxIn {
 
 // TxOut defines a bitcoin transaction output.
 type TxOut struct {
-	Value   uint64
-	Address []byte
+	Denomination uint8
+	Address      []byte
 }
 
 // SerializeSize returns the number of bytes it would take to serialize the
@@ -79,10 +106,10 @@ type TxOut struct {
 
 // NewTxOut returns a new bitcoin transaction output with the provided
 // transaction value and public key script.
-func NewTxOut(value uint64, address []byte) *TxOut {
+func NewTxOut(denomination uint8, address []byte) *TxOut {
 	return &TxOut{
-		Value:   value,
-		Address: address,
+		Denomination: denomination,
+		Address:      address,
 	}
 }
 
@@ -108,25 +135,25 @@ func CheckUTXOTransactionSanity(tx *Transaction, location common.Location) error
 	// restrictions.  All amounts in a transaction are in a unit value known
 	// as a satoshi.  One bitcoin is a quantity of satoshi as defined by the
 	// SatoshiPerBitcoin constant.
-	var totalSatoshi uint64
+	totalSatoshi := big.NewInt(0)
 	for _, txOut := range tx.TxOut() {
-		satoshi := txOut.Value
-		if satoshi > MaxSatoshi {
+		denomination := txOut.Denomination
+		if denomination > MaxDenomination {
 			str := fmt.Sprintf("transaction output value of %v is "+
-				"higher than max allowed value of %v", satoshi,
-				MaxSatoshi)
+				"higher than max allowed value of %v", denomination,
+				MaxDenomination)
 			return errors.New(str)
 		}
 
 		// Two's complement int64 overflow guarantees that any overflow
 		// is detected and reported.  This is impossible for Bitcoin, but
 		// perhaps possible if an alt increases the total money supply.
-		totalSatoshi += satoshi
-		if totalSatoshi > MaxSatoshi {
+		totalSatoshi.Add(totalSatoshi, Denominations[denomination])
+		if totalSatoshi.Cmp(MaxQi) == 1 {
 			str := fmt.Sprintf("total value of all transaction "+
 				"outputs is %v which is higher than max "+
 				"allowed value of %v", totalSatoshi,
-				MaxSatoshi)
+				math.MaxFloat32)
 			return errors.New(str)
 		}
 

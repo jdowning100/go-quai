@@ -3,9 +3,11 @@ package types
 import (
 	"errors"
 	"fmt"
+	"math/big"
+
+	"math"
 
 	"github.com/dominant-strategies/go-quai/common"
-	"github.com/dominant-strategies/go-quai/common/math"
 )
 
 // IsCoinBaseTx determines whether or not a transaction is a coinbase.  A coinbase
@@ -43,22 +45,22 @@ func IsCoinBaseTx(msgTx *Transaction) bool { // remove this function
 //
 // NOTE: The transaction MUST have already been sanity checked with the
 // CheckTransactionSanity function prior to calling this function.
-func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoViewpoint) (uint64, error) {
+func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoViewpoint) (*big.Int, error) {
 	// Coinbase transactions have no inputs.
 	if IsCoinBaseTx(tx) {
-		return 0, nil
+		return nil, nil
 	}
 
-	var totalSatoshiIn uint64
+	totalSatoshiIn := big.NewInt(0)
 	for index, txIn := range tx.inner.txIn() {
 		// Ensure the referenced input transaction is available.
 		utxo := utxoView.LookupEntry(txIn.PreviousOutPoint)
-		if utxo == nil || utxo.IsSpent() { // why comment this out?
+		if utxo == nil || utxo.IsSpent() {
 			str := fmt.Sprintf("output %v referenced from "+
 				"transaction %s:%d either does not exist or "+
 				"has already been spent", txIn.PreviousOutPoint,
 				tx.Hash(), index)
-			return 0, errors.New(str)
+			return nil, errors.New(str)
 		}
 
 		// Ensure the transaction is not spending coins which have not
@@ -84,52 +86,52 @@ func CheckTransactionInputs(tx *Transaction, txHeight uint64, utxoView *UtxoView
 		// a transaction are in a unit value known as a satoshi.  One
 		// bitcoin is a quantity of satoshi as defined by the
 		// SatoshiPerBitcoin constant.
-		originTxSatoshi := utxo.Amount
+		denomination := utxo.Denomination
 
-		// if originTxSatoshi > btcutil.MaxSatoshi {
-		// str := fmt.Sprintf("transaction output value of %v is "+
-		// 	"higher than max allowed value of %v",
-		// 	btcutil.Amount(originTxSatoshi),
-		// 	btcutil.MaxSatoshi)
-		// return 0, ruleError(ErrBadTxOutValue, str)
-		// }
+		if denomination > MaxDenomination {
+			str := fmt.Sprintf("transaction output value of %v is "+
+				"higher than max allowed value of %v",
+				denomination,
+				MaxDenomination)
+			return nil, errors.New(str)
+		}
 
 		// The total of all outputs must not be more than the max
 		// allowed per transaction.  Also, we could potentially overflow
 		// the accumulator so check for overflow.
-		lastSatoshiIn := totalSatoshiIn
-		totalSatoshiIn += originTxSatoshi
-		if totalSatoshiIn < lastSatoshiIn ||
-			totalSatoshiIn > math.MaxUint64 {
+		lastSatoshiIn := new(big.Int).Set(totalSatoshiIn)
+		totalSatoshiIn.Add(totalSatoshiIn, Denominations[denomination])
+		if totalSatoshiIn.Cmp(lastSatoshiIn) == -1 ||
+			totalSatoshiIn.Cmp(MaxQi) == 1 {
 			str := fmt.Sprintf("total value of all transaction "+
 				"inputs is %v which is higher than max "+
 				"allowed value", totalSatoshiIn)
-			return 0, errors.New(str)
+			return nil, errors.New(str)
 		}
 	}
 
 	// Calculate the total output amount for this transaction.  It is safe
 	// to ignore overflow and out of range errors here because those error
 	// conditions would have already been caught by checkTransactionSanity.
-	var totalSatoshiOut uint64
+	totalSatoshiOut := big.NewInt(0)
 	for _, txOut := range tx.inner.txOut() {
-		totalSatoshiOut += txOut.Value
+		totalSatoshiOut.Add(totalSatoshiOut, Denominations[txOut.Denomination])
 		if _, err := common.BytesToAddress(txOut.Address, utxoView.Location).InternalAddress(); err != nil {
-			return 0, errors.New("invalid output address: " + err.Error())
+			return nil, errors.New("invalid output address: " + err.Error())
 		}
 	}
 
 	// Ensure the transaction does not spend more than its inputs.
-	if totalSatoshiIn < totalSatoshiOut {
+	if totalSatoshiOut.Cmp(totalSatoshiIn) == 1 {
 		str := fmt.Sprintf("total value of all transaction inputs for "+
 			"transaction %v is %v which is less than the amount "+
 			"spent of %v", tx.Hash(), totalSatoshiIn, totalSatoshiOut)
-		return 0, errors.New(str)
+		return nil, errors.New(str)
 	}
 
 	// NOTE: bitcoind checks if the transaction fees are < 0 here, but that
 	// is an impossible condition because of the check above that ensures
 	// the inputs are >= the outputs.
-	txFeeInSatoshi := totalSatoshiIn - totalSatoshiOut
+	txFeeInSatoshi := new(big.Int).Sub(totalSatoshiIn, totalSatoshiOut)
 	return txFeeInSatoshi, nil
 }

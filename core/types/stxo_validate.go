@@ -11,7 +11,7 @@ import "fmt"
 // transaction.
 type SpentTxOut struct {
 	// Amount is the amount of the output.
-	Amount uint64
+	Denomination uint8
 
 	// Address is the output holder's address.
 	Address []byte

@@ -10,7 +10,7 @@ import (
 func CalculateReward(header *types.Header) *big.Int {
 	//// This Reward Schedule is only for Iron Age Testnet and has nothing to do
 	//// with the Mainnet Schedule
-	return new(big.Int).Mul(header.Difficulty(), big.NewInt(10e8))
+	return new(big.Int).Mul(header.Difficulty(), big.NewInt(10e10))
 }
 
 func CalculateRewardForQi(header *types.Header) map[uint8]uint8 {

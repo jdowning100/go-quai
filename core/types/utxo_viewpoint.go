@@ -221,6 +221,8 @@ func (view *UtxoViewpoint) AddTxOuts(tx *Transaction, block *Block) {
 	} else {
 		prevOut = OutPoint{Hash: tx.Hash()}
 	}
+	fmt.Println("prevOut hash", prevOut.Hash, prevOut.Index)
+	fmt.Println("len of tx.inner.txOut()", len(tx.inner.txOut()))
 	for txOutIdx, txOut := range tx.inner.txOut() {
 		// Update existing entries.  All fields are updated because it's
 		// possible (although extremely unlikely) that the existing
@@ -249,6 +251,7 @@ func (view *UtxoViewpoint) ConnectTransaction(tx *Transaction, block *Block, stx
 	// Coinbase transactions don't have any inputs to spend.
 	if IsCoinBaseTx(tx) {
 		// Add the transaction's outputs as available utxos.
+		fmt.Println("connect transaction coinbase tx")
 		view.AddTxOuts(tx, block)
 		return nil
 	}

@@ -138,12 +138,16 @@ func (ec *Client) getBlock(ctx context.Context, method string, args ...interface
 	if head.EtxHash() != types.EmptyRootHash && len(body.ExtTransactions) == 0 {
 		return nil, fmt.Errorf("server returned empty external transaction list but block header indicates transactions")
 	}
-	if head.ManifestHash() == types.EmptyRootHash && len(body.SubManifest) > 0 {
-		return nil, fmt.Errorf("server returned non-empty subordinate manifest but block header indicates no transactions")
+
+	for i := 0; i < common.HierarchyDepth; i++ {
+		if head.ManifestHash(i) == types.EmptyRootHash && len(body.SubManifest) > 0 {
+			return nil, fmt.Errorf("server returned non-empty subordinate manifest but block header indicates no transactions")
+		}
+		if head.ManifestHash(i) != types.EmptyRootHash && len(body.SubManifest) == 0 {
+			return nil, fmt.Errorf("server returned empty subordinate manifest but block header indicates transactions")
+		}
 	}
-	if head.ManifestHash() != types.EmptyRootHash && len(body.SubManifest) == 0 {
-		return nil, fmt.Errorf("server returned empty subordinate manifest but block header indicates transactions")
-	}
+
 	// Load uncles because they are not included in the block response.
 	var uncles []*types.Header
 	if len(body.UncleHashes) > 0 {

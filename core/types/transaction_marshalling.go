@@ -21,6 +21,7 @@ import (
 	"errors"
 	"math/big"
 
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/hexutil"
 )
@@ -39,6 +40,9 @@ type txJSON struct {
 	Data                 *hexutil.Bytes  `json:"input"`
 	To                   *common.Address `json:"to"`
 	AccessList           *AccessList     `json:"accessList"`
+	TxIn                 []TxIn          `json:"inputs,omitempty"`
+	TxOut                []TxOut         `json:"outputs,omitempty"`
+	UTXOSignature        *hexutil.Bytes  `json:"utxoSignature,omitempty"`
 
 	// Optional fields only present for internal transactions
 	ChainID *hexutil.Big `json:"chainId,omitempty"`
@@ -110,6 +114,12 @@ func (t *Transaction) MarshalJSON() ([]byte, error) {
 		enc.ETXGasTip = (*hexutil.Big)(tx.ETXGasTip)
 		enc.ETXData = (*hexutil.Bytes)(&tx.ETXData)
 		enc.ETXAccessList = &tx.ETXAccessList
+	case *UtxoTx:
+		sig := tx.Signature.Serialize()
+		enc.ChainID = (*hexutil.Big)(tx.ChainID)
+		enc.TxIn = tx.TxIn
+		enc.TxOut = tx.TxOut
+		enc.UTXOSignature = (*hexutil.Bytes)(&sig)
 	}
 	return json.Marshal(&enc)
 }
@@ -303,6 +313,19 @@ func (t *Transaction) UnmarshalJSON(input []byte) error {
 			return errors.New("missing required field 'etxAccessList' in internaltoExternal transaction")
 		}
 		itx.ETXAccessList = *dec.ETXAccessList
+
+	case UtxoTxType:
+		var utxoTx UtxoTx
+		inner = &utxoTx
+		utxoTx.ChainID = (*big.Int)(dec.ChainID)
+		utxoTx.TxIn = dec.TxIn
+		utxoTx.TxOut = dec.TxOut
+
+		sig, err := schnorr.ParseSignature(*dec.UTXOSignature)
+		if err != nil {
+			return err
+		}
+		utxoTx.Signature = sig
 
 	default:
 		return ErrTxTypeNotSupported

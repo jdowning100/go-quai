@@ -28,9 +28,9 @@ func CountSpentOutputs(block *Block) int {
 	// Exclude the coinbase transaction since it can't spend anything.
 	var numSpent int
 	fmt.Println("block txs", len(block.Transactions()))
-	fmt.Println("block.UTXOs(): ", block.UTXOs())
 	for _, tx := range block.UTXOs()[1:] { // need to make sure this is correct
 		numSpent += len(tx.TxIn())
+		fmt.Println("block tx hash", tx.Hash().Hex())
 	}
 
 	return numSpent

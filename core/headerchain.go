@@ -1232,12 +1232,10 @@ func (hc *HeaderChain) FetchUtxosMain(view *types.UtxoViewpoint, outpoints []typ
 	for i := range outpoints {
 		entry := hc.GetUtxo(outpoints[i].Hash, outpoints[i].Index)
 		if entry == nil {
-			return nil
+			return fmt.Errorf("utxo not found")
 		}
 
 		view.AddEntry(outpoints, i, entry)
-
-		return nil
 	}
 
 	return nil

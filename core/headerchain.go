@@ -1372,7 +1372,7 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 			continue
 		}
 
-		fmt.Println("write utxo", outpoint.Hash.Hex())
+		fmt.Println("write utxo", outpoint.Hash.Hex(), outpoint.Index)
 		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, outpoint.Index, entry)
 	}
 
@@ -1420,8 +1420,6 @@ func createCoinbaseTx(header *types.Header) (*types.Transaction, error) {
 	}
 
 	denominations := misc.CalculateRewardForQi(header)
-	fmt.Printf("denominations: %v\n", denominations)
-
 	outs := make([]types.TxOut, 0, len(denominations))
 
 	// Iterate over the denominations in descending order (by key)
@@ -1446,7 +1444,6 @@ func createCoinbaseTx(header *types.Header) (*types.Transaction, error) {
 	}
 
 	tx := types.NewTx(utxo)
-	fmt.Println("coinbase tx", tx.Hash().Hex())
 	return tx, nil
 }
 
@@ -1465,8 +1462,6 @@ func createCoinbaseTxWithFees(header *types.Header, fees *big.Int) (*types.Trans
 	}
 
 	denominations := misc.CalculateRewardForQiWithFees(header, fees)
-	fmt.Printf("denominations: %v\n", denominations)
-
 	outs := make([]types.TxOut, 0, len(denominations))
 
 	// Iterate over the denominations in descending order (by key)
@@ -1491,7 +1486,6 @@ func createCoinbaseTxWithFees(header *types.Header, fees *big.Int) (*types.Trans
 	}
 
 	tx := types.NewTx(utxo)
-	fmt.Println("coinbase tx", tx.Hash().Hex())
 	return tx, nil
 }
 

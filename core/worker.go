@@ -1001,7 +1001,6 @@ func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *typ
 		return nil, err
 	}
 
-	fmt.Println("block utxo len", len(block.UTXOs()))
 	manifestHash := w.ComputeManifestHash(parent.Header())
 
 	if w.hc.ProcessingState() {
@@ -1021,8 +1020,6 @@ func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, header *typ
 			etxRollupHash := types.DeriveSha(etxRollup, trie.NewStackTrie(nil))
 			block.Header().SetEtxRollupHash(etxRollupHash)
 		}
-
-		fmt.Println("block body", len(block.Body().Transactions))
 
 		w.AddPendingBlockBody(block.Header(), block.Body())
 	}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"time"
 
@@ -596,7 +595,6 @@ func (s *PublicBlockChainQuaiAPI) ReceiveMinedHeader(ctx context.Context, raw js
 	} else if err != nil {
 		return err
 	}
-	fmt.Println("Received mined header", "txs", len(block.Transactions()))
 	s.b.WriteBlock(block)
 	// Broadcast the block and announce chain insertion event
 	if block.Header() != nil {

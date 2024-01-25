@@ -4,7 +4,6 @@ import (
 	"github.com/dominant-strategies/go-quai/crypto"
 
 	"errors"
-	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
@@ -183,11 +182,6 @@ func (view *UtxoViewpoint) FetchPrevOutput(op OutPoint) *TxOut {
 // marked unspent.  All fields will be updated for existing entries since it's
 // possible it has changed during a reorg.
 func (view *UtxoViewpoint) addTxOut(outpoint OutPoint, txOut *TxOut, isCoinBase bool, blockHeight uint64) {
-
-	fmt.Println("AddTxOuts")
-	fmt.Println(outpoint.Hash, outpoint.Index)
-	fmt.Println("Denom: ", txOut.Denomination, " Value: ", Denominations[txOut.Denomination], " Address: ", txOut.Address)
-
 	// Update existing entries.  All fields are updated because it's
 	// possible (although extremely unlikely) that the existing entry is
 	// being replaced by a different transaction with the same hash.  This
@@ -333,8 +327,6 @@ func (view UtxoViewpoint) VerifyTxSignature(tx *Transaction, signer Signer) erro
 	} else {
 		finalKey = pubKeys[0]
 	}
-
-	fmt.Println("sig", common.Bytes2Hex(tx.UtxoSignature().Serialize()))
 	txDigestHash := signer.Hash(tx)
 
 	if !tx.UtxoSignature().Verify(txDigestHash[:], finalKey) {

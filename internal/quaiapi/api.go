@@ -980,6 +980,10 @@ type RPCTransaction struct {
 	V                *hexutil.Big      `json:"v"`
 	R                *hexutil.Big      `json:"r"`
 	S                *hexutil.Big      `json:"s"`
+	TxIn             []types.TxIn      `json:"inputs,omitempty"`
+	TxOut            []types.TxOut     `json:"outputs,omitempty"`
+	UTXOSignature    hexutil.Bytes     `json:"utxoSignature,omitempty"`
+
 	// Optional fields only present for external transactions
 	Sender *common.Address `json:"sender,omitempty"`
 
@@ -1000,9 +1004,14 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 
 	var result *RPCTransaction
 	if tx.Type() == types.UtxoTxType {
+		sig := tx.UtxoSignature().Serialize()
 		result = &RPCTransaction{
-			Type: hexutil.Uint64(tx.Type()),
-			Hash: tx.Hash(),
+			Type:          hexutil.Uint64(tx.Type()),
+			ChainID:       (*hexutil.Big)(tx.ChainId()),
+			Hash:          tx.Hash(),
+			TxIn:          tx.TxIn(),
+			TxOut:         tx.TxOut(),
+			UTXOSignature: hexutil.Bytes(sig),
 		}
 		return result
 	}

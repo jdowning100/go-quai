@@ -304,6 +304,10 @@ func (t *Transaction) UnmarshalJSON(input []byte) error {
 		}
 		itx.ETXAccessList = *dec.ETXAccessList
 
+	case UtxoTxType:
+		var utxoTx UtxoTx
+		inner = &utxoTx
+
 	default:
 		return ErrTxTypeNotSupported
 	}

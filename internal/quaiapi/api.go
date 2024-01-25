@@ -997,14 +997,22 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 	if nodeCtx != common.ZONE_CTX {
 		return nil
 	}
+
+	var result *RPCTransaction
+	if tx.Type() == types.UtxoTxType {
+		result = &RPCTransaction{
+			Type: hexutil.Uint64(tx.Type()),
+			Hash: tx.Hash(),
+		}
+		return result
+	}
+
 	// Determine the signer. For replay-protected transactions, use the most permissive
 	// signer, because we assume that signers are backwards-compatible with old
 	// transactions. For non-protected transactions, the signer is used
 	// because the return value of ChainId is zero for those transactions.
-	var signer types.Signer
-	signer = types.LatestSignerForChainID(tx.ChainId(), nodeLocation)
+	signer := types.LatestSignerForChainID(tx.ChainId(), nodeLocation)
 	from, _ := types.Sender(signer, tx)
-	var result *RPCTransaction
 	switch tx.Type() {
 	case types.InternalTxType:
 		result = &RPCTransaction{
@@ -1435,11 +1443,11 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	if !b.ProcessingState() {
 		return common.Hash{}, errors.New("submitTransaction call can only be made on chain processing the state")
 	}
-if tx.Type() == types.UtxoTxType {
-	if err := b.SendTx(ctx, tx); err != nil {
-		return common.Hash{}, err
-	}
-} else {	
+	if tx.Type() == types.UtxoTxType {
+		if err := b.SendTx(ctx, tx); err != nil {
+			return common.Hash{}, err
+		}
+	} else {
 		// If the transaction fee cap is already specified, ensure the
 		// fee of the given transaction is _reasonable_.
 		if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {

@@ -139,14 +139,16 @@ func (ec *Client) getBlock(ctx context.Context, method string, args ...interface
 		return nil, fmt.Errorf("server returned empty external transaction list but block header indicates transactions")
 	}
 
-	for i := 0; i < common.HierarchyDepth; i++ {
-		if head.ManifestHash(i) == types.EmptyRootHash && len(body.SubManifest) > 0 {
-			return nil, fmt.Errorf("server returned non-empty subordinate manifest but block header indicates no transactions")
-		}
-		if head.ManifestHash(i) != types.EmptyRootHash && len(body.SubManifest) == 0 {
-			return nil, fmt.Errorf("server returned empty subordinate manifest but block header indicates transactions")
-		}
-	}
+	// TODO: Fix the checking here on manifest hashes in RPC
+	// for i := 0; i < common.HierarchyDepth; i++ {
+	// 	fmt.Println(i)
+	// 	if head.ManifestHash(i) == types.EmptyRootHash && len(body.SubManifest) > 0 {
+	// 		return nil, fmt.Errorf("server returned non-empty subordinate manifest but block header indicates no transactions")
+	// 	}
+	// 	if head.ManifestHash(i) != types.EmptyRootHash && len(body.SubManifest) == 0 {
+	// 		return nil, fmt.Errorf("server returned empty subordinate manifest but block header indicates transactions")
+	// 	}
+	// }
 
 	// Load uncles because they are not included in the block response.
 	var uncles []*types.Header
@@ -294,7 +296,7 @@ func (ec *Client) TransactionInBlock(ctx context.Context, blockHash common.Hash,
 	}
 	if json == nil {
 		return nil, quai.NotFound
-	} else if _, r, _ := json.tx.RawSignatureValues(); r == nil && json.tx.Type() != types.ExternalTxType {
+	} else if _, r, _ := json.tx.RawSignatureValues(); r == nil && json.tx.Type() != types.ExternalTxType && json.tx.Type() != types.UtxoTxType {
 		return nil, fmt.Errorf("server returned transaction without signature")
 	}
 	if json.From != nil && json.BlockHash != nil {

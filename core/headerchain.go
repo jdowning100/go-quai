@@ -468,7 +468,6 @@ func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 		}
 		coinbase := false
 		totalFees := big.NewInt(0)
-		fmt.Println("len utxos 1", len(block.UTXOs()))
 		for _, tx := range block.UTXOs() {
 			if types.IsCoinBaseTx(tx) && !coinbase {
 				coinbase = true
@@ -569,7 +568,6 @@ func (hc *HeaderChain) setCurrentUTXOSet(head *types.Header) error {
 		}
 		coinbase := false
 		totalFees := big.NewInt(0)
-		fmt.Println("len utxos 2", len(block.UTXOs()))
 		for _, tx := range block.UTXOs() {
 			if types.IsCoinBaseTx(tx) && !coinbase {
 				coinbase = true
@@ -1362,7 +1360,6 @@ func (hc *HeaderChain) verifyInputUtxos(view *types.UtxoViewpoint, block *types.
 // particular, only the entries that have been marked as modified are written
 // to the database.
 func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
-	fmt.Println("len entries", len(view.Entries))
 	for outpoint, entry := range view.Entries {
 		// No need to update the database if the entry was not modified.
 		if entry == nil || !entry.IsModified() {

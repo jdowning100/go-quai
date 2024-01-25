@@ -19,7 +19,6 @@ package types
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -117,8 +116,6 @@ func (t *Transaction) MarshalJSON() ([]byte, error) {
 		enc.ETXAccessList = &tx.ETXAccessList
 	case *UtxoTx:
 		sig := tx.Signature.Serialize()
-		fmt.Println("send sig", sig)
-		fmt.Println("send chain id", tx.ChainID)
 		enc.ChainID = (*hexutil.Big)(tx.ChainID)
 		enc.TxIn = tx.TxIn
 		enc.TxOut = tx.TxOut
@@ -321,7 +318,6 @@ func (t *Transaction) UnmarshalJSON(input []byte) error {
 		var utxoTx UtxoTx
 		inner = &utxoTx
 		utxoTx.ChainID = (*big.Int)(dec.ChainID)
-		fmt.Println("chain ID", utxoTx.chainID())
 		utxoTx.TxIn = dec.TxIn
 		utxoTx.TxOut = dec.TxOut
 

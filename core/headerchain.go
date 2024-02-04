@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -1230,12 +1231,10 @@ func (hc *HeaderChain) FetchUtxosMain(view *types.UtxoViewpoint, outpoints []typ
 	for i := range outpoints {
 		entry := hc.GetUtxo(outpoints[i].Hash, outpoints[i].Index)
 		if entry == nil {
-			return nil
+			return fmt.Errorf("utxo not found")
 		}
 
 		view.AddEntry(outpoints, i, entry)
-
-		return nil
 	}
 
 	return nil
@@ -1371,11 +1370,35 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 		// Remove the utxo entry if it is spent.
 		if entry.IsSpent() {
 			rawdb.DeleteUtxo(hc.bc.db, outpoint.Hash, outpoint.Index)
+
+			entryAddress := common.BytesToAddress(entry.Address, hc.NodeLocation())
+			addressUtxos := rawdb.ReadAddressUtxos(hc.bc.db, entryAddress)
+
+			// Iterate over addressUtxos and find the outpointHash and outpointIndex entry, then remove it.
+			for i, utxo := range addressUtxos {
+				// TODO: Need to determine if this is adequate matching to remove upon spending
+				// Entry will show as spent so need to determine how to check packed flags equivalence?
+				if utxo.Denomination == entry.Denomination &&
+					bytes.Equal(utxo.Address, entry.Address) && // Use bytes.Equal for byte slice comparison
+					utxo.BlockHeight == entry.BlockHeight {
+					// Remove the utxo from the slice by filtering it out.
+					addressUtxos = append(addressUtxos[:i], addressUtxos[i+1:]...)
+					break
+				}
+			}
+
+			rawdb.WriteAddressUtxos(hc.bc.db, entryAddress, addressUtxos)
+
 			continue
 		}
 
-		fmt.Println("write utxo", outpoint.Hash.Hex())
+		fmt.Println("write utxo", outpoint.Hash.Hex(), outpoint.Index)
 		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, outpoint.Index, entry)
+		entryAddress := common.BytesToAddress(entry.Address, hc.NodeLocation())
+		addressUtxos := rawdb.ReadAddressUtxos(hc.bc.db, entryAddress)
+		addressUtxos = append(addressUtxos, entry)
+		fmt.Println("utxos for address", len(addressUtxos))
+		rawdb.WriteAddressUtxos(hc.bc.db, entryAddress, addressUtxos)
 	}
 
 	return nil
@@ -1422,8 +1445,6 @@ func createCoinbaseTx(header *types.Header) (*types.Transaction, error) {
 	}
 
 	denominations := misc.CalculateRewardForQi(header)
-	fmt.Printf("denominations: %v\n", denominations)
-
 	outs := make([]types.TxOut, 0, len(denominations))
 
 	// Iterate over the denominations in descending order (by key)
@@ -1448,7 +1469,6 @@ func createCoinbaseTx(header *types.Header) (*types.Transaction, error) {
 	}
 
 	tx := types.NewTx(utxo)
-	fmt.Println("coinbase tx", tx.Hash().Hex())
 	return tx, nil
 }
 
@@ -1467,8 +1487,6 @@ func createCoinbaseTxWithFees(header *types.Header, fees *big.Int) (*types.Trans
 	}
 
 	denominations := misc.CalculateRewardForQiWithFees(header, fees)
-	fmt.Printf("denominations: %v\n", denominations)
-
 	outs := make([]types.TxOut, 0, len(denominations))
 
 	// Iterate over the denominations in descending order (by key)
@@ -1493,7 +1511,6 @@ func createCoinbaseTxWithFees(header *types.Header, fees *big.Int) (*types.Trans
 	}
 
 	tx := types.NewTx(utxo)
-	fmt.Println("coinbase tx", tx.Hash().Hex())
 	return tx, nil
 }
 
@@ -1587,10 +1604,10 @@ func (hc *HeaderChain) disconnectTransactions(view *types.UtxoViewpoint, block *
 			entry.Denomination = stxo.Denomination
 			entry.Address = stxo.Address
 			entry.BlockHeight = stxo.Height
-			entry.PackedFlags = types.TfModified
-			if stxo.IsCoinBase {
-				entry.PackedFlags |= types.TfCoinBase
-			}
+			// entry.PackedFlags = types.TfModified
+			// if stxo.IsCoinBase {
+			// 	entry.PackedFlags |= types.TfCoinBase
+			// }
 		}
 	}
 

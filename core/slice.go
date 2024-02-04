@@ -1248,7 +1248,6 @@ func (sl *Slice) ConstructLocalMinedBlock(header *types.Header) (*types.Block, e
 	for i, tx := range pendingBlockBody.Transactions {
 		txs[i] = tx
 	}
-	fmt.Println("pendingBlockBody.Transactions", len(pendingBlockBody.Transactions))
 	uncles := make([]*types.Header, len(pendingBlockBody.Uncles))
 	for i, uncle := range pendingBlockBody.Uncles {
 		uncles[i] = uncle

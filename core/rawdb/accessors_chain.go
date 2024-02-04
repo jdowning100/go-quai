@@ -1465,3 +1465,33 @@ func ReadSpentUTXOs(db ethdb.Reader, hash common.Hash) []types.SpentTxOut {
 	}
 	return spentUTXOs
 }
+
+func WriteAddressUtxos(db ethdb.KeyValueWriter, address common.Address, utxos []*types.UtxoEntry) {
+	data, err := rlp.EncodeToBytes(utxos)
+	if err != nil {
+		log.Fatal("Failed to RLP encode utxos", "err", err)
+	}
+	if err := db.Put(addressUtxosKey(address), data); err != nil {
+		log.Fatal("Failed to store utxos", "err", err)
+	}
+}
+
+func ReadAddressUtxos(db ethdb.Reader, address common.Address) []*types.UtxoEntry {
+	// Try to look up the data in leveldb.
+	data, _ := db.Get(addressUtxosKey(address))
+	if len(data) == 0 {
+		return nil
+	}
+	utxos := []*types.UtxoEntry{}
+	if err := rlp.Decode(bytes.NewReader(data), &utxos); err != nil {
+		log.Error("Invalid utxos RLP", "err", err)
+		return nil
+	}
+	return utxos
+}
+
+func DeleteAddressUtxos(db ethdb.KeyValueWriter, address common.Address) {
+	if err := db.Delete(addressUtxosKey(address)); err != nil {
+		log.Fatal("Failed to delete utxos", "err", err)
+	}
+}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"time"
 
@@ -142,6 +141,25 @@ func (s *PublicBlockChainQuaiAPI) GetBalance(ctx context.Context, address common
 		return nil, err
 	}
 	return (*hexutil.Big)(state.GetBalance(internal)), state.Error()
+}
+
+func (s *PublicBlockChainQuaiAPI) GetQiBalance(ctx context.Context, address common.Address) (*hexutil.Big, error) {
+	utxos, err := s.b.UTXOsByAddress(ctx, address)
+	if utxos == nil || err != nil {
+		return nil, err
+	}
+
+	var balance *big.Int
+	for _, utxo := range utxos {
+		denomination := utxo.Denomination
+		value := types.Denominations[denomination]
+		if balance == nil {
+			balance = new(big.Int).Set(value)
+		} else {
+			balance.Add(balance, value)
+		}
+	}
+	return (*hexutil.Big)(balance), nil
 }
 
 // GetProof returns the Merkle-proof for a given account and optionally some storage keys.
@@ -596,7 +614,6 @@ func (s *PublicBlockChainQuaiAPI) ReceiveMinedHeader(ctx context.Context, raw js
 	} else if err != nil {
 		return err
 	}
-	fmt.Println("Received mined header", "txs", len(block.Transactions()))
 	s.b.WriteBlock(block)
 	// Broadcast the block and announce chain insertion event
 	if block.Header() != nil {

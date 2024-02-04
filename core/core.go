@@ -1110,6 +1110,10 @@ func (c *Core) TrieNode(hash common.Hash) ([]byte, error) {
 	return c.sl.hc.bc.processor.TrieNode(hash)
 }
 
+func (c *Core) GetUTXOsByAddress(addr common.Address) ([]*types.UtxoEntry, error) {
+	return c.sl.hc.bc.processor.GetUTXOsByAddress(addr)
+}
+
 //----------------//
 // TxPool methods //
 //----------------//

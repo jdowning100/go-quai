@@ -1374,6 +1374,11 @@ func (hc *HeaderChain) WriteUtxoViewpoint(view *types.UtxoViewpoint) error {
 
 		fmt.Println("write utxo", outpoint.Hash.Hex(), outpoint.Index)
 		rawdb.WriteUtxo(hc.bc.db, outpoint.Hash, outpoint.Index, entry)
+		entryAddress := common.BytesToAddress(entry.Address, hc.NodeLocation())
+		addressUtxos := rawdb.ReadAddressUtxos(hc.bc.db, entryAddress)
+		addressUtxos = append(addressUtxos, entry)
+		fmt.Println("utxos for address", len(addressUtxos))
+		rawdb.WriteAddressUtxos(hc.bc.db, entryAddress, addressUtxos)
 	}
 
 	return nil

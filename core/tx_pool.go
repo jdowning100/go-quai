@@ -34,6 +34,7 @@ import (
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/metrics_config"
 	"github.com/dominant-strategies/go-quai/params"
+	"github.com/sirupsen/logrus"
 	orderedmap "github.com/wk8/go-ordered-map/v2"
 )
 

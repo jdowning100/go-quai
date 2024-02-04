@@ -98,6 +98,7 @@ var (
 	inboundEtxsPrefix   = []byte("ie")    // inboundEtxsPrefix + hash -> types.Transactions
 	utxoPrefix          = []byte("ut")    // outpointPrefix + hash -> types.Outpoint
 	spentUTXOsPrefix    = []byte("sutxo") // spentUTXOsPrefix + hash -> []types.SpentTxOut
+	addressUtxosPrefix  = []byte("au")    // addressUtxosPrefix + hash -> []types.UtxoEntry
 
 	blockBodyPrefix         = []byte("b")  // blockBodyPrefix + num (uint64 big endian) + hash -> block body
 	blockReceiptsPrefix     = []byte("r")  // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
@@ -321,4 +322,8 @@ func utxoKey(hash common.Hash, index uint32) []byte {
 
 func spentUTXOsKey(hash common.Hash) []byte {
 	return append(spentUTXOsPrefix, hash.Bytes()...)
+}
+
+func addressUtxosKey(address common.Address) []byte {
+	return append(addressUtxosPrefix, address.Bytes()...)
 }

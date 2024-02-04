@@ -250,6 +250,25 @@ func (s *PublicBlockChainAPI) GetBalance(ctx context.Context, address common.Add
 	return (*hexutil.Big)(state.GetBalance(internal)), state.Error()
 }
 
+func (s *PublicBlockChainAPI) GetQiBalance(ctx context.Context, address common.Address) (*hexutil.Big, error) {
+	utxos, err := s.b.UTXOsByAddress(ctx, address)
+	if utxos == nil || err != nil {
+		return nil, err
+	}
+
+	var balance *big.Int
+	for _, utxo := range utxos {
+		denomination := utxo.Denomination
+		value := types.Denominations[denomination]
+		if balance == nil {
+			balance = new(big.Int).Set(value)
+		} else {
+			balance.Add(balance, value)
+		}
+	}
+	return (*hexutil.Big)(balance), nil
+}
+
 // Result structs for GetProof
 type AccountResult struct {
 	Address      common.Address  `json:"address"`
@@ -1472,23 +1491,24 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 			return common.Hash{}, err
 		}
 
-	if tx.To() == nil {
-		addr := crypto.CreateAddress(from, tx.Nonce(), tx.Data(), nodeLocation)
-		b.Logger().WithFields(log.Fields{
-			"hash":     tx.Hash().Hex(),
-			"from":     from,
-			"nonce":    tx.Nonce(),
-			"contract": addr.Hex(),
-			"value":    tx.Value(),
-		}).Debug("Submitted contract creation")
-	} else {
-		b.Logger().WithFields(log.Fields{
-			"hash":      tx.Hash().Hex(),
-			"from":      from,
-			"nonce":     tx.Nonce(),
-			"recipient": tx.To(),
-			"value":     tx.Value(),
-		}).Debug("Submitted transaction")
+		if tx.To() == nil {
+			addr := crypto.CreateAddress(from, tx.Nonce(), tx.Data(), nodeLocation)
+			b.Logger().WithFields(log.Fields{
+				"hash":     tx.Hash().Hex(),
+				"from":     from,
+				"nonce":    tx.Nonce(),
+				"contract": addr.Hex(),
+				"value":    tx.Value(),
+			}).Debug("Submitted contract creation")
+		} else {
+			b.Logger().WithFields(log.Fields{
+				"hash":      tx.Hash().Hex(),
+				"from":      from,
+				"nonce":     tx.Nonce(),
+				"recipient": tx.To(),
+				"value":     tx.Value(),
+			}).Debug("Submitted transaction")
+		}
 	}
 	return tx.Hash(), nil
 }

@@ -16,12 +16,13 @@ import (
 
 func TestSingleSigner(t *testing.T) {
 
+	location := common.Location{0, 0}
 	// ECDSA key
 	key, err := crypto.HexToECDSA("345debf66bc68724062b236d3b0a6eb30f051e725ebb770f1dc367f2c569f003")
 	if err != nil {
 		fmt.Println(err)
 	}
-	addr := crypto.PubkeyToAddress(key.PublicKey)
+	addr := crypto.PubkeyToAddress(key.PublicKey, location)
 	fmt.Println(addr.Hex())
 
 	b, err := hex.DecodeString("345debf66bc68724062b236d3b0a6eb30f051e725ebb770f1dc367f2c569f003")
@@ -34,8 +35,8 @@ func TestSingleSigner(t *testing.T) {
 
 	// Spendable out, could come from anywhere
 	coinbaseOutput := &TxOut{
-		Value:   10000000,
-		Address: addr.Bytes(),
+		Denomination: uint8(1),
+		Address:      addr.Bytes(),
 	}
 
 	fmt.Println(coinbaseOutput)
@@ -53,7 +54,7 @@ func TestSingleSigner(t *testing.T) {
 	}
 
 	newOut := TxOut{
-		Value: 10000000,
+		Denomination: uint8(1),
 		// Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
 		Address: addr.Bytes(),
 	}
@@ -80,12 +81,13 @@ func TestSingleSigner(t *testing.T) {
 
 func TestMultiSigners(t *testing.T) {
 
+	location := common.Location{0, 0}
 	// ECDSA key
 	key1, err := crypto.HexToECDSA("345debf66bc68724062b236d3b0a6eb30f051e725ebb770f1dc367f2c569f003")
 	if err != nil {
 		fmt.Println(err)
 	}
-	addr1 := crypto.PubkeyToAddress(key1.PublicKey)
+	addr1 := crypto.PubkeyToAddress(key1.PublicKey, location)
 	fmt.Println(addr1.Hex())
 
 	b1, err := hex.DecodeString("345debf66bc68724062b236d3b0a6eb30f051e725ebb770f1dc367f2c569f003")
@@ -100,7 +102,7 @@ func TestMultiSigners(t *testing.T) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	addr2 := crypto.PubkeyToAddress(key2.PublicKey)
+	addr2 := crypto.PubkeyToAddress(key2.PublicKey, location)
 	fmt.Println(addr2.Hex())
 
 	b2, err := hex.DecodeString("000000f66bc68724062b236d3b0a6eb30f051e725ebb770f1dc367f2c569f003")
@@ -112,8 +114,8 @@ func TestMultiSigners(t *testing.T) {
 
 	// Spendable out, could come from anywhere
 	coinbaseOutput := &TxOut{
-		Value:   10000000,
-		Address: addr1.Bytes(),
+		Denomination: uint8(1),
+		Address:      addr1.Bytes(),
 	}
 
 	fmt.Println(coinbaseOutput)
@@ -139,13 +141,13 @@ func TestMultiSigners(t *testing.T) {
 	}
 
 	newOut1 := TxOut{
-		Value:   10000000,
-		Address: addr1.Bytes(),
+		Denomination: uint8(1),
+		Address:      addr1.Bytes(),
 	}
 
 	newOut2 := TxOut{
-		Value:   10000000,
-		Address: addr1.Bytes(),
+		Denomination: uint8(1),
+		Address:      addr1.Bytes(),
 	}
 
 	utxo := &UtxoTx{

@@ -58,10 +58,58 @@ func init() {
 	Denominations[15] = new(big.Int).Mul(big.NewInt(100000), big.NewInt(params.Ether)) // 100000 Qi
 }
 
+type TxIns []TxIn
+
+func (txIns TxIns) ProtoEncode() (*ProtoTxIns, error) {
+	protoTxIns := &ProtoTxIns{}
+	for _, txIn := range txIns {
+		protoTxIn, err := txIn.ProtoEncode()
+		if err != nil {
+			return nil, err
+		}
+		protoTxIns.TxIns = append(protoTxIns.TxIns, protoTxIn)
+	}
+	return protoTxIns, nil
+}
+
+func (txIns *TxIns) ProtoDecode(protoTxIns *ProtoTxIns) error {
+	for _, protoTxIn := range protoTxIns.TxIns {
+		decodedTxIn := &TxIn{}
+		err := decodedTxIn.ProtoDecode(protoTxIn)
+		if err != nil {
+			return err
+		}
+		*txIns = append(*txIns, *decodedTxIn)
+	}
+	return nil
+}
+
 // TxIn defines a bitcoin transaction input.
 type TxIn struct {
 	PreviousOutPoint OutPoint
 	PubKey           []byte
+}
+
+func (txIn TxIn) ProtoEncode() (*ProtoTxIn, error) {
+	protoTxIn := &ProtoTxIn{}
+
+	var err error
+	protoTxIn.PreviousOutPoint, err = txIn.PreviousOutPoint.ProtoEncode()
+	if err != nil {
+		return nil, err
+	}
+
+	protoTxIn.PubKey = txIn.PubKey
+	return protoTxIn, nil
+}
+
+func (txIn *TxIn) ProtoDecode(protoTxIn *ProtoTxIn) error {
+	err := txIn.PreviousOutPoint.ProtoDecode(protoTxIn.PreviousOutPoint)
+	if err != nil {
+		return err
+	}
+	txIn.PubKey = protoTxIn.PubKey
+	return nil
 }
 
 // OutPoint defines a bitcoin data type that is used to track previous
@@ -69,6 +117,19 @@ type TxIn struct {
 type OutPoint struct {
 	Hash  common.Hash
 	Index uint32
+}
+
+func (outPoint OutPoint) ProtoEncode() (*ProtoOutPoint, error) {
+	protoOutPoint := &ProtoOutPoint{}
+	protoOutPoint.Hash = outPoint.Hash.ProtoEncode()
+	protoOutPoint.Index = &outPoint.Index
+	return protoOutPoint, nil
+}
+
+func (outPoint *OutPoint) ProtoDecode(protoOutPoint *ProtoOutPoint) error {
+	outPoint.Hash.ProtoDecode(protoOutPoint.Hash)
+	outPoint.Index = *protoOutPoint.Index
+	return nil
 }
 
 // NewOutPoint returns a new bitcoin transaction outpoint point with the
@@ -90,10 +151,55 @@ func NewTxIn(prevOut *OutPoint, pubkey []byte, witness [][]byte) *TxIn {
 	}
 }
 
+type TxOuts []TxOut
+
+func (txOuts TxOuts) ProtoEncode() (*ProtoTxOuts, error) {
+	protoTxOuts := &ProtoTxOuts{}
+	for _, txOut := range txOuts {
+		protoTxOut, err := txOut.ProtoEncode()
+		if err != nil {
+			return nil, err
+		}
+		protoTxOuts.TxOuts = append(protoTxOuts.TxOuts, protoTxOut)
+	}
+	return protoTxOuts, nil
+}
+
+func (txOuts *TxOuts) ProtoDecode(protoTxOuts *ProtoTxOuts) error {
+	for _, protoTxOut := range protoTxOuts.TxOuts {
+		decodedTxOut := &TxOut{}
+		err := decodedTxOut.ProtoDecode(protoTxOut)
+		if err != nil {
+			return err
+		}
+		*txOuts = append(*txOuts, *decodedTxOut)
+	}
+	return nil
+}
+
 // TxOut defines a bitcoin transaction output.
 type TxOut struct {
 	Denomination uint8
 	Address      []byte
+}
+
+func (txOut TxOut) ProtoEncode() (*ProtoTxOut, error) {
+	protoTxOut := &ProtoTxOut{}
+
+	denomination := uint32(txOut.Denomination)
+	protoTxOut.Denomination = &denomination
+	protoTxOut.Address = txOut.Address
+	return protoTxOut, nil
+}
+
+func (txOut *TxOut) ProtoDecode(protoTxOut *ProtoTxOut) error {
+	// check if protoTxOut.Denomination is above the max uint8 value
+	if *protoTxOut.Denomination > math.MaxUint8 {
+		return errors.New("protoTxOut.Denomination is above the max uint8 value")
+	}
+	txOut.Denomination = uint8(protoTxOut.GetDenomination())
+	txOut.Address = protoTxOut.Address
+	return nil
 }
 
 // SerializeSize returns the number of bytes it would take to serialize the

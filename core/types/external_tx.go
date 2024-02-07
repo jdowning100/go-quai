@@ -115,8 +115,8 @@ func (tx *ExternalTx) etxGasPrice() *big.Int     { panic("external TX does not h
 func (tx *ExternalTx) etxGasTip() *big.Int       { panic("external TX does not have etxGasTip") }
 func (tx *ExternalTx) etxData() []byte           { panic("external TX does not have etxData") }
 func (tx *ExternalTx) etxAccessList() AccessList { panic("external TX does not have etxAccessList") }
-func (tx *ExternalTx) txIn() []TxIn              { panic("internal TX does not have txIn") }
-func (tx *ExternalTx) txOut() []TxOut            { panic("internal TX does not have txOut") }
+func (tx *ExternalTx) txIn() TxIns               { panic("internal TX does not have txIn") }
+func (tx *ExternalTx) txOut() TxOuts             { panic("internal TX does not have txOut") }
 func (tx *ExternalTx) utxoSignature() *schnorr.Signature {
 	panic("interal TX does not have utxoSignature")
 }

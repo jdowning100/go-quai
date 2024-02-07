@@ -98,8 +98,8 @@ type TxData interface {
 	etxGasTip() *big.Int
 	etxData() []byte
 	etxAccessList() AccessList
-	txIn() []TxIn
-	txOut() []TxOut
+	txIn() TxIns
+	txOut() TxOuts
 
 	// do we need a tx version?
 	rawSignatureValues() (v, r, s *big.Int)
@@ -118,27 +118,50 @@ func (tx *Transaction) ProtoEncode() (*ProtoTransaction, error) {
 
 	// Encoding common fields to all the tx types
 	txType := uint64(tx.Type())
-	nonce := tx.Nonce()
-	gas := tx.Gas()
 	protoTx.Type = &txType
 	protoTx.ChainId = tx.ChainId().Bytes()
-	protoTx.Nonce = &nonce
-	protoTx.Gas = &gas
-	protoTx.AccessList = tx.AccessList().ProtoEncode()
-	protoTx.Value = tx.Value().Bytes()
-	protoTx.Data = tx.Data()
-	protoTx.To = tx.To().Bytes()
-	protoTx.GasFeeCap = tx.GasFeeCap().Bytes()
-	protoTx.GasTipCap = tx.GasTipCap().Bytes()
 
 	// Other fields are set conditionally depending on tx type.
 	switch tx.Type() {
 	case 0:
+		nonce := tx.Nonce()
+		gas := tx.Gas()
+		protoTx.Nonce = &nonce
+		protoTx.Gas = &gas
+		protoTx.AccessList = tx.AccessList().ProtoEncode()
+		protoTx.Value = tx.Value().Bytes()
+		protoTx.Data = tx.Data()
+		protoTx.To = tx.To().Bytes()
+		protoTx.GasFeeCap = tx.GasFeeCap().Bytes()
+		protoTx.GasTipCap = tx.GasTipCap().Bytes()
+
 		V, R, S := tx.RawSignatureValues()
 		protoTx.V = V.Bytes()
 		protoTx.R = R.Bytes()
 		protoTx.S = S.Bytes()
+	case 1:
+		nonce := tx.Nonce()
+		gas := tx.Gas()
+		protoTx.Nonce = &nonce
+		protoTx.Gas = &gas
+		protoTx.AccessList = tx.AccessList().ProtoEncode()
+		protoTx.Value = tx.Value().Bytes()
+		protoTx.Data = tx.Data()
+		protoTx.To = tx.To().Bytes()
+		protoTx.GasFeeCap = tx.GasFeeCap().Bytes()
+		protoTx.GasTipCap = tx.GasTipCap().Bytes()
 	case 2:
+		nonce := tx.Nonce()
+		gas := tx.Gas()
+		protoTx.Nonce = &nonce
+		protoTx.Gas = &gas
+		protoTx.AccessList = tx.AccessList().ProtoEncode()
+		protoTx.Value = tx.Value().Bytes()
+		protoTx.Data = tx.Data()
+		protoTx.To = tx.To().Bytes()
+		protoTx.GasFeeCap = tx.GasFeeCap().Bytes()
+		protoTx.GasTipCap = tx.GasTipCap().Bytes()
+
 		V, R, S := tx.RawSignatureValues()
 		protoTx.V = V.Bytes()
 		protoTx.R = R.Bytes()
@@ -149,6 +172,17 @@ func (tx *Transaction) ProtoEncode() (*ProtoTransaction, error) {
 		protoTx.EtxGasTip = tx.ETXGasTip().Bytes()
 		protoTx.EtxData = tx.ETXData()
 		protoTx.EtxAccessList = tx.ETXAccessList().ProtoEncode()
+	case 3:
+		var err error
+		protoTx.TxIns, err = tx.TxIn().ProtoEncode()
+		if err != nil {
+			return nil, err
+		}
+		protoTx.TxOuts, err = tx.TxOut().ProtoEncode()
+		if err != nil {
+			return nil, err
+		}
+		protoTx.Signature = tx.UtxoSignature().Serialize()
 	}
 	return protoTx, nil
 }
@@ -161,35 +195,36 @@ func (tx *Transaction) ProtoDecode(protoTx *ProtoTransaction, location common.Lo
 	if protoTx.ChainId == nil {
 		return errors.New("missing required field 'ChainId' in ProtoTransaction")
 	}
-	if protoTx.Nonce == nil {
-		return errors.New("missing required field 'Nonce' in ProtoTransaction")
-	}
-	if protoTx.Gas == nil {
-		return errors.New("missing required field 'Gas' in ProtoTransaction")
-	}
-	if protoTx.AccessList == nil {
-		return errors.New("missing required field 'AccessList' in ProtoTransaction")
-	}
-	if protoTx.Value == nil {
-		return errors.New("missing required field 'Value' in ProtoTransaction")
-	}
-	if protoTx.Data == nil {
-		return errors.New("missing required field 'Data' in ProtoTransaction")
-	}
-	if protoTx.To == nil {
-		return errors.New("missing required field 'To' in ProtoTransaction")
-	}
-	if protoTx.GasFeeCap == nil {
-		return errors.New("missing required field 'GasFeeCap' in ProtoTransaction")
-	}
-	if protoTx.GasTipCap == nil {
-		return errors.New("missing required field 'GasTipCap' in ProtoTransaction")
-	}
 
 	txType := protoTx.GetType()
 
 	switch txType {
 	case 0:
+		if protoTx.Nonce == nil {
+			return errors.New("missing required field 'Nonce' in ProtoTransaction")
+		}
+		if protoTx.Gas == nil {
+			return errors.New("missing required field 'Gas' in ProtoTransaction")
+		}
+		if protoTx.AccessList == nil {
+			return errors.New("missing required field 'AccessList' in ProtoTransaction")
+		}
+		if protoTx.Value == nil {
+			return errors.New("missing required field 'Value' in ProtoTransaction")
+		}
+		if protoTx.Data == nil {
+			return errors.New("missing required field 'Data' in ProtoTransaction")
+		}
+		if protoTx.To == nil {
+			return errors.New("missing required field 'To' in ProtoTransaction")
+		}
+		if protoTx.GasFeeCap == nil {
+			return errors.New("missing required field 'GasFeeCap' in ProtoTransaction")
+		}
+		if protoTx.GasTipCap == nil {
+			return errors.New("missing required field 'GasTipCap' in ProtoTransaction")
+		}
+
 		var itx InternalTx
 		itx.AccessList = AccessList{}
 		itx.AccessList.ProtoDecode(protoTx.GetAccessList(), location)
@@ -223,6 +258,31 @@ func (tx *Transaction) ProtoDecode(protoTx *ProtoTransaction, location common.Lo
 		tx.SetInner(&itx)
 
 	case 1:
+		if protoTx.Nonce == nil {
+			return errors.New("missing required field 'Nonce' in ProtoTransaction")
+		}
+		if protoTx.Gas == nil {
+			return errors.New("missing required field 'Gas' in ProtoTransaction")
+		}
+		if protoTx.AccessList == nil {
+			return errors.New("missing required field 'AccessList' in ProtoTransaction")
+		}
+		if protoTx.Value == nil {
+			return errors.New("missing required field 'Value' in ProtoTransaction")
+		}
+		if protoTx.Data == nil {
+			return errors.New("missing required field 'Data' in ProtoTransaction")
+		}
+		if protoTx.To == nil {
+			return errors.New("missing required field 'To' in ProtoTransaction")
+		}
+		if protoTx.GasFeeCap == nil {
+			return errors.New("missing required field 'GasFeeCap' in ProtoTransaction")
+		}
+		if protoTx.GasTipCap == nil {
+			return errors.New("missing required field 'GasTipCap' in ProtoTransaction")
+		}
+
 		var etx ExternalTx
 		etx.AccessList = AccessList{}
 		etx.AccessList.ProtoDecode(protoTx.GetAccessList(), location)
@@ -238,6 +298,31 @@ func (tx *Transaction) ProtoDecode(protoTx *ProtoTransaction, location common.Lo
 		tx.SetInner(&etx)
 
 	case 2:
+		if protoTx.Nonce == nil {
+			return errors.New("missing required field 'Nonce' in ProtoTransaction")
+		}
+		if protoTx.Gas == nil {
+			return errors.New("missing required field 'Gas' in ProtoTransaction")
+		}
+		if protoTx.AccessList == nil {
+			return errors.New("missing required field 'AccessList' in ProtoTransaction")
+		}
+		if protoTx.Value == nil {
+			return errors.New("missing required field 'Value' in ProtoTransaction")
+		}
+		if protoTx.Data == nil {
+			return errors.New("missing required field 'Data' in ProtoTransaction")
+		}
+		if protoTx.To == nil {
+			return errors.New("missing required field 'To' in ProtoTransaction")
+		}
+		if protoTx.GasFeeCap == nil {
+			return errors.New("missing required field 'GasFeeCap' in ProtoTransaction")
+		}
+		if protoTx.GasTipCap == nil {
+			return errors.New("missing required field 'GasTipCap' in ProtoTransaction")
+		}
+
 		var ietx InternalToExternalTx
 		ietx.AccessList = AccessList{}
 		ietx.AccessList.ProtoDecode(protoTx.GetAccessList(), location)
@@ -291,6 +376,37 @@ func (tx *Transaction) ProtoDecode(protoTx *ProtoTransaction, location common.Lo
 		ietx.ETXData = protoTx.GetEtxData()
 
 		tx.SetInner(&ietx)
+	case 3:
+		if protoTx.TxIns == nil {
+			return errors.New("missing required field 'TxIns' in ProtoTransaction")
+		}
+		if protoTx.TxOuts == nil {
+			return errors.New("missing required field 'TxOuts' in ProtoTransaction")
+		}
+		if protoTx.Signature == nil {
+			return errors.New("missing required field 'Signature' in ProtoTransaction")
+		}
+		var utxoTx UtxoTx
+		utxoTx.ChainID = new(big.Int).SetBytes(protoTx.GetChainId())
+
+		var err error
+		utxoTx.TxIn = TxIns{}
+		err = utxoTx.TxIn.ProtoDecode(protoTx.GetTxIns())
+		if err != nil {
+			return err
+		}
+		utxoTx.TxOut = TxOuts{}
+		err = utxoTx.TxOut.ProtoDecode(protoTx.GetTxOuts())
+		if err != nil {
+			return err
+		}
+		sig, err := schnorr.ParseSignature(protoTx.GetSignature())
+		if err != nil {
+			return err
+		}
+		utxoTx.Signature = sig
+
+		tx.SetInner(&utxoTx)
 	default:
 		return errors.New("invalid transaction type")
 	}
@@ -465,9 +581,9 @@ func (tx *Transaction) Nonce() uint64 { return tx.inner.nonce() }
 
 func (tx *Transaction) ETXSender() common.Address { return tx.inner.(*ExternalTx).Sender }
 
-func (tx *Transaction) TxOut() []TxOut { return tx.inner.txOut() }
+func (tx *Transaction) TxOut() TxOuts { return tx.inner.txOut() }
 
-func (tx *Transaction) TxIn() []TxIn { return tx.inner.txIn() }
+func (tx *Transaction) TxIn() TxIns { return tx.inner.txIn() }
 
 func (tx *Transaction) UtxoSignature() *schnorr.Signature { return tx.inner.utxoSignature() }
 

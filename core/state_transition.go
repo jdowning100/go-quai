@@ -301,6 +301,10 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	sender := vm.AccountRef(msg.From())
 	contractCreation := msg.To() == nil
 
+	if msg.To().Location() == nil {
+		return nil, fmt.Errorf("Invalid destination: address %v is not in any zone", msg.To().Hex())
+	}
+
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct
 	gas, err := IntrinsicGas(st.data, st.msg.AccessList(), contractCreation)
 	if err != nil {

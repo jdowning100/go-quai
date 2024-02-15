@@ -634,6 +634,10 @@ func (evm *EVM) CreateETX(toAddr common.Address, fromAddr common.Address, etxGas
 // Emitted ETXs must include some multiple of BaseFee as miner tip, to
 // encourage processing at the destination.
 func calcEtxFeeMultiplier(fromAddr, toAddr common.Address) *big.Int {
+	if toAddr.Location() == nil || fromAddr.Location() == nil {
+		// This address is completeley out of scope and the tx will likely get rejected.
+		big.NewInt(0).Mul(big.NewInt(common.NumZonesInRegion), big.NewInt(common.NumRegionsInPrime))
+	}
 	confirmationCtx := fromAddr.Location().CommonDom(*toAddr.Location()).Context()
 	multiplier := big.NewInt(common.NumZonesInRegion)
 	if confirmationCtx == common.PRIME_CTX {

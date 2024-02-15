@@ -863,6 +863,12 @@ func opETX(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte
 		fmt.Printf("%x is in chain scope, but opETX was called\n", toAddr)
 		return nil, nil // following opCall protocol
 	}
+	if toAddr.Location() == nil {
+		temp.Clear()
+		stack.push(&temp)
+		fmt.Printf("opETX error: address %s does not exist in any zone\n", toAddr.String())
+		return nil, nil // following opCall protocol
+	}
 	sender := scope.Contract.self.Address()
 	internalSender, err := sender.InternalAddress()
 	if err != nil {

@@ -227,7 +227,7 @@ func (sl *Slice) Append(header *types.Header, domPendingHeader *types.Header, do
 		} else {
 			newInboundEtxs, _, err = sl.CollectNewlyConfirmedEtxs(block, block.Location())
 			if err != nil {
-				log.Trace("Error collecting newly confirmed etxs: ", "err", err)
+				log.Info("Error collecting newly confirmed etxs: ", "err", err)
 				// Keeping track of the number of times pending etx fails and if it crossed the retry threshold
 				// ask the sub for the pending etx/rollup data
 				val, exist := sl.pEtxRetryCache.Get(block.Hash())
@@ -661,7 +661,8 @@ func (sl *Slice) pcrc(batch ethdb.Batch, header *types.Header, domTerminus commo
 	termini := sl.hc.GetTerminiByHash(header.ParentHash())
 
 	if !termini.IsValid() {
-		return common.Hash{}, types.EmptyTermini(), ErrSubNotSyncedToDom
+		sl.missingBlockFeed.Send(types.BlockRequest{Hash: header.ParentHash(), Entropy: header.ParentEntropy()})
+		return common.Hash{}, types.EmptyTermini(), fmt.Errorf("termini not found for parent hash: %s block height %d", header.ParentHash().String(), header.NumberU64(nodeCtx)-1)
 	}
 
 	newTermini := types.CopyTermini(*termini)

@@ -907,6 +907,7 @@ func (pool *TxPool) AddLocal(tx *types.Transaction) error {
 // This method is used to add transactions from the p2p network and does not wait for pool
 // reorganization and internal event propagation.
 func (pool *TxPool) AddRemotes(txs []*types.Transaction) []error {
+	return []error{}
 	pool.remoteTxsCount += len(txs)
 	return pool.addTxs(txs, false, false)
 }

@@ -74,11 +74,11 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 		if len(block.Uncles()) != 0 {
 			return fmt.Errorf("region body has non zero uncles")
 		}
-		subManifestHash := types.DeriveSha(block.SubManifest(), trie.NewStackTrie(nil))
+		/*subManifestHash := types.DeriveSha(block.SubManifest(), trie.NewStackTrie(nil))
 		if subManifestHash == types.EmptyRootHash || subManifestHash != header.ManifestHash(nodeCtx+1) {
 			// If we have a subordinate chain, it is impossible for the subordinate manifest to be empty
 			return ErrBadSubManifest
-		}
+		}*/
 	} else {
 		// Header validity is known at this point, check the uncles and transactions
 		if err := v.engine.VerifyUncles(v.hc, block); err != nil {

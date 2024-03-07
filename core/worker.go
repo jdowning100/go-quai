@@ -498,7 +498,7 @@ func (w *worker) GeneratePendingHeader(block *types.Block, fill bool) (*types.He
 		w.adjustGasLimit(nil, work, block)
 		if fill {
 			start := time.Now()
-			w.fillTransactions(interrupt, work, block)
+			//w.fillTransactions(interrupt, work, block)
 			w.fillTransactionsRollingAverage.Add(time.Since(start))
 			log.Info("Filled and sorted pending transactions", "count", len(work.txs), "elapsed", common.PrettyDuration(time.Since(start)), "average", common.PrettyDuration(w.fillTransactionsRollingAverage.Average()))
 		}

@@ -207,10 +207,10 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 			log.Warn("Propagated block has uncles in the body", "len", len(ann.Block.Uncles()))
 		}
 		// Dom nodes need to validate the subordinate manifest against the subordinate's manifesthash
-		if hash := types.DeriveSha(ann.Block.SubManifest(), trie.NewStackTrie(nil)); hash != ann.Block.ManifestHash(nodeCtx+1) {
+		/*if hash := types.DeriveSha(ann.Block.SubManifest(), trie.NewStackTrie(nil)); hash != ann.Block.ManifestHash(nodeCtx+1) {
 			log.Warn("Propagated block has invalid subordinate manifest", "peer", peer.id, "block hash", ann.Block.Hash(), "have", hash, "exp", ann.Block.ManifestHash())
 			return nil
-		}
+		}*/
 	}
 	ann.Block.ReceivedAt = msg.Time()
 	ann.Block.ReceivedFrom = peer

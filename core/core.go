@@ -134,6 +134,7 @@ func (c *Core) InsertChain(blocks types.Blocks) (int, error) {
 			}
 			newPendingEtxs, _, _, err := c.sl.Append(block.Header(), types.EmptyHeader(), common.Hash{}, false, nil)
 			c.processingCache.Remove(block.Hash())
+			log.Info("Attempted to append block", "Number:", block.Header().NumberArray(), "Hash:", block.Hash(), "err", err)
 			if err == nil {
 				// If we have a dom, send the dom any pending ETXs which will become
 				// referencable by this block. When this block is referenced in the dom's
@@ -282,6 +283,7 @@ func (c *Core) serviceBlocks(hashNumberList []types.HashAndNumber) {
 				}
 				c.addToQueueIfNotAppended(parentBlock)
 				_, err = c.InsertChain([]*types.Block{block})
+				log.Info("Attempted to insert block", "Number:", block.Header().NumberArray(), "Hash:", block.Hash(), "err", err)
 				if err != nil && err.Error() == ErrPendingBlock.Error() {
 					// Best check here would be to check the first hash in each Fork, until we do that
 					// checking the first item in the sorted hashNumberList will do
@@ -308,7 +310,7 @@ func (c *Core) RequestDomToAppendOrFetch(hash common.Hash, entropy *big.Int, ord
 		// If prime all you can do it to ask for the block
 		_, exists := c.appendQueue.Get(hash)
 		if !exists {
-			log.Debug("Block sub asked doesnt exist in append queue, so request the peers for it", "Hash", hash, "Order", order)
+			log.Info("Block sub asked doesnt exist in append queue, so request the peers for it", "Hash", hash, "Order", order)
 			block := c.GetBlockOrCandidateByHash(hash)
 			if block == nil {
 				c.sl.missingBlockFeed.Send(types.BlockRequest{Hash: hash, Entropy: entropy}) // Using the missing parent feed to ask for the block
@@ -1103,4 +1105,8 @@ func (c *Core) ContentFrom(addr common.Address) (types.Transactions, types.Trans
 		return nil, nil
 	}
 	return c.sl.txPool.ContentFrom(internal)
+}
+
+func (c *Core) SendMissingBlockEvent(request types.BlockRequest) {
+	c.sl.missingBlockFeed.Send(request)
 }

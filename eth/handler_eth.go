@@ -86,13 +86,13 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.handleBlockBroadcast(peer, packet.Block, packet.Entropy, packet.Relay)
 
 	case *eth.NewPooledTransactionHashesPacket:
-		return h.txFetcher.Notify(peer.ID(), *packet)
+		return nil //h.txFetcher.Notify(peer.ID(), *packet)
 
 	case *eth.TransactionsPacket:
-		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
+		return nil //h.txFetcher.Enqueue(peer.ID(), *packet, false)
 
 	case *eth.PooledTransactionsPacket:
-		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
+		return nil //h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
@@ -196,7 +196,10 @@ func (h *ethHandler) handleBlockBroadcast(peer *eth.Peer, block *types.Block, en
 	looseSyncEntropyDelta := new(big.Int).Div(syncEntropy, big.NewInt(100))
 	looseSyncEntropy := new(big.Int).Sub(syncEntropy, looseSyncEntropyDelta)
 	atFray := looseSyncEntropy.Cmp(h.core.CurrentHeader().ParentEntropy()) < 0
-
+	if h.core.GetBlockOrCandidateByHash(block.ParentHash()) == nil {
+		log.Info("Parent block not found, asking peers for block", "hash", block.ParentHash())
+		h.core.SendMissingBlockEvent(types.BlockRequest{Hash: block.ParentHash(), Entropy: block.ParentEntropy()})
+	}
 	// If block is greater than sync entropy, or its manifest cache, handle it
 	// If block if its in manifest cache, relay is set to true, set relay to false and handle
 	// !atFray checked because when "synced" we want to be able to check entropy against later window

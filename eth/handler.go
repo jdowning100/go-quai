@@ -45,7 +45,7 @@ const (
 	txChanSize = 4096
 
 	// missingBlockChanSize is the size of channel listening to the MissingBlockEvent
-	missingBlockChanSize = 60
+	missingBlockChanSize = 60000
 
 	// minPeerSend is the threshold for sending the block updates. If
 	// sqrt of len(peers) is less than 5 we make the block announcement
@@ -205,7 +205,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	h.blockFetcher = fetcher.NewBlockFetcher(h.core.GetBlockOrCandidateByHash, writeBlock, validator, verifySeal, h.BroadcastBlock, heighter, currentThresholdS, currentS, currentDifficulty, h.removePeer, h.core.IsBlockHashABadHash)
 
 	// Only initialize the Tx fetcher in zone
-	if nodeCtx == common.ZONE_CTX && h.core.ProcessingState() {
+	if false && nodeCtx == common.ZONE_CTX && h.core.ProcessingState() {
 		fetchTx := func(peer string, hashes []common.Hash) error {
 			p := h.peers.peer(peer)
 			if p == nil {
@@ -312,7 +312,7 @@ func (h *handler) unregisterPeer(id string) {
 
 	h.downloader.UnregisterPeer(id)
 	nodeCtx := common.NodeLocation.Context()
-	if nodeCtx == common.ZONE_CTX && h.core.ProcessingState() {
+	if false && nodeCtx == common.ZONE_CTX && h.core.ProcessingState() {
 		h.txFetcher.Drop(id)
 	}
 
@@ -503,14 +503,9 @@ func (h *handler) missingBlockLoop() {
 			rand.Shuffle(len(allPeers), func(i, j int) { allPeers[i], allPeers[j] = allPeers[j], allPeers[i] })
 
 			for _, peer := range allPeers {
-				log.Trace("Fetching the missing parent from", "peer", peer.ID(), "hash", blockRequest.Hash)
-				_, _, peerEntropy, _ := peer.Head()
-				if peerEntropy != nil {
-					if peerEntropy.Cmp(blockRequest.Entropy) > 0 {
-						peer.RequestBlockByHash(blockRequest.Hash)
-						headerRequested++
-					}
-				}
+				log.Info("Fetching the missing parent from", "peer", peer.ID(), "hash", blockRequest.Hash)
+				peer.RequestBlockByHash(blockRequest.Hash)
+				headerRequested++
 				if headerRequested == minPeerRequest {
 					break
 				}

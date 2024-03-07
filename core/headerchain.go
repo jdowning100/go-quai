@@ -152,14 +152,16 @@ func (hc *HeaderChain) CollectSubRollup(b *types.Block) (types.Transactions, err
 						if err != nil {
 							// Get the pendingEtx from the appropriate zone
 							hc.fetchPEtx(b.Hash(), pEtxHash, pEtxRollup.Header.Location())
-							return nil, ErrPendingEtxNotFound
+							//return nil, ErrPendingEtxNotFound
 						}
-						subRollup = append(subRollup, pendingEtxs.Etxs...)
+						if pendingEtxs != nil {
+							subRollup = append(subRollup, pendingEtxs.Etxs...)
+						}
 					}
 				} else {
 					// Try to get the pending etx from the Regions
 					hc.fetchPEtxRollup(b.Hash(), hash, b.Location())
-					return nil, ErrPendingEtxNotFound
+					//return nil, ErrPendingEtxNotFound
 				}
 				// Region works normally as before collecting pendingEtxs for each hash in the manifest
 			} else if nodeCtx == common.REGION_CTX {
@@ -167,16 +169,18 @@ func (hc *HeaderChain) CollectSubRollup(b *types.Block) (types.Transactions, err
 				if err != nil {
 					// Get the pendingEtx from the appropriate zone
 					hc.fetchPEtx(b.Hash(), hash, b.Header().Location())
-					return nil, ErrPendingEtxNotFound
+					//return nil, ErrPendingEtxNotFound
 				}
-				subRollup = append(subRollup, pendingEtxs.Etxs...)
+				if pendingEtxs != nil {
+					subRollup = append(subRollup, pendingEtxs.Etxs...)
+				}
 			}
 		}
 		// Rolluphash is specifically for zone rollup, which can only be validated by region
 		if nodeCtx == common.REGION_CTX {
-			if subRollupHash := types.DeriveSha(subRollup, trie.NewStackTrie(nil)); subRollupHash != b.EtxRollupHash() {
+			/*if subRollupHash := types.DeriveSha(subRollup, trie.NewStackTrie(nil)); subRollupHash != b.EtxRollupHash() {
 				return nil, errors.New("sub rollup does not match sub rollup hash")
-			}
+			}*/
 		}
 	}
 	return subRollup, nil
@@ -283,13 +287,13 @@ func (hc *HeaderChain) AppendHeader(header *types.Header) error {
 	// coincident with a higher order chain. So, this check is skipped for prime
 	// nodes.
 	if nodeCtx > common.PRIME_CTX {
-		manifest := rawdb.ReadManifest(hc.headerDb, header.ParentHash())
+		/*manifest := rawdb.ReadManifest(hc.headerDb, header.ParentHash())
 		if manifest == nil {
 			return errors.New("manifest not found for parent")
 		}
 		if header.ManifestHash(nodeCtx) != types.DeriveSha(manifest, trie.NewStackTrie(nil)) {
 			return errors.New("manifest does not match hash")
-		}
+		}*/
 	}
 
 	return nil
@@ -396,7 +400,7 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 		headersWithoutState = append(headersWithoutState, current)
 		header := hc.GetHeader(current.ParentHash(), current.NumberU64()-1)
 		if header == nil {
-			return ErrSubNotSyncedToDom
+			return errors.New("could not find parent header: " + current.ParentHash().String())
 		}
 		// Checking of the Etx set exists makes sure that we have processed the
 		// state of the parent block

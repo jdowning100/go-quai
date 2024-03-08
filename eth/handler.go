@@ -45,7 +45,7 @@ const (
 	txChanSize = 4096
 
 	// missingBlockChanSize is the size of channel listening to the MissingBlockEvent
-	missingBlockChanSize = 60000
+	missingBlockChanSize = 60
 
 	// minPeerSend is the threshold for sending the block updates. If
 	// sqrt of len(peers) is less than 5 we make the block announcement
@@ -503,9 +503,14 @@ func (h *handler) missingBlockLoop() {
 			rand.Shuffle(len(allPeers), func(i, j int) { allPeers[i], allPeers[j] = allPeers[j], allPeers[i] })
 
 			for _, peer := range allPeers {
-				log.Info("Fetching the missing parent from", "peer", peer.ID(), "hash", blockRequest.Hash)
-				peer.RequestBlockByHash(blockRequest.Hash)
-				headerRequested++
+				log.Trace("Fetching the missing parent from", "peer", peer.ID(), "hash", blockRequest.Hash)
+				_, _, peerEntropy, _ := peer.Head()
+				if peerEntropy != nil {
+					if peerEntropy.Cmp(blockRequest.Entropy) > 0 {
+						peer.RequestBlockByHash(blockRequest.Hash)
+						headerRequested++
+					}
+				}
 				if headerRequested == minPeerRequest {
 					break
 				}

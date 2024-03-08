@@ -661,8 +661,7 @@ func (sl *Slice) pcrc(batch ethdb.Batch, header *types.Header, domTerminus commo
 	termini := sl.hc.GetTerminiByHash(header.ParentHash())
 
 	if !termini.IsValid() {
-		sl.missingBlockFeed.Send(types.BlockRequest{Hash: header.ParentHash(), Entropy: header.ParentEntropy()})
-		return common.Hash{}, types.EmptyTermini(), fmt.Errorf("termini not found for parent hash: %s block height %d", header.ParentHash().String(), header.NumberU64(nodeCtx)-1)
+		return common.Hash{}, types.EmptyTermini(), ErrSubNotSyncedToDom
 	}
 
 	newTermini := types.CopyTermini(*termini)

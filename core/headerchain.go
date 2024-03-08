@@ -400,7 +400,7 @@ func (hc *HeaderChain) SetCurrentState(head *types.Header) error {
 		headersWithoutState = append(headersWithoutState, current)
 		header := hc.GetHeader(current.ParentHash(), current.NumberU64()-1)
 		if header == nil {
-			return errors.New("could not find parent header: " + current.ParentHash().String())
+			return ErrSubNotSyncedToDom
 		}
 		// Checking of the Etx set exists makes sure that we have processed the
 		// state of the parent block

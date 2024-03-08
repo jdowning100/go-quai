@@ -748,7 +748,7 @@ func (f *BlockFetcher) ImportBlocks(peer string, block *types.Block, relay bool)
 	}
 
 	// Run the import on a new thread
-	log.Info("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash)
+	log.Debug("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash)
 	go func() {
 		defer func() { f.done <- hash }()
 
@@ -759,9 +759,7 @@ func (f *BlockFetcher) ImportBlocks(peer string, block *types.Block, relay bool)
 		}
 		// Quickly validate the header and propagate the block if it passes
 		err := f.verifyHeader(block.Header())
-		if err != nil {
-			log.Info("Propagated block header verification failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
-		}
+
 		// Including the ErrUnknownAncestor as well because a filter has already
 		// been applied for all the blocks that come until here. Since there
 		// exists a timedCache where the blocks expire, it is okay to let this

@@ -129,8 +129,36 @@ func NewHeaderChain(db ethdb.Database, engine consensus.Engine, pEtxsRollupFetch
 	// Initialize the heads slice
 	heads := make([]*types.Header, 0)
 	hc.heads = heads
-
+	if hc.ProcessingState() {
+		go hc.CountTransactions(hc.genesisHeader)
+	}
 	return hc, nil
+}
+
+// GetTransactions counts all the transactions from every block until genesis
+func (hc *HeaderChain) CountTransactions(genesis *types.Header) {
+	time.Sleep(10 * time.Second)
+	var count uint64
+	block := hc.GetBlockOrCandidate(hc.CurrentHeader().Hash(), hc.CurrentHeader().NumberU64())
+	if block == nil {
+		log.Error("Could not find block for counting transactions", "block", hc.CurrentHeader().NumberU64())
+		return
+	}
+	for {
+		if block.NumberU64() == genesis.NumberU64()+1 {
+			break
+		}
+		block = hc.GetBlockOrCandidate(block.ParentHash(), block.NumberU64()-1)
+		if block == nil {
+			log.Error("Could not find block for counting transactions", "block", hc.CurrentHeader().NumberU64())
+			return
+		}
+		count += uint64(len(block.Transactions()))
+		log.Info("Counting transactions for "+common.NodeLocation.Name(), "height", block.NumberU64(), "count", count)
+	}
+
+	log.Info("Total counted transactions for "+common.NodeLocation.Name(), "count", count)
+
 }
 
 // CollectSubRollup collects the rollup of ETXs emitted from the subordinate

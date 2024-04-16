@@ -20,7 +20,6 @@ type WorkObject struct {
 	tx       *Transaction
 
 	// caches
-	size       atomic.Value
 	appendTime atomic.Value
 
 	// These fields are used to track
@@ -46,11 +45,14 @@ type WorkObjectHeader struct {
 
 type WorkObjects []*WorkObject
 
+type WorkObjectView int
+
 // Work object types
 const (
-	BlockObject = iota
+	BlockObject WorkObjectView = iota
 	TxObject
 	PEtxObject
+	HeaderObject
 	PhObject
 )
 
@@ -552,14 +554,11 @@ func CalcUncleHash(uncles []*WorkObjectHeader) common.Hash {
 /////////////////// New Object Creation Methods ////////////
 ////////////////////////////////////////////////////////////
 
-func NewWorkObject(woHeader *WorkObjectHeader, woBody *WorkObjectBody, tx *Transaction, woType int) *WorkObject {
-	switch woType {
-	default:
-		return &WorkObject{
-			woHeader: woHeader,
-			woBody:   woBody,
-			tx:       tx,
-		}
+func NewWorkObject(woHeader *WorkObjectHeader, woBody *WorkObjectBody, tx *Transaction) *WorkObject {
+	return &WorkObject{
+		woHeader: woHeader,
+		woBody:   woBody,
+		tx:       tx,
 	}
 }
 
@@ -645,10 +644,10 @@ func NewWorkObjectBody(header *Header, txs []*Transaction, etxs []*Transaction, 
 	return b, nil
 }
 
-func NewWorkObjectWithHeader(header *WorkObject, tx *Transaction, nodeCtx int, woType int) *WorkObject {
+func NewWorkObjectWithHeader(header *WorkObject, tx *Transaction, nodeCtx int, woType WorkObjectView) *WorkObject {
 	woHeader := NewWorkObjectHeader(header.Hash(), header.ParentHash(common.ZONE_CTX), header.Number(common.ZONE_CTX), header.woHeader.difficulty, header.woHeader.txHash, header.woHeader.nonce, header.woHeader.time, header.Location())
 	woBody, _ := NewWorkObjectBody(header.Body().Header(), nil, nil, nil, nil, nil, nil, nodeCtx)
-	return NewWorkObject(woHeader, woBody, tx, woType)
+	return NewWorkObject(woHeader, woBody, tx)
 }
 
 func CopyWorkObject(wo *WorkObject) *WorkObject {
@@ -672,7 +671,7 @@ func (wo *WorkObject) RPCMarshalWorkObject() map[string]interface{} {
 	return result
 }
 
-func (wo *WorkObject) ProtoEncode(woType int) (*ProtoWorkObject, error) {
+func (wo *WorkObject) ProtoEncode(woType WorkObjectView) (*ProtoWorkObject, error) {
 	switch woType {
 	case PEtxObject:
 		header, err := wo.woHeader.ProtoEncode()
@@ -715,7 +714,7 @@ func (wo *WorkObject) ProtoEncode(woType int) (*ProtoWorkObject, error) {
 	}
 }
 
-func (wo *WorkObject) ProtoDecode(data *ProtoWorkObject, location common.Location, woType int) error {
+func (wo *WorkObject) ProtoDecode(data *ProtoWorkObject, location common.Location, woType WorkObjectView) error {
 	switch woType {
 	case PEtxObject:
 		wo.woHeader = new(WorkObjectHeader)

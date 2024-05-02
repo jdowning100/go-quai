@@ -574,26 +574,28 @@ func (b *QuaiAPIBackend) SubscribeExpansionEvent(ch chan<- core.ExpansionEvent) 
 	return b.quai.core.SubscribeExpansionEvent(ch)
 }
 
-//////////////////////////////
-////////// P2P ///////////////
-//////////////////////////////
+// ////////////////////////////
+// //////// P2P ///////////////
+// ////////////////////////////
 func (b *QuaiAPIBackend) BroadcastWorkObject(wo *types.WorkObject, location common.Location) error {
-	errChan := make(chan error, 2)
+	var blockErrChan <-chan error
+	if b.ProcessingState() {
+		blockErrChan = b.quai.p2p.Broadcast(location, wo.ConvertToBlockView())
+	}
 
-	go func() {
-		err := b.quai.p2p.Broadcast(location, wo.ConvertToBlockView())
-		errChan <- err
-	}()
-
-	go func() {
-		err := b.quai.p2p.Broadcast(location, wo.ConvertToHeaderView())
-		errChan <- err
-	}()
+	headerErrChan := b.quai.p2p.Broadcast(location, wo.ConvertToHeaderView())
 
 	// Return the error if any of the broadcasts fail
 	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return err
+		select {
+		case err := <-blockErrChan:
+			if err != nil {
+				return err
+			}
+		case err := <-headerErrChan:
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

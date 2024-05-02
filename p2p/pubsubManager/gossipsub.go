@@ -157,18 +157,42 @@ func (g *PubsubManager) Unsubscribe(location common.Location, datatype interface
 	}
 }
 
-// broadcasts data to subscribing peers
-func (g *PubsubManager) Broadcast(location common.Location, datatype interface{}) error {
-	topicName, err := TopicName(g.genesis, location, datatype)
-	if err != nil {
-		return err
-	}
-	protoData, err := pb.ConvertAndMarshal(datatype)
-	if err != nil {
-		return err
-	}
-	if value, ok := g.topics.Load(topicName); ok {
-		return value.(*pubsub.Topic).Publish(g.ctx, protoData)
-	}
-	return errors.New("no topic for requested data")
+// Performs async broadcasts to subscribing peers
+func (g *PubsubManager) Broadcast(location common.Location, datatype interface{}) chan error {
+	errChan := make(chan error)
+
+	go func() {
+		defer close(errChan) // Ensure the channel is closed after operation completes.
+
+		// Generate topic name based on location and data type.
+		topicName, err := TopicName(g.genesis, location, datatype)
+		if err != nil {
+			errChan <- err
+			return
+		}
+
+		// Convert datatype to protobuf data.
+		protoData, err := pb.ConvertAndMarshal(datatype)
+		if err != nil {
+			errChan <- err
+			return
+		}
+
+		// Load the topic from the manager's topics map.
+		if value, ok := g.topics.Load(topicName); ok {
+			topic := value.(*pubsub.Topic)
+
+			// Publish the data to the topic.
+			if err := topic.Publish(g.ctx, protoData); err != nil {
+				errChan <- err
+				return
+			}
+			errChan <- nil // Send nil if there is no error.
+		} else {
+			// No topic found for the given name.
+			errChan <- errors.New("no topic for requested data")
+		}
+	}()
+
+	return errChan
 }

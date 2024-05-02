@@ -70,7 +70,7 @@ func (p *P2PNode) Unsubscribe(location common.Location, datatype interface{}) {
 	p.pubsub.Unsubscribe(location, datatype)
 }
 
-func (p *P2PNode) Broadcast(location common.Location, data interface{}) error {
+func (p *P2PNode) Broadcast(location common.Location, data interface{}) chan error {
 	return p.pubsub.Broadcast(location, data)
 }
 

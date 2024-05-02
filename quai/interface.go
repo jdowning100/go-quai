@@ -69,9 +69,9 @@ type NetworkingAPI interface {
 	Subscribe(common.Location, interface{}) error
 	Unsubscribe(common.Location, interface{})
 
-	// Method to broadcast data to the network
+	// Async method to broadcast data to the network
 	// Specify location and the data to send
-	Broadcast(common.Location, interface{}) error
+	Broadcast(common.Location, interface{}) chan error
 
 	// SetConsensusBackend sets the consensus API into the p2p interface
 	SetConsensusBackend(ConsensusAPI)

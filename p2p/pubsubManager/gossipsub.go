@@ -167,14 +167,20 @@ func (g *PubsubManager) Broadcast(location common.Location, datatype interface{}
 		// Generate topic name based on location and data type.
 		topicName, err := TopicName(g.genesis, location, datatype)
 		if err != nil {
-			errChan <- err
+			select {
+			case errChan <- err:
+			default:
+			}
 			return
 		}
 
 		// Convert datatype to protobuf data.
 		protoData, err := pb.ConvertAndMarshal(datatype)
 		if err != nil {
-			errChan <- err
+			select {
+			case errChan <- err:
+			default:
+			}
 			return
 		}
 
@@ -184,13 +190,22 @@ func (g *PubsubManager) Broadcast(location common.Location, datatype interface{}
 
 			// Publish the data to the topic.
 			if err := topic.Publish(g.ctx, protoData); err != nil {
-				errChan <- err
+				select {
+				case errChan <- err:
+				default:
+				}
 				return
 			}
-			errChan <- nil // Send nil if there is no error.
+			select {
+			case errChan <- nil: // Send nil if there is no error.
+			default:
+			}
 		} else {
 			// No topic found for the given name.
-			errChan <- errors.New("no topic for requested data")
+			select {
+			case errChan <- errors.New("no topic for requested data"):
+			default:
+			}
 		}
 	}()
 

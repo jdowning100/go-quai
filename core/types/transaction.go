@@ -28,6 +28,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/math"
+	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"google.golang.org/protobuf/proto"
 
@@ -858,14 +859,21 @@ func (s Transactions) FilterToLocation(l common.Location) Transactions {
 
 // FilterToSlice returns the subset of transactions with a 'to' address which
 // belongs to the given slice location, at or above the given minimum context
-func (s Transactions) FilterToSlice(slice common.Location, minCtx int) Transactions {
+func (s Transactions) FilterToSlice(slice common.Location) Transactions {
 	filteredList := Transactions{}
+	removed := 0
 	for _, tx := range s {
 		toChain := tx.To().Location()
-		if toChain.InSameSliceAs(slice) {
+		if toChain.Equal(slice) {
 			filteredList = append(filteredList, tx)
+		} else {
+			if slice.Equal(common.Location{0, 1}) {
+				log.Global.Infof("Removing transaction from subrollup destined to %s", toChain.Name())
+				removed++
+			}
 		}
 	}
+	log.Global.Infof("Removed transactions from subrollup len=%d %s", removed, slice)
 	return filteredList
 }
 

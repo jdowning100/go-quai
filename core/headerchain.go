@@ -174,7 +174,7 @@ func (hc *HeaderChain) CollectSubRollup(b *types.WorkObject) (types.Transactions
 					return nil, ErrPendingEtxNotFound
 				}
 				subRollup = append(subRollup, pendingEtxs.Etxs...)
-
+				hc.logger.Infof("Collected len=%d pending etxs from %s", len(pendingEtxs.Etxs), hash.String())
 			}
 		}
 		// Rolluphash is specifically for zone rollup, which can only be validated by region

@@ -785,6 +785,7 @@ func (w *worker) commitTransaction(env *environment, parent *types.WorkObject, t
 			value := tx.Value()
 			denominations := misc.FindMinDenominations(value)
 			outputIndex := uint16(0)
+			utxosToAdd := make(types.UtxoEntries, 0)
 			// Iterate over the denominations in descending order
 			for denomination := types.MaxDenomination; denomination >= 0; denomination-- {
 				// If the denomination count is zero, skip it
@@ -796,12 +797,13 @@ func (w *worker) commitTransaction(env *environment, parent *types.WorkObject, t
 						// No more gas, the rest of the denominations are lost but the tx is still valid
 						break
 					}
+					utxosToAdd = append(utxosToAdd, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), big.NewInt(0))))
 					// the ETX hash is guaranteed to be unique
-					if err := env.state.CreateUTXO(tx.Hash(), outputIndex, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), env.wo.Number(w.hc.NodeCtx())))); err != nil {
-						return nil, false, err
-					}
 					outputIndex++
 				}
+			}
+			if err := env.state.CreateUTXOs(tx.Hash(), utxosToAdd); err != nil {
+				return nil, false, err
 			}
 		} else if tx.To().IsInQuaiLedgerScope() {
 			// This includes the value and the fees
@@ -840,7 +842,7 @@ func (w *worker) commitTransaction(env *environment, parent *types.WorkObject, t
 			value := misc.QuaiToQi(primeTerminus.WorkObjectHeader(), tx.Value())
 			denominations := misc.FindMinDenominations(value)
 			outputIndex := uint16(0)
-
+			utxosToAdd := make(types.UtxoEntries, 0)
 			// Iterate over the denominations in descending order
 			for denomination := types.MaxDenomination; denomination >= 0; denomination-- {
 				// If the denomination count is zero, skip it
@@ -857,12 +859,12 @@ func (w *worker) commitTransaction(env *environment, parent *types.WorkObject, t
 						return nil, false, err
 					}
 					gasUsed += params.CallValueTransferGas
-					// the ETX hash is guaranteed to be unique
-					if err := env.state.CreateUTXO(tx.Hash(), outputIndex, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), lock))); err != nil {
-						return nil, false, err
-					}
+					utxosToAdd = append(utxosToAdd, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), lock)))
 					outputIndex++
 				}
+			}
+			if err := env.state.CreateUTXOs(tx.Hash(), utxosToAdd); err != nil {
+				return nil, false, err
 			}
 		} else {
 			// This Qi ETX should cost more gas
@@ -1601,7 +1603,7 @@ func (w *worker) processQiTx(tx *types.Transaction, env *environment, parent *ty
 	etxs := make([]*types.ExternalTx, 0)
 	totalQitOut := big.NewInt(0)
 	totalConvertQitOut := big.NewInt(0)
-	utxosCreate := make(map[types.OutPoint]*types.UtxoEntry)
+	utxosToAdd := make(types.UtxoEntries, 0)
 	conversion := false
 	var convertAddress common.Address
 	outputs := make(map[uint]uint64)
@@ -1684,10 +1686,13 @@ func (w *worker) processQiTx(tx *types.Transaction, env *environment, parent *ty
 				return fmt.Errorf("etx emitted by tx [%v] going to a slice that is not eligible to receive etx %v", tx.Hash().Hex(), *toAddr.Location())
 			}
 			etxs = append(etxs, &etxInner)
+			if txOutIdx != len(tx.TxOut())-1 {
+				utxosToAdd = append(utxosToAdd, types.NewUtxoEntry(&types.TxOut{0, common.ZeroInternal(location).Bytes(), common.Big0})) // Add a dummy UTXO to index correctly while creating
+			}
 		} else {
 			// This output creates a normal UTXO
 			utxo := types.NewUtxoEntry(&txOut)
-			utxosCreate[types.OutPoint{TxHash: tx.Hash(), Index: uint16(txOutIdx)}] = utxo
+			utxosToAdd = append(utxosToAdd, utxo)
 		}
 	}
 	// Ensure the transaction does not spend more than its inputs.
@@ -1748,12 +1753,8 @@ func (w *worker) processQiTx(tx *types.Transaction, env *environment, parent *ty
 	for _, utxo := range utxosDelete {
 		env.state.DeleteUTXO(utxo.TxHash, utxo.Index)
 	}
-	for outPoint, utxo := range utxosCreate {
-		if err := env.state.CreateUTXO(outPoint.TxHash, outPoint.Index, utxo); err != nil {
-			// This should never happen and will invalidate the block
-			log.Global.Errorf("Failed to create UTXO %032x:%d: %v", outPoint.TxHash, outPoint.Index, err)
-			return err
-		}
+	if err := env.state.CreateUTXOs(tx.Hash(), utxosToAdd); err != nil {
+		return err
 	}
 	if err := CheckDenominations(inputs, outputs); err != nil {
 		return err

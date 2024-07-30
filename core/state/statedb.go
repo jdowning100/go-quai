@@ -565,7 +565,7 @@ func (s *StateDB) GetUTXO(txHash common.Hash, outputIndex uint16) *types.UtxoEnt
 	if metrics_config.MetricsEnabled() {
 		defer func(start time.Time) { stateMetrics.WithLabelValues("GetUTXO").Add(float64(time.Since(start))) }(time.Now())
 	}
-	enc, err := s.utxoTrie.TryGet(utxoKey(txHash, outputIndex))
+	enc, err := s.utxoTrie.TryGet(txHash[:])
 	if err != nil {
 		s.setError(fmt.Errorf("getUTXO (%x) error: %v", txHash, err))
 		return nil
@@ -573,15 +573,19 @@ func (s *StateDB) GetUTXO(txHash common.Hash, outputIndex uint16) *types.UtxoEnt
 	if len(enc) == 0 {
 		return nil
 	}
-	utxo := new(types.UtxoEntry)
-	if err := rlp.DecodeBytes(enc, utxo); err != nil {
+	utxos := make(types.UtxoEntries, 0)
+	if err := rlp.DecodeBytes(enc, &utxos); err != nil {
 		s.logger.WithFields(log.Fields{
 			"hash": txHash,
 			"err":  err,
 		}).Error("Failed to decode UTXO entry")
 		return nil
 	}
-	return utxo
+	if len(utxos) <= int(outputIndex) {
+		s.logger.Errorf("UTXO entry %x has %d outputs, but requested output %d", txHash, len(utxos), outputIndex)
+		return nil
+	}
+	return utxos[outputIndex]
 }
 
 // DeleteUTXO removes the given utxo from the state trie.
@@ -590,10 +594,42 @@ func (s *StateDB) DeleteUTXO(txHash common.Hash, outputIndex uint16) {
 	if metrics_config.MetricsEnabled() {
 		defer func(start time.Time) { stateMetrics.WithLabelValues("DeleteUTXO").Add(float64(time.Since(start))) }(time.Now())
 	}
-	// Delete the utxo from the trie
-	if err := s.utxoTrie.TryDelete(utxoKey(txHash, outputIndex)); err != nil {
-		s.setError(fmt.Errorf("deleteUTXO (%x) error: %v", txHash, err))
+	enc, err := s.utxoTrie.TryGet(txHash[:])
+	if err != nil {
+		s.setError(fmt.Errorf("getUTXO (%x) error: %v", txHash, err))
+		return
 	}
+	if len(enc) == 0 {
+		s.logger.Errorf("UTXO entry %x not found", txHash)
+		return
+	}
+	utxos := make(types.UtxoEntries, 0)
+	if err := rlp.DecodeBytes(enc, &utxos); err != nil {
+		s.logger.WithFields(log.Fields{
+			"hash": txHash,
+			"err":  err,
+		}).Error("Failed to decode UTXO entry")
+		return
+	}
+	if len(utxos) <= int(outputIndex) {
+		s.logger.Errorf("UTXO entry %x has %d outputs, but requested output %d", txHash, len(utxos), outputIndex)
+		return
+	}
+	utxos = append(utxos[:outputIndex], utxos[outputIndex+1:]...) // remove element from utxos slice
+	data, err := rlp.EncodeToBytes(utxos)
+	if err != nil {
+		panic(fmt.Errorf("can't encode UTXO entry at %x: %v", txHash, err))
+	}
+	if len(utxos) > 0 {
+		if err := s.utxoTrie.TryUpdate(txHash[:], data); err != nil {
+			s.setError(fmt.Errorf("deleteUTXO (%x) error: %v", txHash, err))
+		}
+	} else {
+		if err := s.utxoTrie.TryDelete(txHash[:]); err != nil {
+			s.setError(fmt.Errorf("deleteUTXO (%x) error: %v", txHash, err))
+		}
+	}
+
 }
 
 // CreateUTXO explicitly creates a UTXO entry.
@@ -608,11 +644,59 @@ func (s *StateDB) CreateUTXO(txHash common.Hash, outputIndex uint16, utxo *types
 	if utxo.Denomination > types.MaxDenomination { // sanity check
 		return fmt.Errorf("tx %032x emits UTXO with value %d greater than max denomination", txHash, utxo.Denomination)
 	}
-	data, err := rlp.EncodeToBytes(utxo)
+
+	enc, err := s.utxoTrie.TryGet(txHash[:])
+	if err != nil {
+		s.setError(fmt.Errorf("getUTXO (%x) error: %v", txHash, err))
+		return err
+	}
+
+	if len(enc) == 0 {
+		utxos := make(types.UtxoEntries, 0)
+		utxos = append(utxos, utxo)
+		data, err := rlp.EncodeToBytes(utxos)
+		if err != nil {
+			panic(fmt.Errorf("can't encode UTXO entry at %x: %v", txHash, err))
+		}
+		if err := s.utxoTrie.TryUpdate(txHash[:], data); err != nil {
+			s.setError(fmt.Errorf("createUTXO (%x) error: %v", txHash, err))
+			return err
+		}
+		return nil
+	}
+	utxos := make(types.UtxoEntries, 0)
+	if err := rlp.DecodeBytes(enc, &utxos); err != nil {
+		s.logger.WithFields(log.Fields{
+			"hash": txHash,
+			"err":  err,
+		}).Error("Failed to decode UTXO entry")
+		return err
+	}
+	if len(utxos) > int(outputIndex) {
+		return fmt.Errorf("UTXO entry %x already has output %d", txHash, outputIndex)
+	}
+	utxos = append(utxos, utxo)
+
+	data, err := rlp.EncodeToBytes(utxos)
 	if err != nil {
 		panic(fmt.Errorf("can't encode UTXO entry at %x: %v", txHash, err))
 	}
-	if err := s.utxoTrie.TryUpdate(utxoKey(txHash, outputIndex), data); err != nil {
+	if err := s.utxoTrie.TryUpdate(txHash[:], data); err != nil {
+		s.setError(fmt.Errorf("createUTXO (%x) error: %v", txHash, err))
+	}
+	return nil
+}
+
+// CreateUTXO explicitly creates a UTXO entry.
+func (s *StateDB) CreateUTXOs(txHash common.Hash, utxos types.UtxoEntries) error {
+	if metrics_config.MetricsEnabled() {
+		defer func(start time.Time) { stateMetrics.WithLabelValues("CreateUTXO").Add(float64(time.Since(start))) }(time.Now())
+	}
+	data, err := rlp.EncodeToBytes(utxos)
+	if err != nil {
+		panic(fmt.Errorf("can't encode UTXO entry at %x: %v", txHash, err))
+	}
+	if err := s.utxoTrie.TryUpdate(txHash[:], data); err != nil {
 		s.setError(fmt.Errorf("createUTXO (%x) error: %v", txHash, err))
 	}
 	return nil

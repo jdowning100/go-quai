@@ -322,7 +322,7 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 			if _, ok := senders[tx.Hash()]; ok {
 				checkSig = false
 			}
-			fees, etxs, err := ProcessQiTx(tx, p.hc, true, checkSig, header, statedb, gp, usedGas, p.hc.pool.signer, p.hc.NodeLocation(), *p.config.ChainID, &etxRLimit, &etxPLimit)
+			fees, etxs, err := ProcessQiTx(tx, p.hc, checkSig, header, statedb, gp, usedGas, p.hc.pool.signer, p.hc.NodeLocation(), *p.config.ChainID, &etxRLimit, &etxPLimit)
 			if err != nil {
 				return nil, nil, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
@@ -385,6 +385,7 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 					value := tx.Value()
 					denominations := misc.FindMinDenominations(value)
 					outputIndex := uint16(0)
+					utxosToAdd := make(types.UtxoEntries, 0)
 					// Iterate over the denominations in descending order
 					for denomination := types.MaxDenomination; denomination >= 0; denomination-- {
 						// If the denomination count is zero, skip it
@@ -396,13 +397,14 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 								// No more gas, the rest of the denominations are lost but the tx is still valid
 								break
 							}
-							// the ETX hash is guaranteed to be unique
-							if err := statedb.CreateUTXO(etx.Hash(), outputIndex, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), block.Number(nodeCtx)))); err != nil {
-								return nil, nil, nil, nil, 0, err
-							}
+							utxosToAdd = append(utxosToAdd, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), big.NewInt(0))))
 							p.logger.Debugf("Creating UTXO for coinbase %032x with denomination %d index %d\n", tx.Hash(), denomination, outputIndex)
 							outputIndex++
 						}
+					}
+					// Add the UTXOs to the UTXO set
+					if err := statedb.CreateUTXOs(etx.Hash(), utxosToAdd); err != nil {
+						return nil, nil, nil, nil, 0, err
 					}
 				} else if tx.To().IsInQuaiLedgerScope() {
 					// This includes the value and the fees
@@ -430,6 +432,7 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 					totalEtxGas += params.TxGas
 					denominations := misc.FindMinDenominations(value)
 					outputIndex := uint16(0)
+					utxosToAdd := make(types.UtxoEntries, 0)
 					// Iterate over the denominations in descending order
 					for denomination := types.MaxDenomination; denomination >= 0; denomination-- {
 						// If the denomination count is zero, skip it
@@ -447,13 +450,14 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 							}
 							*usedGas += params.CallValueTransferGas    // In the future we may want to determine what a fair gas cost is
 							totalEtxGas += params.CallValueTransferGas // In the future we may want to determine what a fair gas cost is
-							// the ETX hash is guaranteed to be unique
-							if err := statedb.CreateUTXO(etx.Hash(), outputIndex, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), etx.To().Bytes(), lock))); err != nil {
-								return nil, nil, nil, nil, 0, err
-							}
+							utxosToAdd = append(utxosToAdd, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), etx.To().Bytes(), lock)))
 							p.logger.Infof("Converting Quai to Qi %032x with denomination %d index %d lock %d\n", tx.Hash(), denomination, outputIndex, lock)
 							outputIndex++
 						}
+					}
+					// Add the UTXOs to the UTXO set
+					if err := statedb.CreateUTXOs(etx.Hash(), utxosToAdd); err != nil {
+						return nil, nil, nil, nil, 0, err
 					}
 				} else {
 					// There are no more checks to be made as the ETX is worked so add it to the set
@@ -868,7 +872,7 @@ func ValidateQiTxOutputsAndSignature(tx *types.Transaction, chain ChainContext, 
 // ProcessQiTx processes a QiTx by spending the inputs and creating the outputs.
 // Math is performed to verify the fee provided is sufficient to cover the gas cost.
 // updateState is set to update the statedb in the case of the state processor, but not in the case of the txpool.
-func ProcessQiTx(tx *types.Transaction, chain ChainContext, updateState bool, checkSig bool, currentHeader *types.WorkObject, statedb *state.StateDB, gp *types.GasPool, usedGas *uint64, signer types.Signer, location common.Location, chainId big.Int, etxRLimit, etxPLimit *int) (*big.Int, []*types.ExternalTx, error) {
+func ProcessQiTx(tx *types.Transaction, chain ChainContext, checkSig bool, currentHeader *types.WorkObject, statedb *state.StateDB, gp *types.GasPool, usedGas *uint64, signer types.Signer, location common.Location, chainId big.Int, etxRLimit, etxPLimit *int) (*big.Int, []*types.ExternalTx, error) {
 	// Sanity checks
 	if tx == nil || tx.Type() != types.QiTxType {
 		return nil, nil, fmt.Errorf("tx %032x is not a QiTx", tx.Hash())
@@ -930,14 +934,13 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, updateState bool, ch
 		}
 		totalQitIn.Add(totalQitIn, types.Denominations[denomination])
 		inputs[uint(denomination)]++
-		if updateState { // only update the state if requested (txpool check does not need to update the state)
-			statedb.DeleteUTXO(txIn.PreviousOutPoint.TxHash, txIn.PreviousOutPoint.Index)
-		}
+		statedb.DeleteUTXO(txIn.PreviousOutPoint.TxHash, txIn.PreviousOutPoint.Index)
 	}
 	var ETXRCount int
 	var ETXPCount int
 	etxs := make([]*types.ExternalTx, 0)
 	outputs := make(map[uint]uint64)
+	utxosToAdd := make(types.UtxoEntries, 0)
 	totalQitOut := big.NewInt(0)
 	totalConvertQitOut := big.NewInt(0)
 	conversion := false
@@ -1014,14 +1017,13 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, updateState bool, ch
 				return nil, nil, err
 			}
 			etxs = append(etxs, &etxInner)
+			if txOutIdx != len(tx.TxOut())-1 {
+				utxosToAdd = append(utxosToAdd, types.NewUtxoEntry(&types.TxOut{0, common.ZeroInternal(location).Bytes(), common.Big0})) // Add a dummy UTXO to index correctly while creating
+			}
 		} else {
 			// This output creates a normal UTXO
 			utxo := types.NewUtxoEntry(&txOut)
-			if updateState {
-				if err := statedb.CreateUTXO(tx.Hash(), uint16(txOutIdx), utxo); err != nil {
-					return nil, nil, err
-				}
-			}
+			utxosToAdd = append(utxosToAdd, utxo)
 		}
 	}
 	// Ensure the transaction does not spend more than its inputs.
@@ -1090,6 +1092,9 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, updateState bool, ch
 		if !tx.GetSchnorrSignature().Verify(txDigestHash[:], finalKey) {
 			return nil, nil, errors.New("invalid signature for digest hash " + txDigestHash.String())
 		}
+	}
+	if err := statedb.CreateUTXOs(tx.Hash(), utxosToAdd); err != nil {
+		return nil, nil, err
 	}
 
 	*etxRLimit -= ETXRCount

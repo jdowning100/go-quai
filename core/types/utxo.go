@@ -265,6 +265,8 @@ func (entry *UtxoEntry) Clone() *UtxoEntry {
 	}
 }
 
+type UtxoEntries []*UtxoEntry
+
 // NewUtxoEntry returns a new UtxoEntry built from the arguments.
 func NewUtxoEntry(txOut *TxOut) *UtxoEntry {
 	return &UtxoEntry{

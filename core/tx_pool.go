@@ -672,7 +672,13 @@ func (pool *TxPool) TxPoolPending(enforceTips bool) (map[common.AddressBytes]typ
 		// If the miner requests tip enforcement, cap the lists now
 		if enforceTips && !pool.locals.contains(addr) {
 			for i, tx := range txs {
-				if tx.EffectiveGasTipIntCmp(pool.gasPrice, pool.priced.urgent.baseFee) < 0 {
+				maxFee := tx.GasFeeCap()
+				minerTip := tx.GasTipCap()
+				if maxFee.Cmp(minerTip) < 0 {
+					txs = txs[:i]
+					break
+				}
+				if maxFee.Sub(maxFee, minerTip).Cmp(pool.priced.urgent.baseFee) < 0 { // maxFee - minerTip < baseFee
 					pool.logger.WithFields(log.Fields{
 						"tx":           tx.Hash().String(),
 						"gasTipCap":    tx.GasTipCap().String(),

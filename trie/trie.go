@@ -64,7 +64,7 @@ type Trie struct {
 	// hashing operation. This number will not directly map to the number of
 	// actually unhashed nodes
 	unhashed int
-	stales   []node
+	stales   map[common.Hash]node
 	hasher   *hasher
 }
 
@@ -86,7 +86,7 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 	trie := &Trie{
 		db:     db,
 		hasher: newHasher(true),
-		stales: make([]node, 0),
+		stales: make(map[common.Hash]node),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
@@ -300,7 +300,14 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 				return false, n, err
 			}
 			if dirty && virgin {
-				t.stales = append(t.stales, old)
+				hash := old.flags.hash
+				if hash != nil {
+					t.addToStales(common.Hash(hash), old)
+				} else {
+					hash, _ := t.hasher.hash(old, true)
+					t.addToStales(common.Hash(hash.(hashNode)), old)
+				}
+
 			}
 			return true, &shortNode{n.Key, nn, t.newFlag()}, nil
 		}
@@ -318,7 +325,13 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 			return false, nil, err
 		}
 		if (dirty || dirty2) && virgin {
-			t.stales = append(t.stales, old)
+			hash := old.flags.hash
+			if hash != nil {
+				t.addToStales(common.Hash(hash), old)
+			} else {
+				hash, _ := t.hasher.hash(old, true)
+				t.addToStales(common.Hash(hash.(hashNode)), old)
+			}
 		}
 		// Replace this shortNode with the branch if it occurs at index 0.
 		if matchlen == 0 {
@@ -338,7 +351,13 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 			return false, n, err
 		}
 		if dirty && virgin {
-			t.stales = append(t.stales, old)
+			hash := old.flags.hash
+			if hash != nil {
+				t.addToStales(common.Hash(hash), old)
+			} else {
+				hash, _ := t.hasher.hash(old, true)
+				t.addToStales(common.Hash(hash.(hashNode)), old)
+			}
 		}
 		n = n.copy()
 		n.flags = t.newFlag()
@@ -362,7 +381,7 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 			return false, rn, err
 		}
 		if dirty {
-			t.stales = append(t.stales, old)
+			t.addToStales(common.Hash(old), old)
 		}
 		return true, nn, nil
 
@@ -418,7 +437,13 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 			return false, n, err
 		}
 		if dirty && virgin {
-			t.stales = append(t.stales, old)
+			hash := old.flags.hash
+			if hash != nil {
+				t.addToStales(common.Hash(hash), old)
+			} else {
+				hash, _ := t.hasher.hash(old, true)
+				t.addToStales(common.Hash(hash.(hashNode)), old)
+			}
 		}
 		switch child := child.(type) {
 		case *shortNode:
@@ -444,7 +469,13 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 			return false, n, err
 		}
 		if dirty && virgin {
-			t.stales = append(t.stales, old)
+			hash := old.flags.hash
+			if hash != nil {
+				t.addToStales(common.Hash(hash), old)
+			} else {
+				hash, _ := t.hasher.hash(old, true)
+				t.addToStales(common.Hash(hash.(hashNode)), old)
+			}
 		}
 		n = n.copy()
 		n.flags = t.newFlag()
@@ -522,7 +553,7 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 			return false, rn, err
 		}
 		if dirty {
-			t.stales = append(t.stales, old)
+			t.addToStales(common.Hash(old), old)
 		}
 		return true, nn, nil
 
@@ -641,23 +672,21 @@ func (t *Trie) Copy() *Trie {
 func (t *Trie) Stales() []*common.Hash {
 	t.db.Logger().Infof("Stales len %d", len(t.stales))
 	hashes := make([]*common.Hash, 0, len(t.stales))
-	for _, n := range t.stales {
+	for hash, n := range t.stales {
 		switch node := (n).(type) {
 		case *shortNode:
-			shortNodeHash, _ := t.hasher.hash(node, true)
-			hash := common.BytesToHash(shortNodeHash.(hashNode))
-			hashes = append(hashes, &hash)
+			h := hash
+			hashes = append(hashes, &h)
 			t.db.Logger().Infof("Adding to stales: shortNode %x", hash)
 
 		case *fullNode:
-			fullNodeHash, _ := t.hasher.hash(node, true)
-			hash := common.BytesToHash(fullNodeHash.(hashNode))
-			hashes = append(hashes, &hash)
+			h := hash
+			hashes = append(hashes, &h)
 			t.db.Logger().Infof("Adding to stales: fullNode %x", hash)
 
 		case hashNode:
-			hash := common.BytesToHash(node)
-			hashes = append(hashes, &hash)
+			h := hash
+			hashes = append(hashes, &h)
 			t.db.Logger().Infof("Adding to stales: hashNode %x", hash)
 
 		default:
@@ -665,4 +694,12 @@ func (t *Trie) Stales() []*common.Hash {
 		}
 	}
 	return hashes
+}
+
+func (t *Trie) addToStales(hash common.Hash, n node) {
+	if _, exists := t.stales[hash]; exists {
+		delete(t.stales, hash)
+	} else {
+		t.stales[hash] = n
+	}
 }

@@ -1330,5 +1330,5 @@ func (s *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (addre
 func utxoKey(hash common.Hash, index uint16) []byte {
 	indexBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(indexBytes, index)
-	return append(indexBytes, hash.Bytes()...)
+	return append(hash.Bytes()[:30], indexBytes...)
 }

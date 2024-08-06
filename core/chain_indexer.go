@@ -305,6 +305,7 @@ func (c *ChainIndexer) PruneStaleUTXOs(blockHeight uint64) {
 	blockHash := rawdb.ReadCanonicalHash(c.chainDb, blockHeight)
 	stales := rawdb.ReadUTXOStales(c.chainDb, blockHash)
 	for _, stale := range stales {
+		c.logger.Infof("Pruning stale utxo trie  block %d node %s", blockHeight, stale.String())
 		if err := c.chainDb.Delete(stale.Bytes()); err != nil {
 			c.logger.Error("Failed to delete stale utxo trie node", "err", err)
 		}

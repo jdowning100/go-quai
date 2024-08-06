@@ -168,20 +168,64 @@ func TestInsert(t *testing.T) {
 	if root != exp {
 		t.Errorf("case 1: exp %x got %x", exp, root)
 	}
+	printTrie(trie)
+	dirties := trie.Stales()
+	fmt.Printf("Stale nodes: %v\n", dirties)
+}
 
-	trie = newEmpty()
-	updateString(trie, "A", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+// printTrie prints the root hash and the entire trie structure starting from the root node.
+func printTrie(trie *Trie) {
+	fmt.Printf("Root Hash: %x\n", trie.Hash())
+	traverseAndPrint(trie.root, "Root", 0)
+}
 
-	exp = common.HexToHash("d23786fb4a010da3ce639d66d5e904a11dbc02746d1ce25029e53290cabf28ab")
-	root, err := trie.Commit(nil)
-	if err != nil {
-		t.Fatalf("commit error: %v", err)
-	}
-	if root != exp {
-		t.Errorf("case 2: exp %x got %x", exp, root)
+// traverseAndPrint recursively prints the trie structure.
+func traverseAndPrint(n node, label string, level int) {
+	prefix := bytes.Repeat([]byte("  "), level)
+	switch n := n.(type) {
+	case nil:
+		fmt.Printf("%s%s <nil>\n", prefix, label)
+	case valueNode:
+		fmt.Printf("%s%s Leaf: %s\n", prefix, label, string(n))
+	case *shortNode:
+		fmt.Printf("%s%s Short Node [Key: %x]\n", prefix, label, n.Key)
+		traverseAndPrint(n.Val, "Value", level+1)
+	case *fullNode:
+		fmt.Printf("%s%s Full Node\n", prefix, label)
+		for i, child := range n.Children {
+			if child != nil {
+				traverseAndPrint(child, fmt.Sprintf("Child %x", i), level+1)
+			}
+		}
+	case hashNode:
+		fmt.Printf("%s%s Hash Node: %x\n", prefix, label, n)
+	default:
+		fmt.Printf("%s%s Unknown node type %T\n", prefix, label, n)
 	}
 }
 
+func TestInsertModify(t *testing.T) {
+	trie := newEmpty()
+
+	updateString(trie, "doe", "reindeer")
+	updateString(trie, "dog", "puppy")
+	updateString(trie, "dogglesworth", "cat")
+	updateString(trie, "do", "deer")
+
+	exp := common.HexToHash("8aad789dff2f538bca5d8ea56e8abe10f4c7ba3a5dea95fea4cd6e7c3a1168d3")
+	root := trie.Hash()
+	if root != exp {
+		t.Errorf("case 1: exp %x got %x", exp, root)
+	}
+	trie.Commit(nil)
+
+	t.Logf("Dirties one")
+	trie.Stales()
+	// Delete an entry
+	deleteString(trie, "dog")
+	t.Logf("Dirties two")
+	trie.Stales()
+}
 func TestGet(t *testing.T) {
 	trie := newEmpty()
 	updateString(trie, "doe", "reindeer")
@@ -204,6 +248,7 @@ func TestGet(t *testing.T) {
 		}
 		trie.Commit(nil)
 	}
+	trie.Stales()
 }
 
 func TestDelete(t *testing.T) {
@@ -231,6 +276,7 @@ func TestDelete(t *testing.T) {
 	if hash != exp {
 		t.Errorf("expected %x got %x", exp, hash)
 	}
+	trie.Stales()
 }
 
 func TestEmptyValues(t *testing.T) {

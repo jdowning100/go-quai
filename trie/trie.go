@@ -642,25 +642,24 @@ func (t *Trie) Stales() []*common.Hash {
 	t.db.Logger().Infof("Stales len %d", len(t.stales))
 	hashes := make([]*common.Hash, 0, len(t.stales))
 	for _, n := range t.stales {
-		if cachedHash, _ := n.cache(); cachedHash != nil {
-			hash := common.BytesToHash(cachedHash)
-			hashes = append(hashes, &hash)
-			continue
-		}
 		switch node := (n).(type) {
 		case *shortNode:
 			shortNodeHash, _ := t.hasher.hash(node, true)
 			hash := common.BytesToHash(shortNodeHash.(hashNode))
 			hashes = append(hashes, &hash)
+			t.db.Logger().Infof("Adding to stales: shortNode %x", hash)
 
 		case *fullNode:
 			fullNodeHash, _ := t.hasher.hash(node, true)
 			hash := common.BytesToHash(fullNodeHash.(hashNode))
 			hashes = append(hashes, &hash)
+			t.db.Logger().Infof("Adding to stales: fullNode %x", hash)
 
 		case hashNode:
 			hash := common.BytesToHash(node)
 			hashes = append(hashes, &hash)
+			t.db.Logger().Infof("Adding to stales: hashNode %x", hash)
+
 		default:
 			t.db.Logger().Errorf("Node type %T", node)
 		}

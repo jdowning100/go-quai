@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"sync"
 	"time"
 
@@ -412,6 +413,8 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 							}
 							// the ETX hash is guaranteed to be unique
 							if err := statedb.CreateUTXO(etx.Hash(), outputIndex, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), tx.To().Bytes(), block.Number(nodeCtx)))); err != nil {
+								statedb.Database().Logger().Error("Failed to create coinbase UTXO", "input", tx.TxIn()[0].PreviousOutPoint.TxHash, "output", tx.Hash(), "error", err)
+								os.Exit(1)
 								return nil, nil, nil, nil, 0, err
 							}
 							p.logger.Debugf("Creating UTXO for coinbase %032x with denomination %d index %d\n", tx.Hash(), denomination, outputIndex)
@@ -465,6 +468,8 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 							totalEtxGas += params.CallValueTransferGas // In the future we may want to determine what a fair gas cost is
 							// the ETX hash is guaranteed to be unique
 							if err := statedb.CreateUTXO(etx.Hash(), outputIndex, types.NewUtxoEntry(types.NewTxOut(uint8(denomination), etx.To().Bytes(), lock))); err != nil {
+								statedb.Database().Logger().Error("Failed to create conversion UTXO", "input", tx.TxIn()[0].PreviousOutPoint.TxHash, "output", tx.Hash(), "error", err)
+								os.Exit(1)
 								return nil, nil, nil, nil, 0, err
 							}
 							p.logger.Infof("Converting Quai to Qi %032x with denomination %d index %d lock %d\n", tx.Hash(), denomination, outputIndex, lock)
@@ -474,6 +479,8 @@ func (p *StateProcessor) Process(block *types.WorkObject) (types.Receipts, []*ty
 				} else {
 					// There are no more checks to be made as the ETX is worked so add it to the set
 					if err := statedb.CreateUTXO(etx.OriginatingTxHash(), etx.ETXIndex(), types.NewUtxoEntry(types.NewTxOut(uint8(etx.Value().Uint64()), etx.To().Bytes(), big.NewInt(0)))); err != nil {
+						statedb.Database().Logger().Error("Failed to create ETX UTXO", "input", tx.TxIn()[0].PreviousOutPoint.TxHash, "output", tx.Hash(), "error", err)
+						os.Exit(1)
 						return nil, nil, nil, nil, 0, err
 					}
 					// This Qi ETX should cost more gas
@@ -1057,7 +1064,11 @@ func ProcessQiTx(tx *types.Transaction, chain ChainContext, updateState bool, ch
 			utxo := types.NewUtxoEntry(&txOut)
 			if updateState {
 				if err := statedb.CreateUTXO(tx.Hash(), uint16(txOutIdx), utxo); err != nil {
+					statedb.Database().Logger().Error("Failed to create UTXO", "input", tx.TxIn()[0].PreviousOutPoint.TxHash, "output", tx.Hash(), "error", err)
+					os.Exit(1)
 					return nil, nil, err, nil
+				} else {
+					statedb.Database().Logger().Debug("Created UTXO", "input", tx.TxIn()[0].PreviousOutPoint.TxHash, "output", tx.Hash())
 				}
 			}
 		}

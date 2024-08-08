@@ -698,7 +698,7 @@ func (t *Trie) Stales() []*common.Hash {
 
 func (t *Trie) addToStales(hash common.Hash, n node) {
 	if _, exists := t.stales[hash]; exists {
-		delete(t.stales, hash)
+		return
 	} else {
 		t.stales[hash] = n
 	}

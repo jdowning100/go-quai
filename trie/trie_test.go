@@ -19,6 +19,7 @@ package trie
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/dominant-strategies/go-quai/common"
+	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/crypto"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/ethdb/leveldb"
@@ -156,8 +158,15 @@ func testMissingNode(t *testing.T, memonly bool) {
 	}
 }
 
+var Hasher = newHasher(true)
+
 func TestInsert(t *testing.T) {
-	trie := newEmpty()
+	db := memorydb.New(log.Global)
+	trieDb := NewDatabase(db)
+	trie, err := New(emptyRoot, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
 
 	updateString(trie, "doe", "reindeer")
 	updateString(trie, "dog", "puppy")
@@ -168,9 +177,56 @@ func TestInsert(t *testing.T) {
 	if root != exp {
 		t.Errorf("case 1: exp %x got %x", exp, root)
 	}
+
+	root = commitAndDeleteStales(t, trie, trieDb, db)
+	trie, err = New(root, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	deleteString(trie, "dog")
+
+	root = commitAndDeleteStales(t, trie, trieDb, db)
+	trie, err = New(root, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	updateString(trie, "dog", "puppy")
+
+	root = commitAndDeleteStales(t, trie, trieDb, db)
+	trie, err = New(root, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+	updateString(trie, "de", "deer")
+
+	root = commitAndDeleteStales(t, trie, trieDb, db)
+	trie, err = New(root, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+
+}
+
+func commitAndDeleteStales(t *testing.T, trie *Trie, trieDb *Database, db ethdb.KeyValueStore) (root common.Hash) {
 	printTrie(trie)
+	root, err := trie.Commit(nil)
+	if err != nil {
+		t.Fatalf("commit error: %v", err)
+	}
+	err = trieDb.Commit(root, true, nil)
+	if err != nil {
+		t.Fatalf("commit error: %v", err)
+	}
+
 	dirties := trie.Stales()
-	fmt.Printf("Stale nodes: %v\n", dirties)
+	for _, dirty := range dirties {
+		db.Delete(dirty.Bytes())
+	}
+	fmt.Printf("Stale nodes: %d\n", len(dirties))
+	return root
 }
 
 // printTrie prints the root hash and the entire trie structure starting from the root node.
@@ -182,26 +238,155 @@ func printTrie(trie *Trie) {
 // traverseAndPrint recursively prints the trie structure.
 func traverseAndPrint(n node, label string, level int) {
 	prefix := bytes.Repeat([]byte("  "), level)
+	hash, _ := Hasher.hash(n, true)
 	switch n := n.(type) {
 	case nil:
 		fmt.Printf("%s%s <nil>\n", prefix, label)
 	case valueNode:
 		fmt.Printf("%s%s Leaf: %s\n", prefix, label, string(n))
 	case *shortNode:
-		fmt.Printf("%s%s Short Node [Key: %x]\n", prefix, label, n.Key)
+		fmt.Printf("%s%s Short Node [Key: %x] Hash: %x\n", prefix, label, n.Key, common.Hash(hash.(hashNode)))
 		traverseAndPrint(n.Val, "Value", level+1)
 	case *fullNode:
-		fmt.Printf("%s%s Full Node\n", prefix, label)
+		fmt.Printf("%s%s Full Node Hash: %x\n", prefix, label, common.Hash(hash.(hashNode)))
 		for i, child := range n.Children {
 			if child != nil {
-				traverseAndPrint(child, fmt.Sprintf("Child %x", i), level+1)
+				traverseAndPrint(child, fmt.Sprintf("Child %d", i), level+1)
 			}
 		}
 	case hashNode:
-		fmt.Printf("%s%s Hash Node: %x\n", prefix, label, n)
+		fmt.Printf("%s%s Hash Node: %x Hash: %x\n", prefix, label, n, common.Hash(n))
 	default:
 		fmt.Printf("%s%s Unknown node type %T\n", prefix, label, n)
 	}
+}
+
+func TestGenAllocs(t *testing.T) {
+	db := memorydb.New(log.Global)
+	trieDb := NewDatabase(db)
+	trie, err := New(emptyRoot, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+	outpoints := LoadGenAllocs(t, trie)
+	root := commitAndDeleteStales(t, trie, trieDb, db)
+	trie, err = New(root, trieDb)
+	if err != nil {
+		t.Fatalf("New error: %v", err)
+	}
+	for address, output := range outpoints {
+		data, err := trie.TryGet(utxoKey(output.TxHash, output.Index))
+		if err != nil {
+			t.Fatalf("expected utxo for %s", address)
+		}
+		if data == nil {
+			t.Errorf("expected utxo for %s", address)
+		}
+		utxo := new(types.UtxoEntry)
+		if err := rlp.DecodeBytes(data, utxo); err != nil {
+			log.Global.WithFields(log.Fields{
+				"hash": output.TxHash,
+				"err":  err,
+			}).Fatal("Failed to decode UTXO entry")
+			return
+		}
+		if !bytes.Equal(utxo.Address, common.HexToAddress(address, common.Location{0, 0}).Bytes()) {
+			t.Fatalf("expected denomination %d for %s, got %d", output.Denomination, address, utxo.Denomination)
+		}
+		if err = trie.TryDelete(utxoKey(output.TxHash, output.Index)); err != nil {
+			t.Fatalf("failed to delete UTXO entry: %v", err)
+		}
+		randomBytes := make([]byte, 32)
+		_, err = rand.Read(randomBytes)
+		if err = trie.TryUpdate(utxoKey(common.Hash(randomBytes), 0), data); err != nil {
+			t.Fatalf("failed to create UTXO entry: %v", err)
+		}
+		root := commitAndDeleteStales(t, trie, trieDb, db)
+		trie, err = New(root, trieDb)
+		if err != nil {
+			t.Fatalf("New error: %v", err)
+		}
+	}
+}
+
+func LoadGenAllocs(t *testing.T, trie *Trie) map[string]*types.OutpointAndDenomination {
+	nodeLocation := common.Location{0, 0}
+	addressOutpointMap := make(map[string]*types.OutpointAndDenomination)
+	qiAlloc := ReadGenesisQiAlloc("../genallocs/gen_alloc_qi_cyprus1.json", log.Global)
+	log.Global.WithField("alloc", len(qiAlloc)).Info("Allocating genesis accounts")
+	for addressString, utxo := range qiAlloc {
+		addr := common.HexToAddress(addressString, nodeLocation)
+		internal, err := addr.InternalAddress()
+		if err != nil {
+			panic("Provided address in genesis block is out of scope")
+		}
+
+		hash := common.HexToHash(utxo.Hash)
+
+		// check if utxo.Denomination is less than uint8
+		if utxo.Denomination > 255 {
+			panic("Provided denomination is larger than uint8")
+		}
+
+		newUtxo := &types.UtxoEntry{
+			Address:      internal.Bytes(),
+			Denomination: uint8(utxo.Denomination),
+		}
+
+		data, err := rlp.EncodeToBytes(newUtxo)
+		if err != nil {
+			panic(fmt.Errorf("can't encode UTXO entry at %x: %v", hash, err))
+		}
+		if err := trie.TryUpdate(utxoKey(hash, uint16(utxo.Index)), data); err != nil {
+			t.Fatal(err)
+		}
+
+		outpointAndDenomination := &types.OutpointAndDenomination{
+			TxHash:       hash,
+			Index:        uint16(utxo.Index),
+			Denomination: uint8(utxo.Denomination),
+		}
+		addressOutpointMap[addr.Hex()] = outpointAndDenomination
+	}
+	return addressOutpointMap
+}
+
+func ReadGenesisQiAlloc(filename string, logger *log.Logger) map[string]GenesisUTXO {
+	jsonFile, err := os.Open(filename)
+	if err != nil {
+		logger.Error(err.Error())
+		return nil
+	}
+	defer jsonFile.Close()
+	// Read the file contents
+	byteValue, err := ioutil.ReadAll(jsonFile)
+	if err != nil {
+		logger.Error(err.Error())
+		return nil
+	}
+
+	// Parse the JSON data
+	var data map[string]GenesisUTXO
+	err = json.Unmarshal(byteValue, &data)
+	if err != nil {
+		logger.Error(err.Error())
+		return nil
+	}
+
+	// Use the parsed data
+	return data
+}
+
+type GenesisUTXO struct {
+	Denomination uint32 `json:"denomination"`
+	Index        uint32 `json:"index"`
+	Hash         string `json:"hash"`
+}
+
+func utxoKey(hash common.Hash, index uint16) []byte {
+	indexBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(indexBytes, index)
+	return append(hash.Bytes()[:30], indexBytes...)
 }
 
 func TestInsertModify(t *testing.T) {

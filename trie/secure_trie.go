@@ -83,6 +83,10 @@ func (t *SecureTrie) TryGetNode(path []byte) ([]byte, int, error) {
 	return t.trie.TryGetNode(path)
 }
 
+func (t *SecureTrie) TryGetNodeWithHexEncoding(path []byte) ([]byte, int, error) {
+	return t.trie.TryGetNodeWithHexEncoding(path)
+}
+
 // Update associates key with value in the trie. Subsequent calls to
 // Get will return value. If value has length zero, any existing value
 // is deleted from the trie and calls to Get will return nil.
@@ -199,6 +203,10 @@ func (t *SecureTrie) getSecKeyCache() map[string][]byte {
 	return t.secKeyCache
 }
 
-func (t *SecureTrie) Stales() []*common.Hash {
+func (t *SecureTrie) Stales() map[common.Hash][]byte {
 	return t.trie.Stales()
+}
+
+func (t *SecureTrie) GetCachedNodeHash() common.Hash {
+	return t.trie.GetCachedNodeHash()
 }

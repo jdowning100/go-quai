@@ -58,14 +58,17 @@ type LeafCallback func(paths [][]byte, hexpath []byte, leaf []byte, parent commo
 //
 // Trie is not safe for concurrent use.
 type Trie struct {
-	db   *Database
-	root node
+	db      *Database
+	root    node
+	oldRoot common.Hash
 	// Keep track of the number leafs which have been inserted since the last
 	// hashing operation. This number will not directly map to the number of
 	// actually unhashed nodes
-	unhashed int
-	stales   map[common.Hash]node
-	hasher   *hasher
+	unhashed   int
+	stales     map[common.Hash]node
+	paths      map[common.Hash][]byte
+	cachedNode node
+	hasher     *hasher
 }
 
 // newFlag returns the cache flag value for a newly created node.
@@ -87,6 +90,7 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 		db:     db,
 		hasher: newHasher(true),
 		stales: make(map[common.Hash]node),
+		paths:  make(map[common.Hash][]byte),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
@@ -177,6 +181,17 @@ func (t *Trie) TryGetNode(path []byte) ([]byte, int, error) {
 	return item, resolved, err
 }
 
+func (t *Trie) TryGetNodeWithHexEncoding(path []byte) ([]byte, int, error) {
+	item, _, resolved, err := t.tryGetNode(t.root, path, 0)
+	if err != nil {
+		return nil, resolved, err
+	}
+	if item == nil {
+		return nil, resolved, nil
+	}
+	return item, resolved, err
+}
+
 func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, newnode node, resolved int, err error) {
 	// If we reached the requested path, return the current node
 	if pos >= len(path) {
@@ -193,6 +208,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
 		blob, err := t.db.Node(common.BytesToHash(hash))
+		t.cachedNode = origNode
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -208,6 +224,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 	case *shortNode:
 		if len(path)-pos < len(n.Key) || !bytes.Equal(n.Key, path[pos:pos+len(n.Key)]) {
 			// Path branches off from short node
+			t.cachedNode = n
 			return nil, n, 0, nil
 		}
 		item, newnode, resolved, err = t.tryGetNode(n.Val, path, pos+len(n.Key))
@@ -302,9 +319,11 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 			if dirty && virgin {
 				hash := old.flags.hash
 				if hash != nil {
+					t.paths[common.Hash(hash)] = prefix
 					t.addToStales(common.Hash(hash), old)
 				} else {
 					hash, _ := t.hasher.hash(old, true)
+					t.paths[common.Hash(hash.(hashNode))] = prefix
 					t.addToStales(common.Hash(hash.(hashNode)), old)
 				}
 
@@ -327,9 +346,11 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 		if (dirty || dirty2) && virgin {
 			hash := old.flags.hash
 			if hash != nil {
+				t.paths[common.Hash(hash)] = append(prefix, key...)
 				t.addToStales(common.Hash(hash), old)
 			} else {
 				hash, _ := t.hasher.hash(old, true)
+				t.paths[common.Hash(hash.(hashNode))] = append(prefix, key...)
 				t.addToStales(common.Hash(hash.(hashNode)), old)
 			}
 		}
@@ -353,9 +374,11 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 		if dirty && virgin {
 			hash := old.flags.hash
 			if hash != nil {
+				t.paths[common.Hash(hash)] = prefix
 				t.addToStales(common.Hash(hash), old)
 			} else {
 				hash, _ := t.hasher.hash(old, true)
+				t.paths[common.Hash(hash.(hashNode))] = prefix
 				t.addToStales(common.Hash(hash.(hashNode)), old)
 			}
 		}
@@ -381,6 +404,7 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 			return false, rn, err
 		}
 		if dirty {
+			t.paths[common.Hash(old)] = prefix
 			t.addToStales(common.Hash(old), old)
 		}
 		return true, nn, nil
@@ -439,9 +463,11 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 		if dirty && virgin {
 			hash := old.flags.hash
 			if hash != nil {
+				t.paths[common.Hash(hash)] = prefix
 				t.addToStales(common.Hash(hash), old)
 			} else {
 				hash, _ := t.hasher.hash(old, true)
+				t.paths[common.Hash(hash.(hashNode))] = prefix
 				t.addToStales(common.Hash(hash.(hashNode)), old)
 			}
 		}
@@ -471,9 +497,11 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 		if dirty && virgin {
 			hash := old.flags.hash
 			if hash != nil {
+				t.paths[common.Hash(hash)] = prefix
 				t.addToStales(common.Hash(hash), old)
 			} else {
 				hash, _ := t.hasher.hash(old, true)
+				t.paths[common.Hash(hash.(hashNode))] = prefix
 				t.addToStales(common.Hash(hash.(hashNode)), old)
 			}
 		}
@@ -553,6 +581,7 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 			return false, rn, err
 		}
 		if dirty {
+			t.paths[common.Hash(old)] = prefix
 			t.addToStales(common.Hash(old), old)
 		}
 		return true, nn, nil
@@ -669,31 +698,95 @@ func (t *Trie) Copy() *Trie {
 	return &cpy
 }
 
-func (t *Trie) Stales() []*common.Hash {
+func (t *Trie) Stales() map[common.Hash][]byte {
 	t.db.Logger().Infof("Stales len %d", len(t.stales))
 	hashes := make([]*common.Hash, 0, len(t.stales))
+	paths := make(map[common.Hash][]byte)
 	for hash, n := range t.stales {
 		switch node := (n).(type) {
 		case *shortNode:
 			h := hash
 			hashes = append(hashes, &h)
+			paths[hash] = t.paths[hash]
+			/*trie, err := New(t.oldRoot, t.db)
+			if err != nil {
+				t.db.Logger().Errorf("Error creating trie: %v", err)
+				return nil
+			}
+			//val, node_, resolved_, err := trie.tryGetNode(trie.root, t.paths[hash], 0)
+			//t.db.Logger().Infof("Adding to stales: shortNode %x %x %v %v %v", hash, val, node_, resolved_, err)
+			if trie.cachedNode != nil {
+				cachedNodeHash, _ := trie.hasher.hash(trie.cachedNode, true)
+				if hash != common.Hash(cachedNodeHash.(hashNode)) {
+					t.db.Logger().Errorf("Cached nodes not equal: %+v %+v, %T", cachedNodeHash, hash, trie.cachedNode)
+				}
+				//t.db.Logger().Infof("Cached node: %+v, %T", cachedNodeHash, trie.cachedNode)
+			}
+			val, node_, resolved_, err = t.tryGetNode(t.root, t.paths[hash], 0)
+			if t.cachedNode != nil {
+				cachedNodeHash, _ := t.hasher.hash(t.cachedNode, true)
+				t.db.Logger().Infof("Cached node: %+v, %T", cachedNodeHash, t.cachedNode)
+			}
+			//t.db.Logger().Infof("New to stales: shortNode %x %x %v %v %v", hash, val, node_, resolved_, err)*/
 			t.db.Logger().Infof("Adding to stales: shortNode %x", hash)
 
 		case *fullNode:
 			h := hash
 			hashes = append(hashes, &h)
+			paths[hash] = t.paths[hash]
+			/*trie, err := New(t.oldRoot, t.db)
+			if err != nil {
+				t.db.Logger().Errorf("Error creating trie: %v", err)
+				return nil
+			}
+			//val, node_, resolved_, err := trie.tryGetNode(trie.root, t.paths[hash], 0)
+			//t.db.Logger().Infof("Adding to stales: fullNode %x %x %v %v %v", hash, val, node_, resolved_, err)
+			if trie.cachedNode != nil {
+				cachedNodeHash, _ := trie.hasher.hash(trie.cachedNode, true)
+				if hash != common.Hash(cachedNodeHash.(hashNode)) {
+					t.db.Logger().Errorf("Cached nodes not equal: %+v %+v, %T", cachedNodeHash, hash, trie.cachedNode)
+				}
+				t.db.Logger().Infof("Cached node: %+v, %T", cachedNodeHash, trie.cachedNode)
+			}
+			val, node_, resolved_, err =  t.tryGetNode(t.root, t.paths[hash], 0)
+			if t.cachedNode != nil {
+				cachedNodeHash, _ := t.hasher.hash(t.cachedNode, true)
+				t.db.Logger().Infof("Cached node: %+v, %T", cachedNodeHash, t.cachedNode)
+			}
+			//t.db.Logger().Infof("Adding to stales: fullNode %x %x %v %v %v", hash, val, node_, resolved_, err)*/
 			t.db.Logger().Infof("Adding to stales: fullNode %x", hash)
 
 		case hashNode:
 			h := hash
 			hashes = append(hashes, &h)
+			/*trie, err := New(t.oldRoot, t.db)
+			if err != nil {
+				t.db.Logger().Errorf("Error creating trie: %v", err)
+				return nil
+			}
+			val, node_, resolved_, err := trie.tryGetNode(trie.root, t.paths[hash], 0)
+			t.db.Logger().Infof("Adding to stales: hashNode %x %x %v %v %v", hash, val, node_, resolved_, err)
+			if trie.cachedNode != nil {
+				cachedNodeHash, _ := trie.hasher.hash(trie.cachedNode, true)
+				if hash != common.Hash(cachedNodeHash.(hashNode)) {
+					t.db.Logger().Errorf("Cached nodes not equal: %+v %+v, %T", cachedNodeHash, hash, trie.cachedNode)
+				}
+				t.db.Logger().Infof("Cached node: %+v, %T", cachedNodeHash, trie.cachedNode)
+			}
+			val, node_, resolved_, err = t.tryGetNode(t.root, t.paths[hash], 0)
+			if t.cachedNode != nil {
+				cachedNodeHash, _ := t.hasher.hash(t.cachedNode, true)
+				t.db.Logger().Infof("Cached node: %+v, %T", cachedNodeHash, t.cachedNode)
+			}
+			t.db.Logger().Infof("Adding to stales: hashNode %x %x %v %v %v", hash, val, node_, resolved_, err)*/
+
 			t.db.Logger().Infof("Adding to stales: hashNode %x", hash)
 
 		default:
 			t.db.Logger().Errorf("Node type %T", node)
 		}
 	}
-	return hashes
+	return paths
 }
 
 func (t *Trie) addToStales(hash common.Hash, n node) {
@@ -702,4 +795,12 @@ func (t *Trie) addToStales(hash common.Hash, n node) {
 	} else {
 		t.stales[hash] = n
 	}
+}
+
+func (t *Trie) GetCachedNodeHash() common.Hash {
+	if t.cachedNode == nil {
+		return common.Hash{}
+	}
+	hash, _ := t.hasher.hash(t.cachedNode, true)
+	return common.Hash(hash.(hashNode))
 }

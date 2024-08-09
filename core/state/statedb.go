@@ -633,7 +633,17 @@ func (s *StateDB) CommitUTXOs() (common.Hash, error) {
 	return root, err
 }
 
-func (s *StateDB) UTXOStales() []*common.Hash {
+func (s *StateDB) GetNodeHash(path []byte) common.Hash {
+	_, _, err := s.utxoTrie.TryGetNodeWithHexEncoding(path)
+	if err != nil {
+		s.setError(fmt.Errorf("TryGetNodeWithHexEncoding error: %v", err))
+		return common.Hash{}
+	}
+
+	return s.utxoTrie.GetCachedNodeHash()
+}
+
+func (s *StateDB) UTXOStales() map[common.Hash][]byte {
 	return s.utxoTrie.Stales()
 }
 

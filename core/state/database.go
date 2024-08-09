@@ -82,6 +82,10 @@ type Trie interface {
 	// database, a trie.MissingNodeError is returned.
 	TryUpdate(key, value []byte) error
 
+	TryGetNodeWithHexEncoding(path []byte) ([]byte, int, error)
+
+	GetCachedNodeHash() common.Hash
+
 	// TryDelete removes any existing value for key from the trie. If a node was not
 	// found in the database, a trie.MissingNodeError is returned.
 	TryDelete(key []byte) error
@@ -107,7 +111,7 @@ type Trie interface {
 	// with the node that proves the absence of the key.
 	Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWriter) error
 
-	Stales() []*common.Hash
+	Stales() map[common.Hash][]byte
 }
 
 // NewDatabase creates a backing store for state. The returned database is safe for

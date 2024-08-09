@@ -240,7 +240,7 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 			return
 		case block := <-qiIndexerCh:
 			if block.NumberU64(nodeCtx) > PruneDepth {
-				c.PruneStaleUTXOs(block.NumberU64(nodeCtx) - PruneDepth)
+				c.PruneStaleUTXOs(block.NumberU64(nodeCtx)-PruneDepth, block)
 			}
 			var validUtxoIndex bool
 			var addressOutpoints map[string]map[string]*types.OutpointAndDenomination
@@ -301,12 +301,22 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 	}
 }
 
-func (c *ChainIndexer) PruneStaleUTXOs(blockHeight uint64) {
+func (c *ChainIndexer) PruneStaleUTXOs(blockHeight uint64, block *types.WorkObject) {
 	blockHash := rawdb.ReadCanonicalHash(c.chainDb, blockHeight)
 	stales := rawdb.ReadUTXOStales(c.chainDb, blockHash)
-	for _, stale := range stales {
-		c.logger.Infof("Pruning stale utxo trie  block %d node %s", blockHeight, stale.String())
-		if err := c.chainDb.Delete(stale.Bytes()); err != nil {
+	currentState, err := c.StateAt(block.EVMRoot(), block.UTXORoot(), block.EtxSetRoot())
+	if err != nil {
+		c.logger.Error("Failed to get state at block ", " err ", err)
+	}
+	for hash, path := range stales {
+		currentStateHash := currentState.GetNodeHash(path)
+		if currentStateHash == hash {
+			c.logger.Fatal("Stale utxo trie node is still in the current state trie!!!", " hash ", hash.String())
+		} else if hash == (common.Hash{}) {
+			continue
+		}
+		c.logger.Infof("Pruning stale utxo trie  block %d node %s", blockHeight, hash.String())
+		if err := c.chainDb.Delete(hash.Bytes()); err != nil {
 			c.logger.Error("Failed to delete stale utxo trie node", "err", err)
 		}
 	}

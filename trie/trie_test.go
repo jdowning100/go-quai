@@ -178,31 +178,36 @@ func TestInsert(t *testing.T) {
 		t.Errorf("case 1: exp %x got %x", exp, root)
 	}
 
-	root = commitAndDeleteStales(t, trie, trieDb, db)
+	root = commitAndDeleteStales(t, trie, trieDb, db, root)
 	trie, err = New(root, trieDb)
 	if err != nil {
 		t.Fatalf("New error: %v", err)
 	}
 
 	deleteString(trie, "dog")
-
-	root = commitAndDeleteStales(t, trie, trieDb, db)
+	root = commitAndDeleteStales(t, trie, trieDb, db, root)
 	trie, err = New(root, trieDb)
 	if err != nil {
 		t.Fatalf("New error: %v", err)
 	}
 
 	updateString(trie, "dog", "puppy")
+	updateString(trie, "de", "deer")
 
-	root = commitAndDeleteStales(t, trie, trieDb, db)
+	root = commitAndDeleteStales(t, trie, trieDb, db, root)
 	trie, err = New(root, trieDb)
 	if err != nil {
 		t.Fatalf("New error: %v", err)
 	}
 
+	deleteString(trie, "de")
+	updateString(trie, "doggo", "puppy")
 	updateString(trie, "de", "deer")
+	updateString(trie, "do", "deer")
+	updateString(trie, "dogglesworth", "cat2")
+	updateString(trie, "quai", "qi")
 
-	root = commitAndDeleteStales(t, trie, trieDb, db)
+	root = commitAndDeleteStales(t, trie, trieDb, db, root)
 	trie, err = New(root, trieDb)
 	if err != nil {
 		t.Fatalf("New error: %v", err)
@@ -210,8 +215,9 @@ func TestInsert(t *testing.T) {
 
 }
 
-func commitAndDeleteStales(t *testing.T, trie *Trie, trieDb *Database, db ethdb.KeyValueStore) (root common.Hash) {
-	printTrie(trie)
+func commitAndDeleteStales(t *testing.T, trie *Trie, trieDb *Database, db ethdb.KeyValueStore, oldRoot common.Hash) (root common.Hash) {
+	trie.oldRoot = oldRoot
+	//printTrie(trie)
 	root, err := trie.Commit(nil)
 	if err != nil {
 		t.Fatalf("commit error: %v", err)
@@ -269,7 +275,7 @@ func TestGenAllocs(t *testing.T) {
 		t.Fatalf("New error: %v", err)
 	}
 	outpoints := LoadGenAllocs(t, trie)
-	root := commitAndDeleteStales(t, trie, trieDb, db)
+	root := commitAndDeleteStales(t, trie, trieDb, db, emptyRoot)
 	trie, err = New(root, trieDb)
 	if err != nil {
 		t.Fatalf("New error: %v", err)
@@ -296,12 +302,14 @@ func TestGenAllocs(t *testing.T) {
 		if err = trie.TryDelete(utxoKey(output.TxHash, output.Index)); err != nil {
 			t.Fatalf("failed to delete UTXO entry: %v", err)
 		}
-		randomBytes := make([]byte, 32)
-		_, err = rand.Read(randomBytes)
-		if err = trie.TryUpdate(utxoKey(common.Hash(randomBytes), 0), data); err != nil {
-			t.Fatalf("failed to create UTXO entry: %v", err)
+		for i := 0; i < 100; i++ {
+			randomBytes := make([]byte, 32)
+			_, err = rand.Read(randomBytes)
+			if err = trie.TryUpdate(utxoKey(common.Hash(randomBytes), 0), data); err != nil {
+				t.Fatalf("failed to create UTXO entry: %v", err)
+			}
 		}
-		root := commitAndDeleteStales(t, trie, trieDb, db)
+		root = commitAndDeleteStales(t, trie, trieDb, db, root)
 		trie, err = New(root, trieDb)
 		if err != nil {
 			t.Fatalf("New error: %v", err)

@@ -200,3 +200,11 @@ message ProtoAddressOutPoints {
 message ProtoOutPointsMap {
   map<string, ProtoAddressOutPoints> entries = 1;
 }
+
+message StaleWithPath {
+  common.ProtoHash hash = 1;
+  bytes path = 2;
+}
+message ProtoStalesMap {
+  repeated StaleWithPath stales = 1;
+}

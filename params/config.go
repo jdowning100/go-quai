@@ -28,9 +28,9 @@ var (
 	// Progpow GenesisHashes
 	ProgpowColosseumGenesisHash  = common.HexToHash("0x079e89a92bbd044ee6d981d0644c9da1dc960e72d90df212c77e8b9cd12f9ecd")
 	ProgpowGardenGenesisHash     = common.HexToHash("0xa4f23733a64776e5d6cd4a37e6ffdfd3ac6b078ec28d03fd8120d48a008b7b4b")
-	ProgpowOrchardGenesisHash    = common.HexToHash("0xa4f23733a64776e5d6cd4a37e6ffdfd3ac6b078ec28d03fd8120d48a008b7b4b")
+	ProgpowOrchardGenesisHash    = common.HexToHash("0xff2eab3d027ef7acc0579212753f9e46477610795d7adf80ef07903c333e2822")
 	ProgpowLighthouseGenesisHash = common.HexToHash("0x6a5e86275011865c578343aeecc9f8e789109d0158a2840c9a089baa1f340415")
-	ProgpowLocalGenesisHash      = common.HexToHash("0x901999d492a4aa4fe5ff4a149a06a0c8e3a47c042377df1ed44f05ededcd82ef")
+	ProgpowLocalGenesisHash      = common.HexToHash("0x481287996ca0828178e85f0a6b0fbcdcd819b737f151b85bd184cfea1626dd38")
 
 	// Blake3GenesisHashes
 	Blake3PowColosseumGenesisHash  = common.HexToHash("0x9d5a5146ba57f1230118bddc23e99bcc193c780fc3766d58d9e14f096481c215")
@@ -150,7 +150,7 @@ func (c *Blake3powConfig) String() string {
 // ProgpowConfig is the consensus engine configs for proof-of-work based sealing.
 type ProgpowConfig struct{}
 
-// String implements the stringer interface, returning the consensus engine details.
+// String implements the stringer interface, retur1f12874ee84fcb901a933fff4b51881ddd42a8184fb61885a8dec6f9dc4d8b33ning the consensus engine details.
 func (c *ProgpowConfig) String() string {
 	return "progpow"
 }

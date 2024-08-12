@@ -311,6 +311,11 @@ func FuzzHeaderQuaiStateSize(f *testing.F) {
 		func(h *Header, bi *big.Int) { h.quaiStateSize = bi })
 >>>>>>> d46da8ab (Added QuaiStateSize field into the header and computing it)
 }
+func FuzzHeaderQuaiStateSize(f *testing.F) {
+	fuzzHeaderBigIntHash(f,
+		func(h *Header) *big.Int { return h.quaiStateSize },
+		func(h *Header, bi *big.Int) { h.quaiStateSize = bi })
+}
 func FuzzHeaderExtraHash(f *testing.F) {
 	header, _ := headerTestData()
 	f.Add(testByte)

@@ -131,7 +131,7 @@ func Execute(code, input []byte, cfg *Config) ([]byte, *state.StateDB, error) {
 	// set the receiver's (the executing contract) code for execution.
 	cfg.State.SetCode(internal, code)
 	// Call the code with the given configuration.
-	ret, _, err := vmenv.Call(
+	ret, _, _, err := vmenv.Call(
 		sender,
 		common.BytesToAddress([]byte("contract"), cfg.ChainConfig.Location),
 		input,
@@ -175,13 +175,13 @@ func Create(input []byte, cfg *Config) ([]byte, common.Address, uint64, error) {
 //
 // Call, unlike Execute, requires a config and also requires the State field to
 // be set.
-func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, error) {
+func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, uint64, error) {
 	setDefaults(cfg)
 
 	vmenv := NewEnv(cfg)
 	_, err := cfg.Origin.InternalAndQuaiAddress()
 	if err != nil {
-		return []byte{}, 0, err
+		return []byte{}, 0, 0, err
 	}
 
 	statedb := cfg.State
@@ -190,7 +190,7 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, er
 	statedb.PrepareAccessList(cfg.Origin, &address, vm.ActivePrecompiles(rules, cfg.ChainConfig.Location), nil)
 
 	// Call the code with the given configuration.
-	ret, leftOverGas, err := vmenv.Call(
+	ret, leftOverGas, stateGas, err := vmenv.Call(
 		vm.AccountRef(cfg.Origin),
 		address,
 		input,
@@ -198,5 +198,5 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, er
 		cfg.Value,
 		cfg.Lock,
 	)
-	return ret, leftOverGas, err
+	return ret, leftOverGas, stateGas, err
 }

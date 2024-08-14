@@ -684,7 +684,7 @@ func opCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byt
 		bigVal = value.ToBig()
 	}
 
-	ret, returnGas, err := interpreter.evm.Call(scope.Contract, toAddr, args, gas, bigVal, nil)
+	ret, returnGas, stateGas, err := interpreter.evm.Call(scope.Contract, toAddr, args, gas, bigVal, nil)
 
 	if err != nil {
 		temp.Clear()
@@ -699,6 +699,7 @@ func opCall(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byt
 		return nil, err
 	}
 	scope.Contract.Gas += returnGas
+	scope.Contract.StateGas += stateGas
 
 	return ret, nil
 }

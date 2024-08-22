@@ -335,7 +335,6 @@ func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
 	rawdb.DeletePendingEtxsRollup(c.chainDb, blockHash)
 	rawdb.DeleteManifest(c.chainDb, blockHash)
 	rawdb.DeletePbCacheBody(c.chainDb, blockHash)
-	rawdb.DeletePendingHeader(c.chainDb, blockHash)
 	rawdb.DeleteSpentUTXOs(c.chainDb, blockHash)
 	rawdb.DeleteCreatedUTXOKeys(c.chainDb, blockHash)
 }

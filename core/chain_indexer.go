@@ -323,6 +323,11 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 				}
 			}
 
+			for key, _ := range addressOutpoints {
+				addressOutpoints[key] = nil
+			}
+			addressOutpoints = nil
+
 			prevHeader, prevHash = block, block.Hash()
 		}
 	}

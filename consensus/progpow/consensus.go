@@ -17,6 +17,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/state"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
+	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/multiset"
 	"github.com/dominant-strategies/go-quai/params"
@@ -643,10 +644,11 @@ func (progpow *Progpow) Prepare(chain consensus.ChainHeaderReader, header *types
 
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards,
 // setting the final state on the header
-func (progpow *Progpow) Finalize(chain consensus.ChainHeaderReader, header *types.WorkObject, state *state.StateDB, setRoots bool, utxosCreate, utxosDelete []common.Hash) *multiset.MultiSet {
+func (progpow *Progpow) Finalize(chain consensus.ChainHeaderReader, batch ethdb.Batch, header *types.WorkObject, state *state.StateDB, setRoots bool, utxosCreate, utxosDelete []common.Hash) (*multiset.MultiSet, uint64) {
 	nodeLocation := progpow.NodeLocation()
 	nodeCtx := progpow.NodeLocation().Context()
 	var multiSet *multiset.MultiSet
+	var utxoSetSize uint64
 	if nodeCtx == common.ZONE_CTX && chain.IsGenesisHash(header.ParentHash(nodeCtx)) {
 		multiSet = multiset.New()
 		// Create the lockup contract account
@@ -684,6 +686,7 @@ func (progpow *Progpow) Finalize(chain consensus.ChainHeaderReader, header *type
 		}
 	} else {
 		multiSet = rawdb.ReadMultiSet(chain.Database(), header.ParentHash(nodeCtx))
+		utxoSetSize = rawdb.ReadUTXOSetSize(chain.Database(), header.ParentHash(nodeCtx))
 	}
 	if multiSet == nil {
 		progpow.logger.Fatalf("Multiset is nil for block %s", header.ParentHash(nodeCtx).String())
@@ -694,13 +697,21 @@ func (progpow *Progpow) Finalize(chain consensus.ChainHeaderReader, header *type
 	for _, hash := range utxosDelete {
 		multiSet.Remove(hash.Bytes())
 	}
+	if utxoSetSize < uint64(len(utxosDelete)) {
+		progpow.logger.WithFields(log.Fields{
+			"utxoSetSize": utxoSetSize,
+			"utxosDelete": len(utxosDelete),
+		}).Fatal("UTXO set size is less than the number of utxos to delete. This is a bug.")
+	}
+	utxoSetSize += uint64(len(utxosCreate))
+	utxoSetSize -= uint64(len(utxosDelete))
 	if setRoots {
 		header.Header().SetUTXORoot(multiSet.Hash())
 		header.Header().SetEVMRoot(state.IntermediateRoot(true))
 		header.Header().SetEtxSetRoot(state.ETXRoot())
 		header.Header().SetQuaiStateSize(state.GetQuaiTrieSize())
 	}
-	return multiSet
+	return multiSet, utxoSetSize
 }
 
 // FinalizeAndAssemble implements consensus.Engine, accumulating the block and
@@ -709,7 +720,7 @@ func (progpow *Progpow) FinalizeAndAssemble(chain consensus.ChainHeaderReader, h
 	nodeCtx := progpow.config.NodeLocation.Context()
 	if nodeCtx == common.ZONE_CTX && chain.ProcessingState() {
 		// Finalize block
-		progpow.Finalize(chain, header, state, true, utxosCreate, utxosDelete)
+		progpow.Finalize(chain, nil, header, state, true, utxosCreate, utxosDelete)
 	}
 
 	woBody, err := types.NewWorkObjectBody(header.Header(), txs, etxs, uncles, subManifest, receipts, trie.NewStackTrie(nil), nodeCtx)

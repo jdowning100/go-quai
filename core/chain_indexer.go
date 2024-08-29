@@ -405,17 +405,23 @@ func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
 	}
 	rawdb.WritePrunedUTXOKeys(c.chainDb, blockHeight, createdUtxosToKeep)
 	rawdb.DeleteCreatedUTXOKeys(c.chainDb, blockHash)
+	tutxos, _ := rawdb.ReadTrimmedUTXOs(c.chainDb, blockHash)
 	sutxos, err := rawdb.ReadSpentUTXOs(c.chainDb, blockHash)
 	if err != nil {
 		c.logger.Error("Failed to read spent utxos", "err", err)
 	} else {
-		select {
-		case c.utxoKeyPrunerChan <- sutxos:
-		default:
-			c.logger.Warn("utxoKeyPrunerChan is full, dropping spent utxos")
+		sutxos = append(sutxos, tutxos...)
+		if len(sutxos) > 0 {
+			select {
+			case c.utxoKeyPrunerChan <- sutxos:
+			default:
+				c.logger.Warn("utxoKeyPrunerChan is full, dropping spent utxos")
+			}
 		}
 	}
 	rawdb.DeleteSpentUTXOs(c.chainDb, blockHash)
+	rawdb.DeleteTrimmedUTXOs(c.chainDb, blockHash)
+	rawdb.DeleteTrimDepths(c.chainDb, blockHash)
 }
 
 func (c *ChainIndexer) UTXOKeyPruner() {
@@ -439,7 +445,7 @@ func (c *ChainIndexer) UTXOKeyPruner() {
 				key := rawdb.UtxoKey(spentUtxo.TxHash, spentUtxo.Index)
 				for i := 0; i < len(utxoKeys); i++ {
 					if compareMinLength(utxoKeys[i], key) {
-						// Remove the element by shifting the slice to the left
+						// Remove the key by shifting the slice to the left
 						utxoKeys = append(utxoKeys[:i], utxoKeys[i+1:]...)
 						break
 					} else {

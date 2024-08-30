@@ -45,15 +45,15 @@ func init() {
 	Denominations[16] = big.NewInt(1000000000) // 1000000 Qi
 
 	TrimDepths = make(map[uint8]uint64)
-	TrimDepths[0] = 200
-	TrimDepths[1] = 500
-	TrimDepths[2] = 600
-	TrimDepths[3] = 700
-	TrimDepths[4] = 800
-	TrimDepths[5] = 900
-	TrimDepths[6] = 1000
-	TrimDepths[7] = 1100
-	TrimDepths[8] = 1200
+	TrimDepths[0] = 100
+	TrimDepths[1] = 200
+	TrimDepths[2] = 300
+	TrimDepths[3] = 400
+	TrimDepths[4] = 500
+	TrimDepths[5] = 600
+	TrimDepths[6] = 700
+	TrimDepths[7] = 800
+	TrimDepths[8] = 900
 }
 
 type TxIns []TxIn

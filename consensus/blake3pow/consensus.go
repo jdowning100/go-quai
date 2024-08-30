@@ -359,6 +359,10 @@ func (blake3pow *Blake3pow) verifyHeader(chain consensus.ChainHeaderReader, head
 				return fmt.Errorf("invalid threshold count: have %v, want %v", header.ThresholdCount(), 0)
 			}
 			genesisHeader := chain.GetHeaderByNumber(0)
+			if genesisHeader == nil {
+				blake3pow.logger.WithField("stacktrace", string(debug.Stack())).Error("Genesis header not found")
+				return fmt.Errorf("genesis header not found")
+			}
 			if header.ExpansionNumber() != genesisHeader.ExpansionNumber() {
 				return fmt.Errorf("invalid expansion number: have %v, want %v", header.ExpansionNumber(), genesisHeader.ExpansionNumber())
 			}
@@ -672,7 +676,7 @@ func (blake3pow *Blake3pow) Finalize(chain consensus.ChainHeaderReader, batch et
 			TrimBlock(chain, batch, true, denomination, header.NumberU64(nodeCtx)-depth, nextBlockToTrim, &utxosDelete, &trimmedUtxos, &utxoSetSize, !setRoots, blake3pow.logger) // setRoots is false when we are processing the block
 		}
 	}
-	blake3pow.logger.Infof("Trimmed %d UTXOs in %s", len(trimmedUtxos), common.PrettyDuration(time.Since(start)))
+	blake3pow.logger.Infof("Trimmed %d UTXOs from db in %s", len(trimmedUtxos), common.PrettyDuration(time.Since(start)))
 	if !setRoots {
 		rawdb.WriteTrimmedUTXOs(batch, header.Hash(), trimmedUtxos)
 	}
@@ -682,7 +686,7 @@ func (blake3pow *Blake3pow) Finalize(chain consensus.ChainHeaderReader, batch et
 	for _, hash := range utxosDelete {
 		multiSet.Remove(hash.Bytes())
 	}
-	blake3pow.logger.Infof("Parent hash: %s, header hash: %s, muhash: %s, block height: %d, setroots: %t, UtxosCreated: %d, UtxosDeleted: %d, UTXO Set Size: %d", header.ParentHash(nodeCtx).String(), header.Hash().String(), multiSet.Hash().String(), header.NumberU64(nodeCtx), setRoots, len(utxosCreate), len(utxosDelete), utxoSetSize)
+	blake3pow.logger.Infof("Parent hash: %s, header hash: %s, muhash: %s, block height: %d, setroots: %t, UtxosCreated: %d, UtxosDeleted: %d, UTXOs Trimmed from DB: %d, UTXO Set Size: %d", header.ParentHash(nodeCtx).String(), header.Hash().String(), multiSet.Hash().String(), header.NumberU64(nodeCtx), setRoots, len(utxosCreate), len(utxosDelete), len(trimmedUtxos), utxoSetSize)
 
 	if utxoSetSize < uint64(len(utxosDelete)) {
 		blake3pow.logger.WithFields(log.Fields{
@@ -757,6 +761,7 @@ func TrimBlock(chain consensus.ChainHeaderReader, batch ethdb.Batch, checkDenomi
 	for txHash, utxoEntries := range utxos {
 		blockNumberForTx := rawdb.ReadTxLookupEntry(chain.Database(), txHash)
 		if blockNumberForTx != nil && *blockNumberForTx != blockHeight { // collision, wrong tx
+			logger.Infof("Collision: tx %s was created in block %d, but is in block %d", txHash.String(), *blockNumberForTx, blockHeight)
 			continue
 		}
 		for _, utxo := range utxoEntries {

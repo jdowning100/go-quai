@@ -36,7 +36,6 @@ import (
 	"github.com/dominant-strategies/go-quai/event"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
-	"google.golang.org/protobuf/proto"
 )
 
 var PruneDepth = uint64(1000000) // Number of blocks behind in which we begin pruning old block data
@@ -383,7 +382,7 @@ func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
 	createdUtxos, _ := rawdb.ReadCreatedUTXOKeys(c.chainDb, blockHash)
 	createdUtxosToKeep := make([][]byte, 0, len(createdUtxos))
 	for _, key := range createdUtxos {
-		data, _ := c.chainDb.Get(key)
+		/*data, _ := c.chainDb.Get(key)
 		if len(data) == 0 {
 			// Don't keep it if it doesn't exist
 			continue
@@ -398,14 +397,14 @@ func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
 		if err := utxo.ProtoDecode(utxoProto); err != nil {
 			// Don't keep it if it can't be decoded into UtxoEntry
 			continue
-		}
+		}*/
 		// Reduce key size to 8 bytes
 		key = key[:8]
 		createdUtxosToKeep = append(createdUtxosToKeep, key)
 	}
 	rawdb.WritePrunedUTXOKeys(c.chainDb, blockHeight, createdUtxosToKeep)
 	rawdb.DeleteCreatedUTXOKeys(c.chainDb, blockHash)
-	tutxos, _ := rawdb.ReadTrimmedUTXOs(c.chainDb, blockHash)
+	/*tutxos, _ := rawdb.ReadTrimmedUTXOs(c.chainDb, blockHash)
 	sutxos, err := rawdb.ReadSpentUTXOs(c.chainDb, blockHash)
 	if err != nil {
 		c.logger.Error("Failed to read spent utxos", "err", err)
@@ -418,7 +417,7 @@ func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
 				c.logger.Warn("utxoKeyPrunerChan is full, dropping spent utxos")
 			}
 		}
-	}
+	}*/
 	rawdb.DeleteSpentUTXOs(c.chainDb, blockHash)
 	rawdb.DeleteTrimmedUTXOs(c.chainDb, blockHash)
 	rawdb.DeleteTrimDepths(c.chainDb, blockHash)
@@ -439,7 +438,11 @@ func (c *ChainIndexer) UTXOKeyPruner() {
 				}
 				utxoKeys, err := rawdb.ReadPrunedUTXOKeys(c.chainDb, *blockheight)
 				if err != nil || utxoKeys == nil {
-					c.logger.Errorf("Failed to read pruned utxo keys: height %d err %+v", *blockheight, err)
+					currentHeight := rawdb.ReadHeaderNumber(c.chainDb, rawdb.ReadHeadHeaderHash(c.chainDb))
+					if currentHeight == nil {
+						currentHeight = new(uint64)
+					}
+					c.logger.Errorf("Failed to read pruned utxo keys: height %d currentHeight %d err %+v", *blockheight, *currentHeight, err)
 					continue
 				}
 				key := rawdb.UtxoKey(spentUtxo.TxHash, spentUtxo.Index)

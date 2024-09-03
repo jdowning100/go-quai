@@ -18,6 +18,7 @@ package rawdb
 
 import (
 	"encoding/binary"
+	"sort"
 
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/core/types"
@@ -1325,6 +1326,10 @@ func DeleteSpentUTXOs(db ethdb.KeyValueWriter, blockHash common.Hash) {
 }
 
 func WriteCreatedUTXOKeys(db ethdb.KeyValueWriter, blockHash common.Hash, createdUTXOKeys [][]byte) error {
+	// Sort each key by the denomination in the key
+	sort.Slice(createdUTXOKeys, func(i, j int) bool {
+		return createdUTXOKeys[i][len(createdUTXOKeys[i])-1] < createdUTXOKeys[j][len(createdUTXOKeys[j])-1] // the last byte is the denomination
+	})
 	protoKeys := &types.ProtoKeys{Keys: make([][]byte, 0, len(createdUTXOKeys))}
 
 	protoKeys.Keys = append(protoKeys.Keys, createdUTXOKeys...)
@@ -1495,5 +1500,45 @@ func WriteTrimDepths(db ethdb.KeyValueWriter, blockHash common.Hash, trimDepths 
 func DeleteTrimDepths(db ethdb.KeyValueWriter, blockHash common.Hash) {
 	if err := db.Delete(trimDepthsKey(blockHash)); err != nil {
 		db.Logger().WithField("err", err).Fatal("Failed to delete trim depths")
+	}
+}
+
+func ReadCollidingKeys(db ethdb.Reader, blockHash common.Hash) ([][]byte, error) {
+	data, _ := db.Get(collidingKeysKey(blockHash))
+	if len(data) == 0 {
+		return nil, nil
+	}
+	protoKeys := new(types.ProtoKeys)
+	if err := proto.Unmarshal(data, protoKeys); err != nil {
+		return nil, err
+	}
+	return protoKeys.Keys, nil
+}
+
+func WriteCollidingKeys(db ethdb.KeyValueWriter, blockHash common.Hash, keys [][]byte) error {
+	protoKeys := &types.ProtoKeys{Keys: make([][]byte, 0, len(keys))}
+	protoKeys.Keys = append(protoKeys.Keys, keys...)
+
+	data, err := proto.Marshal(protoKeys)
+	if err != nil {
+		db.Logger().WithField("err", err).Fatal("Failed to rlp encode utxo")
+	}
+	return db.Put(collidingKeysKey(blockHash), data)
+}
+
+func DeleteCollidingKeys(db ethdb.KeyValueWriter, blockHash common.Hash) {
+	if err := db.Delete(collidingKeysKey(blockHash)); err != nil {
+		db.Logger().WithField("err", err).Fatal("Failed to delete colliding keys")
+	}
+}
+
+func ReadAlreadyPruned(db ethdb.Reader, blockHash common.Hash) bool {
+	data, _ := db.Get(alreadyPrunedKey(blockHash))
+	return len(data) > 0
+}
+
+func WriteAlreadyPruned(db ethdb.KeyValueWriter, blockHash common.Hash) {
+	if err := db.Put(alreadyPrunedKey(blockHash), []byte{1}); err != nil {
+		db.Logger().WithField("err", err).Fatal("Failed to store already pruned")
 	}
 }

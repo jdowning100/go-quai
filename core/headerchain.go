@@ -443,8 +443,8 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 		return nil
 	}
 
-	//Find a common header
-	commonHeader := hc.findCommonAncestor(head)
+	//Find a common header between the current header and the new head
+	commonHeader := rawdb.FindCommonAncestor(hc.headerDb, prevHeader, head, nodeCtx)
 	newHeader := types.CopyWorkObject(head)
 
 	// Delete each header and rollback state processor until common header
@@ -490,6 +490,9 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				return err
 			}
 			for _, key := range utxoKeys {
+				if len(key) == rawdb.UtxoKeyWithDenominationLength {
+					key = key[:rawdb.UtxoKeyLength] // The last byte of the key is the denomination (but only in CreatedUTXOKeys)
+				}
 				hc.headerDb.Delete(key)
 			}
 		}

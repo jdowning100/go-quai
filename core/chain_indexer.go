@@ -104,9 +104,9 @@ type ChainIndexer struct {
 
 	throttling time.Duration // Disk throttling to prevent a heavy upgrade from hogging resources
 
-	logger *log.Logger
-	lock   sync.Mutex
-
+	logger            *log.Logger
+	lock              sync.Mutex
+	pruneLock         sync.Mutex
 	indexAddressUtxos bool
 	utxoKeyPrunerChan chan []*types.SpentUtxoEntry
 }
@@ -337,36 +337,38 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 }
 
 func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
+	c.pruneLock.Lock()
 	blockHash := rawdb.ReadCanonicalHash(c.chainDb, blockHeight)
+	if rawdb.ReadAlreadyPruned(c.chainDb, blockHash) {
+		return
+	}
+	rawdb.WriteAlreadyPruned(c.chainDb, blockHash) // Pruning can only happen once per block
+	c.pruneLock.Unlock()
+
 	rawdb.DeleteInboundEtxs(c.chainDb, blockHash)
 	rawdb.DeletePendingEtxs(c.chainDb, blockHash)
 	rawdb.DeletePendingEtxsRollup(c.chainDb, blockHash)
 	rawdb.DeleteManifest(c.chainDb, blockHash)
 	rawdb.DeletePbCacheBody(c.chainDb, blockHash)
 	createdUtxos, _ := rawdb.ReadCreatedUTXOKeys(c.chainDb, blockHash)
-	createdUtxosToKeep := make([][]byte, 0, len(createdUtxos))
-	for _, key := range createdUtxos {
-		/*data, _ := c.chainDb.Get(key)
-		if len(data) == 0 {
-			// Don't keep it if it doesn't exist
-			continue
+	if len(createdUtxos) > 0 {
+		createdUtxosToKeep := make([][]byte, 0, len(createdUtxos)/2)
+		for _, key := range createdUtxos {
+			if len(key) == rawdb.UtxoKeyWithDenominationLength {
+				if key[len(key)-1] > types.MaxTrimDenomination {
+					// Don't keep it if the denomination is not trimmed
+					// The keys are sorted in order of denomination, so we can break here
+					break
+				}
+				key[rawdb.PrunedUtxoKeyWithDenominationLength+len(rawdb.UtxoPrefix)-1] = key[len(key)-1] // place the denomination at the end of the pruned key (11th byte will become 9th byte)
+			}
+			// Reduce key size to 9 bytes and cut off the prefix
+			key = key[len(rawdb.UtxoPrefix) : rawdb.PrunedUtxoKeyWithDenominationLength+len(rawdb.UtxoPrefix)]
+			createdUtxosToKeep = append(createdUtxosToKeep, key)
 		}
-		utxoProto := new(types.ProtoTxOut)
-		if err := proto.Unmarshal(data, utxoProto); err != nil {
-			// Don't keep it if it can't be unmarshaled
-			continue
-		}
-
-		utxo := new(types.UtxoEntry)
-		if err := utxo.ProtoDecode(utxoProto); err != nil {
-			// Don't keep it if it can't be decoded into UtxoEntry
-			continue
-		}*/
-		// Reduce key size to 8 bytes
-		key = key[:8]
-		createdUtxosToKeep = append(createdUtxosToKeep, key)
+		c.logger.Infof("Removed %d utxo keys from block %d", len(createdUtxos)-len(createdUtxosToKeep), blockHeight)
+		rawdb.WritePrunedUTXOKeys(c.chainDb, blockHeight, createdUtxosToKeep)
 	}
-	rawdb.WritePrunedUTXOKeys(c.chainDb, blockHeight, createdUtxosToKeep)
 	rawdb.DeleteCreatedUTXOKeys(c.chainDb, blockHash)
 	/*tutxos, _ := rawdb.ReadTrimmedUTXOs(c.chainDb, blockHash)
 	sutxos, err := rawdb.ReadSpentUTXOs(c.chainDb, blockHash)
@@ -385,6 +387,7 @@ func (c *ChainIndexer) PruneOldBlockData(blockHeight uint64) {
 	rawdb.DeleteSpentUTXOs(c.chainDb, blockHash)
 	rawdb.DeleteTrimmedUTXOs(c.chainDb, blockHash)
 	rawdb.DeleteTrimDepths(c.chainDb, blockHash)
+	rawdb.DeleteCollidingKeys(c.chainDb, blockHash)
 }
 
 func (c *ChainIndexer) UTXOKeyPruner() {
@@ -395,6 +398,9 @@ func (c *ChainIndexer) UTXOKeyPruner() {
 			errc <- nil
 			return
 		case spentUtxos := <-c.utxoKeyPrunerChan:
+			blockHeights := make(map[uint64]uint64)
+			pruned := 0
+			start := time.Now()
 			for _, spentUtxo := range spentUtxos {
 				blockheight := rawdb.ReadTxLookupEntry(c.chainDb, spentUtxo.TxHash)
 				if blockheight == nil {
@@ -402,38 +408,31 @@ func (c *ChainIndexer) UTXOKeyPruner() {
 				}
 				utxoKeys, err := rawdb.ReadPrunedUTXOKeys(c.chainDb, *blockheight)
 				if err != nil || utxoKeys == nil {
-					currentHeight := rawdb.ReadHeaderNumber(c.chainDb, rawdb.ReadHeadHeaderHash(c.chainDb))
-					if currentHeight == nil {
-						currentHeight = new(uint64)
-					}
-					c.logger.Errorf("Failed to read pruned utxo keys: height %d currentHeight %d err %+v", *blockheight, *currentHeight, err)
 					continue
 				}
-				key := rawdb.UtxoKey(spentUtxo.TxHash, spentUtxo.Index)
 				for i := 0; i < len(utxoKeys); i++ {
-					if compareMinLength(utxoKeys[i], key) {
+					if spentUtxo.Denomination == utxoKeys[i][len(utxoKeys[i])-1] && comparePrunedKeyWithTxHash(utxoKeys[i], spentUtxo.TxHash[:]) {
 						// Remove the key by shifting the slice to the left
 						utxoKeys = append(utxoKeys[:i], utxoKeys[i+1:]...)
+						blockHeights[*blockheight]++
+						pruned++
 						break
 					} else {
 						i++ // Only increment i if no element was removed
 					}
 				}
 				rawdb.WritePrunedUTXOKeys(c.chainDb, *blockheight, utxoKeys)
-
 			}
+			c.logger.Infof("Pruned %d utxo keys out of %d in %s, pruned heights: %+v", pruned, len(spentUtxos), common.PrettyDuration(time.Since(start)), blockHeights)
 		}
 	}
 }
 
-func compareMinLength(a, b []byte) bool {
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
-	}
+func comparePrunedKeyWithTxHash(a, b []byte) bool {
 
-	// Compare the slices up to the length of the shorter slice
-	for i := 0; i < minLen; i++ {
+	// Compare the slices up to the length of the pruned key
+	// The 9th byte (position 8) is the denomination in the pruned utxo key
+	for i := 0; i < rawdb.PrunedUtxoKeyWithDenominationLength-1; i++ {
 		if a[i] != b[i] {
 			return false
 		}

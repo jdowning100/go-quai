@@ -85,6 +85,8 @@ type environment struct {
 	parentStateSize         *big.Int
 	quaiCoinbaseEtxs        map[[21]byte]*big.Int
 	deletedUtxos            map[common.Hash]struct{}
+	qiGasScalingFactor      float64
+	utxoSetSize             uint64
 }
 
 // unclelist returns the contained uncles as the list format.
@@ -617,7 +619,7 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool, txs t
 	}
 
 	// Create a local environment copy, avoid the data race with snapshot state.
-	newWo, err := w.FinalizeAssemble(w.hc, work.wo, block, work.state, work.txs, uncles, work.etxs, work.subManifest, work.receipts, work.utxosCreate, work.utxosDelete)
+	newWo, err := w.FinalizeAssemble(w.hc, work.wo, block, work.state, work.txs, uncles, work.etxs, work.subManifest, work.receipts, work.utxoSetSize, work.utxosCreate, work.utxosDelete)
 	if err != nil {
 		return nil, err
 	}
@@ -719,6 +721,7 @@ func (w *worker) OrderTransactionSet(txs []*types.Transaction, gasUsedAfterTrans
 			return
 		}
 	}
+	utxoSetSize := rawdb.ReadUTXOSetSize(w.workerDb, block.Hash())
 	// gas price and the gas used is extracted from each of these non external
 	// transactions for the sorting
 	txInfos := make([]TransactionInfo, 0)
@@ -734,7 +737,7 @@ func (w *worker) OrderTransactionSet(txs []*types.Transaction, gasUsedAfterTrans
 			}
 			qiFeeInQuai := misc.QiToQuai(primeTerminus.WorkObjectHeader(), fee)
 			// Divide the fee by the gas used by the Qi Tx
-			gasPrice = new(big.Int).Div(qiFeeInQuai, new(big.Int).SetInt64(int64(types.CalculateBlockQiTxGas(tx, w.hc.NodeLocation()))))
+			gasPrice = new(big.Int).Div(qiFeeInQuai, new(big.Int).SetInt64(int64(types.CalculateBlockQiTxGas(tx, math.Log(float64(utxoSetSize)), w.hc.NodeLocation()))))
 		} else {
 			gasPrice = new(big.Int).Set(tx.GasPrice())
 		}
@@ -867,10 +870,12 @@ func (w *worker) makeEnv(parent *types.WorkObject, proposedWo *types.WorkObject,
 	evmRoot := parent.EVMRoot()
 	etxRoot := parent.EtxSetRoot()
 	quaiStateSize := parent.QuaiStateSize()
+	utxoSetSize := rawdb.ReadUTXOSetSize(w.workerDb, parent.Hash())
 	if w.hc.IsGenesisHash(parent.Hash()) {
 		evmRoot = types.EmptyRootHash
 		etxRoot = types.EmptyRootHash
 		quaiStateSize = big.NewInt(0)
+		utxoSetSize = 0
 	}
 	state, err := w.hc.bc.processor.StateAt(evmRoot, etxRoot, quaiStateSize)
 	if err != nil {
@@ -887,19 +892,21 @@ func (w *worker) makeEnv(parent *types.WorkObject, proposedWo *types.WorkObject,
 	}
 	// Note the passed coinbase may be different with header.Coinbase.
 	env := &environment{
-		signer:            types.MakeSigner(w.chainConfig, proposedWo.Number(w.hc.NodeCtx())),
-		state:             state,
-		primaryCoinbase:   primaryCoinbase,
-		secondaryCoinbase: secondaryCoinbase,
-		ancestors:         mapset.NewSet(),
-		family:            mapset.NewSet(),
-		wo:                proposedWo,
-		uncles:            make(map[common.Hash]*types.WorkObjectHeader),
-		etxRLimit:         etxRLimit,
-		etxPLimit:         etxPLimit,
-		parentStateSize:   quaiStateSize,
-		quaiCoinbaseEtxs:  make(map[[21]byte]*big.Int),
-		deletedUtxos:      make(map[common.Hash]struct{}),
+		signer:             types.MakeSigner(w.chainConfig, proposedWo.Number(w.hc.NodeCtx())),
+		state:              state,
+		primaryCoinbase:    primaryCoinbase,
+		secondaryCoinbase:  secondaryCoinbase,
+		ancestors:          mapset.NewSet(),
+		family:             mapset.NewSet(),
+		wo:                 proposedWo,
+		uncles:             make(map[common.Hash]*types.WorkObjectHeader),
+		etxRLimit:          etxRLimit,
+		etxPLimit:          etxPLimit,
+		parentStateSize:    quaiStateSize,
+		quaiCoinbaseEtxs:   make(map[[21]byte]*big.Int),
+		deletedUtxos:       make(map[common.Hash]struct{}),
+		qiGasScalingFactor: math.Log(float64(utxoSetSize)),
+		utxoSetSize:        utxoSetSize,
 	}
 	// Keep track of transactions which return errors so they can be removed
 	env.tcount = 0
@@ -1176,7 +1183,7 @@ func (w *worker) commitTransactions(env *environment, primeTerminus *types.WorkO
 			break
 		}
 		if tx.Type() == types.QiTxType {
-			txGas := types.CalculateBlockQiTxGas(tx, w.hc.NodeLocation())
+			txGas := types.CalculateBlockQiTxGas(tx, env.qiGasScalingFactor, w.hc.NodeLocation())
 			if env.gasPool.Gas() < txGas {
 				w.logger.WithFields(log.Fields{
 					"have": env.gasPool,
@@ -1692,7 +1699,7 @@ func (w *worker) fillTransactions(env *environment, primeTerminus *types.WorkObj
 	for _, tx := range pendingQiTxs {
 		// update the fee
 		qiFeeInQuai := misc.QiToQuai(primeTerminus, tx.MinerFee())
-		minerFeeInQuai := new(big.Int).Div(qiFeeInQuai, big.NewInt(int64(types.CalculateBlockQiTxGas(tx.Tx(), w.hc.NodeLocation()))))
+		minerFeeInQuai := new(big.Int).Div(qiFeeInQuai, big.NewInt(int64(types.CalculateBlockQiTxGas(tx.Tx(), env.qiGasScalingFactor, w.hc.NodeLocation()))))
 		qiTx, err := types.NewTxWithMinerFee(tx.Tx(), minerFeeInQuai, time.Now())
 		if err != nil {
 			w.logger.Error("Error created new tx with miner Fee for Qi TX", tx.Tx().Hash())
@@ -1755,9 +1762,9 @@ func (w *worker) ComputeManifestHash(header *types.WorkObject) common.Hash {
 	return manifestHash
 }
 
-func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, newWo *types.WorkObject, parent *types.WorkObject, state *state.StateDB, txs []*types.Transaction, uncles []*types.WorkObjectHeader, etxs []*types.Transaction, subManifest types.BlockManifest, receipts []*types.Receipt, utxosCreate, utxosDelete []common.Hash) (*types.WorkObject, error) {
+func (w *worker) FinalizeAssemble(chain consensus.ChainHeaderReader, newWo *types.WorkObject, parent *types.WorkObject, state *state.StateDB, txs []*types.Transaction, uncles []*types.WorkObjectHeader, etxs []*types.Transaction, subManifest types.BlockManifest, receipts []*types.Receipt, parentUtxoSetSize uint64, utxosCreate, utxosDelete []common.Hash) (*types.WorkObject, error) {
 	nodeCtx := w.hc.NodeCtx()
-	wo, err := w.engine.FinalizeAndAssemble(chain, newWo, state, txs, uncles, etxs, subManifest, receipts, utxosCreate, utxosDelete)
+	wo, err := w.engine.FinalizeAndAssemble(chain, newWo, state, txs, uncles, etxs, subManifest, receipts, parentUtxoSetSize, utxosCreate, utxosDelete)
 	if err != nil {
 		return nil, err
 	}
@@ -1879,7 +1886,7 @@ func (w *worker) processQiTx(tx *types.Transaction, env *environment, primeTermi
 		return fmt.Errorf("tx %032x has wrong chain ID", tx.Hash())
 	}
 	gasUsed := env.wo.GasUsed()
-	intrinsicGas := types.CalculateIntrinsicQiTxGas(tx)
+	intrinsicGas := types.CalculateIntrinsicQiTxGas(tx, env.qiGasScalingFactor)
 	gasUsed += intrinsicGas // the amount of block gas used in this transaction is only the txGas, regardless of ETXs emitted
 	if err := env.gasPool.SubGas(intrinsicGas); err != nil {
 		return err

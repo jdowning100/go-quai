@@ -552,7 +552,7 @@ func (c *Core) Engine() consensus.Engine {
 	return c.engine
 }
 
-func (c *Core) CheckIfValidWorkShare(workShare *types.WorkObjectHeader) bool {
+func (c *Core) CheckIfValidWorkShare(workShare *types.WorkObjectHeader) types.WorkShareValidity {
 	return c.engine.CheckIfValidWorkShare(workShare)
 }
 

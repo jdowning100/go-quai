@@ -495,6 +495,10 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 			}
 			err := hc.AppendBlock(block)
 			if err != nil {
+				hc.logger.WithFields(log.Fields{
+					"error": err,
+					"block": block.Hash(),
+				}).Error("Error appending block during reorg")
 				rawdb.DeleteCanonicalHash(hc.headerDb, hashStack[i].NumberU64(hc.NodeCtx()))
 				// Append failed, rollback the UTXO set to the common header
 				for j := i - 1; j >= 0; j-- {
@@ -525,6 +529,10 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 						}
 						err := hc.AppendBlock(block)
 						if err != nil {
+							hc.logger.WithFields(log.Fields{
+								"error": err,
+								"block": block.Hash(),
+							}).Error("Error appending block during reorg")
 							panic("Unrecoverable error during reorg")
 						}
 					}

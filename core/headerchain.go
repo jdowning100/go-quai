@@ -501,7 +501,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				}).Error("Error appending block during reorg")
 				rawdb.DeleteCanonicalHash(hc.headerDb, hashStack[i].NumberU64(hc.NodeCtx()))
 				// Append failed, rollback the UTXO set to the common header
-				for j := i - 1; j >= 0; j-- {
+				for j := i + 1; j < len(hashStack); j++ {
 					rawdb.DeleteCanonicalHash(hc.headerDb, hashStack[j].NumberU64(hc.NodeCtx()))
 					if nodeCtx == common.ZONE_CTX && hc.ProcessingState() {
 						sutxos, err := rawdb.ReadSpentUTXOs(hc.headerDb, hashStack[j].Hash())
@@ -520,12 +520,12 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 						}
 					}
 				}
-				for j := len(prevHashStack) - 1; j >= 0; j-- {
-					rawdb.WriteCanonicalHash(hc.headerDb, prevHashStack[j].Hash(), prevHashStack[j].NumberU64(hc.NodeCtx()))
+				for k := len(prevHashStack) - 1; k >= 0; k-- {
+					rawdb.WriteCanonicalHash(hc.headerDb, prevHashStack[k].Hash(), prevHashStack[k].NumberU64(hc.NodeCtx()))
 					if nodeCtx == common.ZONE_CTX {
-						block := hc.GetBlockOrCandidate(prevHashStack[j].Hash(), prevHashStack[j].NumberU64(nodeCtx))
+						block := hc.GetBlockOrCandidate(prevHashStack[k].Hash(), prevHashStack[k].NumberU64(nodeCtx))
 						if block == nil {
-							return errors.New("could not find block during SetCurrentState: " + prevHashStack[j].Hash().String())
+							return errors.New("could not find block during SetCurrentState: " + prevHashStack[k].Hash().String())
 						}
 						err := hc.AppendBlock(block)
 						if err != nil {

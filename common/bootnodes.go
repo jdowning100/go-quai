@@ -12,9 +12,9 @@ var (
 			"/dns4/bootnode.garden3.quai.network/tcp/4001/p2p/12D3KooWJnWmBukEbZtGPPJvT1r4tQ97CRSGmnjHewcrjNB8oRxU",
 		},
 		"orchard": {
-			"/dns4/bootnode.orchard0.quai.network/tcp/4001/p2p/12D3KooWSu4bS67yLVUcFRdbrUbjQJdNeqe1cJ4pjHf77zwX5AHy",
-			"/dns4/bootnode.orchard1.quai.network/tcp/4001/p2p/12D3KooWBdtyVjqXSG3zE7qEz6K1wu3Cjc9B6A9bsh9A7xRwg1nP",
-			"/dns4/bootnode.orchard2.quai.network/tcp/4001/p2p/12D3KooWRdAA7rCedzbRewzw2R8zAY1QDiiA1KhDRxHXsZvukeBC",
+			"/ip4/34.136.175.169/tcp/4001/p2p/12D3KooWNN1TqsrEEmitkk1LefwLNgut621sSCdncPoyMVoYT1v4",
+			"/ip4/34.122.101.50/tcp/4001/p2p/12D3KooWBAkaxYwJUenjVQPyvtZx6XWjtosyVzBRJxM7wthbWRE5",
+			"/ip4/34.23.101.139/tcp/4001/p2p/12D3KooWBv5C4tSS72nBdG6Q12s7vSHYHtFcquBxAKDkfrrzseUz",
 		},
 		"lighthouse": {
 			// "/dns4/host-go-quai/tcp/4001/p2p/12D3KooWS83uhvCfyNeAV24nEsp3DHrygDD39rZiVy6Gabv6pqxt",

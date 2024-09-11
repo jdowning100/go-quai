@@ -9,6 +9,7 @@ import (
 	bigMath "github.com/dominant-strategies/go-quai/common/math"
 	"github.com/dominant-strategies/go-quai/consensus"
 	"github.com/dominant-strategies/go-quai/core/types"
+	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"modernc.org/mathutil"
 )
@@ -270,6 +271,7 @@ func (progpow *Progpow) CalcRank(chain consensus.ChainHeaderReader, header *type
 }
 
 func (progpow *Progpow) CheckIfValidWorkShare(workShare *types.WorkObjectHeader) types.WorkShareValidity {
+	log.Global.Println("checking if valid")
 	if progpow.CheckWorkThreshold(workShare, params.WorkSharesThresholdDiff) {
 		return types.Valid
 	} else if progpow.CheckWorkThreshold(workShare, progpow.config.WorkShareThreshold) {
@@ -280,16 +282,10 @@ func (progpow *Progpow) CheckIfValidWorkShare(workShare *types.WorkObjectHeader)
 }
 
 func (progpow *Progpow) CheckWorkThreshold(workShare *types.WorkObjectHeader, workShareThresholdDiff int) bool {
-	diff := new(big.Int).Set(workShare.Difficulty())
-	c, _ := mathutil.BinaryLog(diff, consensus.MantBits)
-	// Ensure that the threshold is less than the header difficulty. Otherwise the math will be messed up.
-	if c <= workShareThresholdDiff {
+	workShareMinTarget, err := consensus.CalcWorkShareThreshold(workShare, workShareThresholdDiff)
+	if err != nil {
 		return false
 	}
-
-	// Verify that the actual work of this WorkShare is acceptable according to the provided threshold.
-	workShareDiff := new(big.Int).Exp(big.NewInt(2), big.NewInt(int64(c-workShareThresholdDiff)), nil)
-	workShareMinTarget := new(big.Int).Div(big2e256, workShareDiff)
 	powHash, err := progpow.ComputePowHash(workShare)
 	if err != nil {
 		return false

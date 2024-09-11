@@ -244,15 +244,16 @@ func DifficultyToTarget(difficulty *big.Int) *big.Int {
 	return TargetToDifficulty(difficulty)
 }
 
-func CalcWorkShareThreshold(workShare *types.WorkObjectHeader) (*big.Int, error) {
-	// Extract some data from the header
+func CalcWorkShareThreshold(workShare *types.WorkObjectHeader, workShareThresholdDiff int) (*big.Int, error) {
 	diff := new(big.Int).Set(workShare.Difficulty())
 	c, _ := mathutil.BinaryLog(diff, MantBits)
-	if c <= params.WorkSharesThresholdDiff {
-		return nil, ErrInvalidDifficulty
+	// Ensure that the threshold is less than the header difficulty. Otherwise the math will be messed up.
+	if c <= workShareThresholdDiff {
+		return nil, nil
 	}
-	workShareThreshold := c - params.WorkSharesThresholdDiff
-	workShareDiff := new(big.Int).Exp(big.NewInt(2), big.NewInt(int64(workShareThreshold)), nil)
+
+	// Verify that the actual work of this WorkShare is acceptable according to the provided threshold.
+	workShareDiff := new(big.Int).Exp(big.NewInt(2), big.NewInt(int64(c-workShareThresholdDiff)), nil)
 	workShareMinTarget := new(big.Int).Div(Big2e256, workShareDiff)
 	return workShareMinTarget, nil
 }

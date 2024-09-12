@@ -22,11 +22,11 @@ func (progpow *Progpow) CalcOrder(chain consensus.BlockReader, header *types.Wor
 		return big0, common.PRIME_CTX, nil
 	}
 	// Need to use the prime terminus expansion number
-	primeTerminus := chain.GetBlockByHash(header.PrimeTerminus())
-	if primeTerminus == nil {
-		return big0, -1, errors.New("prime terminus cannot be found during the calc order")
-	}
-	expansionNum := primeTerminus.ExpansionNumber()
+	// primeTerminus := chain.GetBlockByHash(header.PrimeTerminus())
+	// if primeTerminus == nil {
+	// 	return big0, -1, errors.New("prime terminus cannot be found during the calc order")
+	// }
+	expansionNum := header.ExpansionNumber()
 
 	// Verify the seal and get the powHash for the given header
 	powHash, err := progpow.verifySeal(header.WorkObjectHeader())

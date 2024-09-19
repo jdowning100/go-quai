@@ -47,13 +47,13 @@ func init() {
 	Denominations[16] = big.NewInt(1000000000) // 1000000 Qi
 
 	TrimDepths = make(map[uint8]uint64)
-	TrimDepths[0] = 720  // 2 hours
-	TrimDepths[1] = 720  // 2 hours
-	TrimDepths[2] = 1080 // 3 hours
-	TrimDepths[3] = 1080 // 3 hours
-	TrimDepths[4] = 2160 // 6 hours
-	TrimDepths[5] = 4320 // 12 hours
-	TrimDepths[6] = 8640 // 24 hours
+	TrimDepths[0] = 120 // 2 hours
+	TrimDepths[1] = 120 // 2 hours
+	TrimDepths[2] = 180 // 3 hours
+	TrimDepths[3] = 180 // 3 hours
+	TrimDepths[4] = 160 // 6 hours
+	TrimDepths[5] = 320 // 12 hours
+	TrimDepths[6] = 640 // 24 hours
 }
 
 type TxIns []TxIn

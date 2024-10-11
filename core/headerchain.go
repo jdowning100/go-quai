@@ -21,9 +21,11 @@ import (
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
 	"github.com/dominant-strategies/go-quai/log"
+	"github.com/dominant-strategies/go-quai/multiset"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/trie"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -449,6 +451,50 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 			if err != nil {
 				rawdb.DeleteCanonicalHash(hc.headerDb, head.NumberU64(hc.NodeCtx()))
 				return err
+			}
+			blockNmr := head.NumberU64(common.ZONE_CTX)
+			start := time.Now()
+			if blockNmr%1 == 0 {
+				hc.logger.Infof("::::: Audit @ block %d ...\n", blockNmr)
+				it := hc.Database().NewIterator(rawdb.UtxoPrefix, nil)
+				utxoSet := multiset.New()
+				setSize := 0
+				for it.Next() {
+					data := it.Value()
+					utxoProto := new(types.ProtoTxOut)
+					if err := proto.Unmarshal(data, utxoProto); err != nil {
+						hc.logger.Errorf("Audit test: Failed to unmarshal ProtoTxOut: %+v data: %+v key: %+v", err, data, it.Key())
+						continue
+					}
+
+					utxo := new(types.UtxoEntry)
+					if err := utxo.ProtoDecode(utxoProto); err != nil {
+						hc.logger.WithFields(log.Fields{
+							"key":  it.Key(),
+							"data": data,
+							"err":  err,
+						}).Error("Audit test: Invalid utxo Proto")
+						continue
+					}
+					txHash, index, err := rawdb.ReverseUtxoKey(it.Key())
+					if err != nil {
+						hc.logger.WithField("err", err).Error("Audit test: Failed to parse utxo key")
+						continue
+					}
+					utxoSet.Add(types.UTXOHash(txHash, index, utxo).Bytes())
+					setSize += 1
+				}
+				hc.logger.Infof(":::: found %d UTXOs in the set\n", setSize)
+				if utxoSet.Hash() != head.UTXORoot() {
+					hc.logger.Info(":::: Audit FAILED!")
+					hc.logger.Infof(":::: UTXO hash: %x head.UTXORoot: %x\n", utxoSet.Hash(), head.UTXORoot())
+					utxoSetSize := rawdb.ReadUTXOSetSize(hc.headerDb, head.Hash())
+					if utxoSetSize != uint64(setSize) {
+						hc.logger.Errorf(":::: UTXO set size mismatch: Database %d I counted %d\n", utxoSetSize, setSize)
+					}
+				} else {
+					hc.logger.Infof(":::: Audit PASSED! took %ss for block %d", common.PrettyDuration(time.Since(start)).String(), head.NumberU64(nodeCtx))
+				}
 			}
 		}
 		// write the head block hash to the db

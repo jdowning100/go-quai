@@ -546,7 +546,7 @@ func AddGenesisUtxos(db ethdb.Database, utxosCreate *[]common.Hash, nodeLocation
 		if err := rawdb.CreateUTXO(db, hash, uint16(utxo.Index), newUtxo); err != nil {
 			panic(fmt.Sprintf("Failed to create genesis UTXO: %v", err))
 		}
-		*utxosCreate = append(*utxosCreate, types.UTXOHash(hash, uint16(utxo.Index), newUtxo)) // this is not exactly a proper UTXO hash but it is unique
+		*utxosCreate = append(*utxosCreate, types.UTXOHash(hash, uint16(utxo.Index), newUtxo))
 
 		outpointAndDenomination := &types.OutpointAndDenomination{
 			TxHash:       hash,

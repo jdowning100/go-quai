@@ -126,6 +126,15 @@ func NewSlice(db ethdb.Database, config *Config, txConfig *TxPoolConfig, txLooku
 		return nil, err
 	}
 
+	if nodeCtx == common.ZONE_CTX {
+		err = sl.hc.ValidateUtxoSet()
+		if err != nil {
+			sl.logger.WithField("err", err).Fatal("Validation of the current utxo set failed on startup")
+		} else {
+			sl.logger.Info("utxo set is validated and matches the mu hash commitment in the current header")
+		}
+	}
+
 	sl.validator = NewBlockValidator(chainConfig, sl.hc, engine)
 
 	// tx pool is only used in zone

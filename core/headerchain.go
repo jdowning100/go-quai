@@ -18,12 +18,14 @@ import (
 	"github.com/dominant-strategies/go-quai/core/state"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
+	"github.com/dominant-strategies/go-quai/crypto/multiset"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/trie"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -465,6 +467,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				rawdb.DeleteCanonicalHash(hc.headerDb, head.NumberU64(hc.NodeCtx()))
 				return err
 			}
+
 		}
 		// write the head block hash to the db
 		rawdb.WriteHeadBlockHash(hc.headerDb, head.Hash())
@@ -675,6 +678,62 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 			hc.currentHeader.Store(hashStack[i])
 		}
 	}
+	return nil
+}
+
+func (hc *HeaderChain) ValidateUtxoSet() error {
+	head := hc.CurrentHeader()
+	blockNmr := head.NumberU64(common.ZONE_CTX)
+
+	hc.logger.WithFields(log.Fields{"number": blockNmr, "hash": head.Hash()}).Info("Validating the utxo set of the current header")
+
+	it := hc.Database().NewIterator(rawdb.UtxoPrefix, nil)
+	utxoSet := multiset.New()
+	setSize := 0
+	for it.Next() {
+
+		if len(it.Key()) != rawdb.UtxoKeyLength {
+			continue
+		}
+
+		data := it.Value()
+		utxoProto := new(types.ProtoTxOut)
+		if err := proto.Unmarshal(data, utxoProto); err != nil {
+			hc.logger.Errorf("Audit test: Failed to unmarshal ProtoTxOut: %+v data: %+v key: %+v", err, data, it.Key())
+			return err
+		}
+
+		utxo := new(types.UtxoEntry)
+		if err := utxo.ProtoDecode(utxoProto); err != nil {
+			hc.logger.WithFields(log.Fields{
+				"key":  it.Key(),
+				"data": data,
+				"err":  err,
+			}).Error("Invalid utxo Proto")
+			return err
+		}
+		txHash, index, err := rawdb.ReverseUtxoKey(it.Key())
+		if err != nil {
+			hc.logger.WithField("err", err).Error("Audit test: Failed to parse utxo key")
+			return err
+		}
+		utxoSet.Add(types.UTXOHash(txHash, index, utxo).Bytes())
+		setSize += 1
+	}
+
+	hc.logger.WithField("set size", setSize).Infof("Found utxos in the set")
+
+	if utxoSet.Hash() != head.UTXORoot() {
+		hc.logger.Error("State of the utxo set doesnt match the commitment in the current header")
+		return fmt.Errorf("UTXO hash: %x head.UTXORoot: %x\n", utxoSet.Hash(), head.UTXORoot())
+	}
+
+	utxoSetSize := rawdb.ReadUTXOSetSize(hc.headerDb, head.Hash())
+	if utxoSetSize != uint64(setSize) {
+		hc.logger.Errorf("UTXO set size mismatch: Database %d counted %d\n", utxoSetSize, setSize)
+		return fmt.Errorf("UTXO set size mismatch: Database %d counted %d\n", utxoSetSize, setSize)
+	}
+
 	return nil
 }
 

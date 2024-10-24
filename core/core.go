@@ -1043,6 +1043,10 @@ func (c *Core) GetMinerEndpoints() []string {
 	return c.endpoints
 }
 
+func (c *Core) CalcMaxBaseFee(block *types.WorkObject) (*big.Int, error) {
+	return c.sl.hc.CalcMaxBaseFee(block)
+}
+
 //--------------------//
 // BlockChain methods //
 //--------------------//

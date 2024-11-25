@@ -425,6 +425,7 @@ func (h *virtualHostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		// Either invalid (too many colons) or no port specified
+		log.Global.Errorf("Invalid Host header %s: %v", r.Host, err)
 		host = r.Host
 	}
 	if ipAddr := net.ParseIP(host); ipAddr != nil {
@@ -442,7 +443,8 @@ func (h *virtualHostHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	http.Error(w, "invalid host specified", http.StatusForbidden)
+	h.next.ServeHTTP(w, r)
+	return
 }
 
 var gzPool = sync.Pool{

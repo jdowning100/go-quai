@@ -460,7 +460,7 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 			time10 := time.Since(start)
 			prevHeader, prevHash = block, block.Hash()
 
-			c.logger.Info("ChainIndexer: setting the prevHeader and prevHash", prevHeader.NumberArray(), prevHash)
+			c.logger.Trace("ChainIndexer: setting the prevHeader and prevHash", prevHeader.NumberArray(), prevHash)
 			c.logger.WithFields(log.Fields{
 				"time1":  common.PrettyDuration(time1),
 				"time2":  common.PrettyDuration(time2),
@@ -469,7 +469,7 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 				"time5":  common.PrettyDuration(time5),
 				"time9":  common.PrettyDuration(time9),
 				"time10": common.PrettyDuration(time10),
-			}).Info("Times in indexerLoop")
+			}).Trace("Times in indexerLoop")
 		}
 
 	}

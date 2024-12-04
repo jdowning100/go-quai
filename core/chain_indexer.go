@@ -368,14 +368,6 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 				continue
 			}
 			time1 := time.Since(start)
-			var validUtxoIndex bool
-			var addressOutpoints map[[20]byte][]*types.OutpointAndDenomination
-			var addressLockups map[[20]byte][]*types.Lockup
-			if c.indexAddressUtxos {
-				validUtxoIndex = true
-				addressOutpoints = make(map[[20]byte][]*types.OutpointAndDenomination)
-				addressLockups = make(map[[20]byte][]*types.Lockup)
-			}
 			time2 := time.Since(start)
 
 			var time3, time4, time5 time.Duration
@@ -432,10 +424,9 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 					time3 = time.Since(start)
 
 					// Remove all outpoints of the reorg headers (old chain)
-					err := c.reorgUtxoIndexer(prevHashStack, addressOutpoints, addressLockups, nodeCtx)
+					err := c.reorgUtxoIndexer(prevHashStack, nodeCtx)
 					if err != nil {
 						c.logger.Error("ChainIndexer: Failed to reorg utxo indexer", "err", err)
-						validUtxoIndex = false
 					}
 
 					time4 = time.Since(start)
@@ -447,7 +438,7 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 							c.logger.Error("ChainIndexer: Failed to read block during reorg")
 							continue
 						}
-						c.addOutpointsToIndexer(addressOutpoints, addressLockups, nodeCtx, config, block)
+						c.addOutpointsToIndexer(nodeCtx, config, block)
 					}
 				}
 
@@ -457,30 +448,14 @@ func (c *ChainIndexer) indexerLoop(currentHeader *types.WorkObject, qiIndexerCh 
 			} else {
 				time3 = time.Since(start)
 				if c.indexAddressUtxos {
-					c.addOutpointsToIndexer(addressOutpoints, addressLockups, nodeCtx, config, block)
+					c.addOutpointsToIndexer(nodeCtx, config, block)
 				}
 				time4 = time.Since(start)
 				c.newHead(block.NumberU64(nodeCtx), false)
 				time5 = time.Since(start)
 			}
 
-			if c.indexAddressUtxos && validUtxoIndex {
-				err := rawdb.WriteAddressOutpoints(c.chainDb, addressOutpoints)
-				if err != nil {
-					panic(err)
-				}
-				err = rawdb.WriteAddressLockups(c.chainDb, addressLockups)
-				if err != nil {
-					panic(err)
-				}
-			}
-
 			time9 := time.Since(start)
-
-			for key, _ := range addressOutpoints {
-				delete(addressOutpoints, key)
-			}
-			addressOutpoints = nil
 
 			time10 := time.Since(start)
 			prevHeader, prevHash = block, block.Hash()
@@ -821,10 +796,11 @@ func (c *ChainIndexer) removeSectionHead(section uint64) {
 }
 
 // addOutpointsToIndexer removes the spent outpoints and adds new utxos to the indexer.
-func (c *ChainIndexer) addOutpointsToIndexer(addressOutpointsWithBlockHeight map[[20]byte][]*types.OutpointAndDenomination, addressLockups map[[20]byte][]*types.Lockup, nodeCtx int, config params.ChainConfig, block *types.WorkObject) {
+func (c *ChainIndexer) addOutpointsToIndexer(nodeCtx int, config params.ChainConfig, block *types.WorkObject) {
 
 	utxos := block.QiTransactions()
-
+	addressOutpointsWithBlockHeight := make(map[[20]byte][]*types.OutpointAndDenomination)
+	addressLockups := make(map[[20]byte][]*types.Lockup)
 	for _, tx := range utxos {
 		for _, in := range tx.TxIn() {
 
@@ -847,12 +823,16 @@ func (c *ChainIndexer) addOutpointsToIndexer(addressOutpointsWithBlockHeight map
 				}
 				addressOutpointsWithBlockHeight[address20] = outpointsForAddress
 			}
-
+			found := false
 			for i, outpointAndDenom := range addressOutpointsWithBlockHeight[address20] {
 				if outpointAndDenom.TxHash == outpoint.TxHash && outpointAndDenom.Index == outpoint.Index {
 					addressOutpointsWithBlockHeight[address20] = append(addressOutpointsWithBlockHeight[address20][:i], addressOutpointsWithBlockHeight[address20][i+1:]...)
+					found = true
 					break
 				}
+			}
+			if !found {
+				c.logger.Warn("ChainIndexer: Utxo is spent but not found in the address utxos", "utxo", outpoint, "block", block.Number(nodeCtx))
 			}
 		}
 
@@ -897,14 +877,9 @@ func (c *ChainIndexer) addOutpointsToIndexer(addressOutpointsWithBlockHeight map
 				continue
 			}
 			lockupByte := tx.Data()[0]
-			// After the BigSporkFork the minimum conversion period changes to 7200 blocks
 			var lockup *big.Int
 			if lockupByte == 0 {
-				if block.NumberU64(common.ZONE_CTX) < params.GoldenAgeForkNumberV1 {
-					lockup = new(big.Int).SetUint64(params.OldConversionLockPeriod)
-				} else {
-					lockup = new(big.Int).SetUint64(params.NewConversionLockPeriod)
-				}
+				lockup = new(big.Int).SetUint64(params.NewConversionLockPeriod)
 			} else {
 				lockup = new(big.Int).SetUint64(params.LockupByteToBlockDepth[lockupByte])
 			}
@@ -1033,7 +1008,6 @@ func (c *ChainIndexer) addOutpointsToIndexer(addressOutpointsWithBlockHeight map
 						// Do nothing to remove the lockup by skipping it
 					} else if lockup.UnlockHeight < block.NumberU64(nodeCtx) {
 						c.logger.Errorf("Lockup unlock height is less than current block height: %d < %d", lockup.UnlockHeight, block.NumberU64(nodeCtx))
-						remainingLockups = append(remainingLockups, lockup)
 					} else {
 						remainingLockups = append(remainingLockups, lockup)
 					}
@@ -1044,13 +1018,24 @@ func (c *ChainIndexer) addOutpointsToIndexer(addressOutpointsWithBlockHeight map
 			}
 		}
 	}
+
+	err := rawdb.WriteAddressOutpoints(c.chainDb, addressOutpointsWithBlockHeight)
+	if err != nil {
+		panic(err)
+	}
+	err = rawdb.WriteAddressLockups(c.chainDb, addressLockups)
+	if err != nil {
+		panic(err)
+	}
 }
 
 // reorgUtxoIndexer adds back previously removed outpoints and removes newly added outpoints.
 // This is done in reverse order from the old header to the common ancestor.
-func (c *ChainIndexer) reorgUtxoIndexer(headers []*types.WorkObject, addressOutpoints map[[20]byte][]*types.OutpointAndDenomination, addressLockups map[[20]byte][]*types.Lockup, nodeCtx int) error {
-	for _, header := range headers {
+func (c *ChainIndexer) reorgUtxoIndexer(headers []*types.WorkObject, nodeCtx int) error {
 
+	for _, header := range headers {
+		addressOutpoints := make(map[[20]byte][]*types.OutpointAndDenomination)
+		addressLockups := make(map[[20]byte][]*types.Lockup)
 		block := rawdb.ReadWorkObject(c.chainDb, header.NumberU64(nodeCtx), header.Hash(), types.BlockObject)
 		if block == nil {
 			c.logger.Errorf("ChainIndexer: Error reading block during reorg hash: %s", block.Hash().String())
@@ -1058,10 +1043,6 @@ func (c *ChainIndexer) reorgUtxoIndexer(headers []*types.WorkObject, addressOutp
 		}
 		for _, tx := range block.QiTransactions() {
 			for _, out := range tx.TxOut() {
-				if common.BytesToAddress(out.Address, common.Location{0, 0}).IsInQuaiLedgerScope() {
-					// This is a conversion output
-					continue
-				}
 				address20 := [20]byte(out.Address)
 				binary.BigEndian.PutUint32(address20[16:], uint32(block.NumberU64(nodeCtx)))
 				// Delete all outpoints for this address and block combination
@@ -1179,6 +1160,14 @@ func (c *ChainIndexer) reorgUtxoIndexer(headers []*types.WorkObject, addressOutp
 					addressLockups[addr20] = append(addressLockups[addr20], &types.Lockup{UnlockHeight: targetBlockHeight + params.NewConversionLockPeriod, Value: etx.Value()})
 				}
 			}
+		}
+		err = rawdb.WriteAddressOutpoints(c.chainDb, addressOutpoints)
+		if err != nil {
+			panic(err)
+		}
+		err = rawdb.WriteAddressLockups(c.chainDb, addressLockups)
+		if err != nil {
+			panic(err)
 		}
 	}
 	return nil

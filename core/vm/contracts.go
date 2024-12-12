@@ -26,9 +26,13 @@ import (
 
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/math"
+	"github.com/dominant-strategies/go-quai/core/rawdb"
+	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/crypto"
 	"github.com/dominant-strategies/go-quai/crypto/blake2b"
 	"github.com/dominant-strategies/go-quai/crypto/bn256"
+	"github.com/dominant-strategies/go-quai/ethdb"
+	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 
 	//lint:ignore SA1019 Needed for precompile
@@ -44,8 +48,9 @@ type PrecompiledContract interface {
 }
 
 var (
-	PrecompiledContracts map[common.AddressBytes]PrecompiledContract = make(map[common.AddressBytes]PrecompiledContract)
-	PrecompiledAddresses map[string][]common.Address                 = make(map[string][]common.Address)
+	PrecompiledContracts    map[common.AddressBytes]PrecompiledContract = make(map[common.AddressBytes]PrecompiledContract)
+	PrecompiledAddresses    map[string][]common.Address                 = make(map[string][]common.Address)
+	LockupContractAddresses map[[2]byte]common.Address                  = make(map[[2]byte]common.Address) // LockupContractAddress is not of type PrecompiledContract
 )
 
 func InitializePrecompiles(nodeLocation common.Location) {
@@ -58,6 +63,7 @@ func InitializePrecompiles(nodeLocation common.Location) {
 	PrecompiledContracts[common.HexToAddressBytes(fmt.Sprintf("0x%02x00000000000000000000000000000000000007", nodeLocation.BytePrefix()))] = &bn256ScalarMul{}
 	PrecompiledContracts[common.HexToAddressBytes(fmt.Sprintf("0x%02x00000000000000000000000000000000000008", nodeLocation.BytePrefix()))] = &bn256Pairing{}
 	PrecompiledContracts[common.HexToAddressBytes(fmt.Sprintf("0x%02x00000000000000000000000000000000000009", nodeLocation.BytePrefix()))] = &blake2F{}
+	LockupContractAddresses[[2]byte{nodeLocation[0], nodeLocation[1]}] = common.HexToAddress(fmt.Sprintf("0x%02x0000000000000000000000000000000000000A", nodeLocation.BytePrefix()), nodeLocation)
 
 	for address, _ := range PrecompiledContracts {
 		if address.Location().Equal(nodeLocation) {
@@ -67,7 +73,7 @@ func InitializePrecompiles(nodeLocation common.Location) {
 	}
 }
 
-// ActivePrecompiles returns the precompiles enabled with the current configuration.
+// ActivePrecompiles returns the precompiles enabled with the current configuration, except the Lockup Contract.
 func ActivePrecompiles(rules params.Rules, nodeLocation common.Location) []common.Address {
 	return PrecompiledAddresses[nodeLocation.Name()]
 }
@@ -497,4 +503,170 @@ func intToByteArray20(n uint8) [20]byte {
 
 func RequiredGas(input []byte) uint64 {
 	return 0
+}
+
+func GetLockupData(statedb StateDB, batch ethdb.Batch, ownerContract common.Address, beneficiaryMiner common.Address, lockupByte byte, epoch uint32) (uint32, *big.Int, uint16, error) {
+	_, err := ownerContract.InternalAndQuaiAddress()
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	_, err = beneficiaryMiner.InternalAddress()
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	balance, trancheUnlockHeight, elements := rawdb.ReadCoinbaseLockup(statedb.UnderlyingDatabase(), batch, ownerContract, beneficiaryMiner, lockupByte, epoch)
+	return trancheUnlockHeight, balance, elements, nil
+}
+
+func GetLatestLockupData(statedb StateDB, batch ethdb.Batch, ownerContract common.Address, beneficiaryMiner common.Address, lockupByte byte) (uint32, *big.Int, uint16, error) {
+	internalContract, err := ownerContract.InternalAndQuaiAddress()
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	internalMiner, err := beneficiaryMiner.InternalAddress()
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	_, _, epoch := statedb.GetLatestEpoch(internalContract, internalMiner, lockupByte)
+	balance, trancheUnlockHeight, elements := rawdb.ReadCoinbaseLockup(statedb.UnderlyingDatabase(), batch, ownerContract, beneficiaryMiner, lockupByte, epoch)
+	return trancheUnlockHeight, balance, elements, nil
+}
+
+func GetLatestEpoch(statedb StateDB, batch ethdb.Batch, ownerContract common.Address, beneficiaryMiner common.Address, lockupByte byte) (uint32, error) {
+	internalContract, err := ownerContract.InternalAndQuaiAddress()
+	if err != nil {
+		return 0, err
+	}
+	internalMiner, err := beneficiaryMiner.InternalAddress()
+	if err != nil {
+		return 0, err
+	}
+
+	_, _, epoch := statedb.GetLatestEpoch(internalContract, internalMiner, lockupByte)
+	return epoch, nil
+}
+
+func ClaimCoinbaseLockup(evm *EVM, batch ethdb.Batch, ownerContract common.Address, beneficiaryMiner common.Address, lockupByte byte, epoch uint32, currentHeight uint64, etxGasLimit uint64) error { // Ensure msg.sender is ownerContract
+	_, err := ownerContract.InternalAndQuaiAddress()
+	if err != nil {
+		return err
+	}
+	_, err = beneficiaryMiner.InternalAddress()
+	if err != nil {
+		return err
+	}
+
+	balance, trancheUnlockHeight, elements := rawdb.ReadCoinbaseLockup(evm.StateDB.UnderlyingDatabase(), batch, ownerContract, beneficiaryMiner, lockupByte, epoch)
+	if trancheUnlockHeight == 0 {
+		return errors.New("no lockup to claim")
+	}
+	if trancheUnlockHeight > uint32(currentHeight) {
+		return errors.New("tranche is not unlocked yet")
+	}
+	if elements == 0 {
+		return errors.New("no lockup to claim")
+	}
+	deletedCoinbaseLockupHash := types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, lockupByte, epoch, balance, trancheUnlockHeight, elements)
+	rawdb.DeleteCoinbaseLockup(batch, ownerContract, beneficiaryMiner, lockupByte, epoch)
+
+	evm.ETXCacheLock.RLock()
+	index := len(evm.ETXCache) // this is virtually guaranteed to be zero, but the logic is the same as opETX
+	evm.ETXCacheLock.RUnlock()
+	if index > math.MaxUint16 {
+		return fmt.Errorf("CreateETX overflow error: too many ETXs in cache")
+	}
+
+	externalTx := types.ExternalTx{Value: balance, To: &beneficiaryMiner, Sender: ownerContract, EtxType: uint64(types.CoinbaseLockupType), OriginatingTxHash: evm.Hash, ETXIndex: uint16(index), Gas: etxGasLimit}
+
+	evm.ETXCacheLock.Lock()
+	evm.ETXCache = append(evm.ETXCache, types.NewTx(&externalTx))
+	evm.CoinbaseDeletedHashes = append(evm.CoinbaseDeletedHashes, &deletedCoinbaseLockupHash)
+	evm.ETXCacheLock.Unlock()
+
+	return nil
+}
+
+func RotateEpoch(statedb StateDB, ownerContract common.Address, beneficiaryMiner common.Address, lockupByte byte) error {
+	internalContract, err := ownerContract.InternalAndQuaiAddress()
+	if err != nil {
+		return err
+	}
+	internalMiner, err := beneficiaryMiner.InternalAddress()
+	if err != nil {
+		return err
+	}
+
+	subAddr, epochKey, epoch := statedb.GetLatestEpoch(internalContract, internalMiner, lockupByte)
+	if epoch == 0 {
+		return errors.New("no epoch to rotate")
+	}
+	epoch++
+	statedb.SetLatestEpochWithKey(subAddr, epochKey, epoch)
+	return nil
+}
+
+// AddNewLock adds a new locked balance to the lockup contract
+func AddNewLock(statedb StateDB, batch ethdb.Batch, ownerContract common.Address, beneficiaryMiner common.Address, sender common.InternalAddress, lockupByte byte, unlockHeight uint64, value *big.Int, location common.Location, log_ bool) ([]byte, []byte, *common.Hash, *common.Hash, error) {
+	internalContract, err := ownerContract.InternalAndQuaiAddress()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	internalMiner, err := beneficiaryMiner.InternalAddress()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if sender != common.OneInternal(location) {
+		return nil, nil, nil, nil, errors.New("sender is not the correct internal address")
+	}
+	subAddr, epochKey, epoch := statedb.GetLatestEpoch(internalContract, internalMiner, lockupByte)
+	balance, trancheUnlockHeight, elements := rawdb.ReadCoinbaseLockup(statedb.UnderlyingDatabase(), batch, ownerContract, beneficiaryMiner, lockupByte, epoch)
+
+	oldCoinbaseLockupHash_ := types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, lockupByte, epoch, balance, trancheUnlockHeight, elements)
+	oldCoinbaseLockupHashPtr := &oldCoinbaseLockupHash_
+	oldKey := rawdb.CoinbaseLockupKey(ownerContract, beneficiaryMiner, lockupByte, epoch)
+	oldKey = oldKey[len(rawdb.CoinbaseLockupPrefix):]
+	if trancheUnlockHeight != 0 && unlockHeight < uint64(trancheUnlockHeight) {
+		return nil, nil, nil, nil, errors.New("new unlock height is less than the current tranche unlock height, math is broken")
+	}
+	if epoch == 0 && trancheUnlockHeight != 0 {
+		return nil, nil, nil, nil, errors.New("epoch is 0 but trancheUnlockHeight is not")
+	}
+
+	if elements+1 > params.MaxCoinbaseTrancheElements || trancheUnlockHeight == 0 || unlockHeight-uint64(trancheUnlockHeight) > params.MaxCoinbaseTrancheBlocks {
+		// Rotate the epoch if applicable and create new lockup tranche
+		if epoch+1 > math.MaxUint32 {
+			return nil, nil, nil, nil, errors.New("epoch overflow")
+		}
+		if epoch == 0 && trancheUnlockHeight == 0 {
+			epoch = 1 // base case
+		} else if elements+1 > params.MaxCoinbaseTrancheElements || unlockHeight-uint64(trancheUnlockHeight) > params.MaxCoinbaseTrancheBlocks {
+			epoch++
+		}
+		elements = 0
+		balance = new(big.Int)
+		trancheUnlockHeight = uint32(unlockHeight) // TODO: ensure overflow is acceptable here
+		oldCoinbaseLockupHashPtr = nil
+		oldKey = nil
+		statedb.SetLatestEpochWithKey(subAddr, epochKey, epoch)
+		statedb.Finalise(true)
+		if log_ {
+			log.Global.Info("Rotated epoch: ", " owner: ", ownerContract, " miner: ", beneficiaryMiner, " epoch: ", epoch)
+		}
+	}
+
+	elements++
+	balance.Add(balance, value)
+
+	newKey, err := rawdb.WriteCoinbaseLockup(batch, ownerContract, beneficiaryMiner, lockupByte, epoch, balance, trancheUnlockHeight, elements)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	// Cut off prefix from keys
+	newKey = newKey[len(rawdb.CoinbaseLockupPrefix):]
+
+	newCoinbaseLockupHash := types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, lockupByte, epoch, balance, trancheUnlockHeight, elements)
+	if log_ {
+		log.Global.Info("Added new lockup: ", " contract: ", ownerContract, " miner: ", beneficiaryMiner, " epoch: ", epoch, " balance: ", balance.String(), " value: ", value.String(), " trancheUnlockHeight: ", trancheUnlockHeight, " elements: ", elements, " lockupByte: ", lockupByte)
+	}
+	return oldKey, newKey, oldCoinbaseLockupHashPtr, &newCoinbaseLockupHash, nil
 }

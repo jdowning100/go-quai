@@ -31,7 +31,9 @@ import (
 	"github.com/dominant-strategies/go-quai/core/rawdb"
 	"github.com/dominant-strategies/go-quai/core/state/snapshot"
 	"github.com/dominant-strategies/go-quai/core/types"
+	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/crypto"
+	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/metrics_config"
 	"github.com/dominant-strategies/go-quai/rlp"
@@ -349,6 +351,7 @@ func (s *StateDB) TxIndex() int {
 }
 
 func (s *StateDB) GetCode(addr common.InternalAddress) []byte {
+	return []byte{}
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
 		return stateObject.Code(s.db)
@@ -420,6 +423,10 @@ func (s *StateDB) Database() Database {
 
 func (s *StateDB) ETXDatabase() Database {
 	return s.etxDb
+}
+
+func (s *StateDB) UnderlyingDatabase() ethdb.KeyValueReader {
+	return s.db.TrieDB().DiskDB()
 }
 
 // StorageTrie returns the storage trie of an account.
@@ -700,6 +707,56 @@ func (s *StateDB) CommitEtxs() (common.Hash, error) {
 		s.setError(fmt.Errorf("commitETXs error: %v", err))
 	}
 	return root, err
+}
+
+func (s *StateDB) GetLatestEpoch(ownerContract, beneficiaryMiner common.InternalAddress, lockupByte byte) (common.InternalAddress, common.Hash, uint32) {
+	lockupContractAddress := vm.LockupContractAddresses[[2]byte{s.nodeLocation[0], s.nodeLocation[1]}]
+	subAddress := ownerContract
+	if subAddress[len(subAddress)-1] != lockupContractAddress.Bytes()[len(lockupContractAddress.Bytes())-1] {
+		// Set the last byte of the subAddress to the last byte of the lockupContractAddress to get a unique deterministic address for epoch storage
+		subAddress[len(subAddress)-1] = lockupContractAddress.Bytes()[len(lockupContractAddress.Bytes())-1]
+	} else {
+		// Set the last byte of the subAddress to 0x00 to get a unique subAddress
+		subAddress[len(subAddress)-1] = 0
+	}
+
+	epochKey := make([]byte, 0, 32)
+	epochKey = append(epochKey, beneficiaryMiner.Bytes()...)
+	epochKey = append(epochKey, lockupByte)
+	epochKeyHash := common.BytesToHash(epochKey)
+	epochBytes := s.GetState(subAddress, epochKeyHash)
+	epoch := binary.BigEndian.Uint32(epochBytes.Bytes()[common.HashLength-4:])
+	return subAddress, epochKeyHash, epoch
+}
+
+func (s *StateDB) SetLatestEpochWithKey(subAddress common.InternalAddress, epochKey common.Hash, epoch uint32) {
+	epochBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(epochBytes, epoch)
+	if epoch == 1 {
+		// We have to create the state object to store the epoch
+		s.CreateAccount(subAddress)
+		s.SetNonce(subAddress, 1)
+	}
+	s.SetState(subAddress, epochKey, common.BytesToHash(epochBytes))
+}
+
+func (s *StateDB) SetLatestEpoch(ownerContract, beneficiaryMiner common.InternalAddress, lockupByte byte, epoch uint32) {
+	lockupContractAddress := vm.LockupContractAddresses[[2]byte{s.nodeLocation[0], s.nodeLocation[1]}]
+	subAddress := ownerContract
+	if subAddress[len(subAddress)-1] != lockupContractAddress.Bytes()[len(lockupContractAddress.Bytes())-1] {
+		// Set the last byte of the subAddress to the last byte of the lockupContractAddress to get a unique deterministic address for epoch storage
+		subAddress[len(subAddress)-1] = lockupContractAddress.Bytes()[len(lockupContractAddress.Bytes())-1]
+	} else {
+		// Set the last byte of the subAddress to 0x00 to get a unique subAddress
+		subAddress[len(subAddress)-1] = 0
+	}
+
+	epochKey := make([]byte, 0, 32)
+	epochKey = append(epochKey, beneficiaryMiner.Bytes()...)
+	epochKey = append(epochKey, lockupByte)
+	epochBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(epochBytes, epoch)
+	s.SetState(subAddress, common.BytesToHash(epochKey), common.BytesToHash(epochBytes))
 }
 
 // getDeletedStateObject is similar to getStateObject, but instead of returning

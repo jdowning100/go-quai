@@ -21,6 +21,7 @@ import (
 
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/core/types"
+	"github.com/dominant-strategies/go-quai/ethdb"
 )
 
 // StateDB is an EVM database for full state querying.
@@ -75,6 +76,11 @@ type StateDB interface {
 	AddPreimage(common.Hash, []byte)
 
 	ForEachStorage(common.InternalAddress, func(common.Hash, common.Hash) bool) error
+	UnderlyingDatabase() ethdb.KeyValueReader
+
+	GetLatestEpoch(ownerContract, beneficiaryMiner common.InternalAddress, lockupByte byte) (common.InternalAddress, common.Hash, uint32)
+	SetLatestEpochWithKey(subAddress common.InternalAddress, epochKey common.Hash, epoch uint32)
+	Finalise(deleteEmptyObjects bool)
 }
 
 // CallContext provides a basic interface for the EVM calling conventions. The EVM

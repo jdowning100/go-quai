@@ -139,8 +139,9 @@ type EVM struct {
 	// applied in opCall*.
 	callGasTemp uint64
 
-	ETXCache     []*types.Transaction
-	ETXCacheLock sync.RWMutex
+	ETXCache              []*types.Transaction
+	CoinbaseDeletedHashes []*common.Hash
+	ETXCacheLock          sync.RWMutex
 }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should

@@ -199,6 +199,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		return nil, gas, 0, ErrInsufficientBalance
 	}
 	snapshot := evm.StateDB.Snapshot()
+	etxs := evm.ETXCache
 	p, isPrecompile, addr := evm.precompile(addr)
 	internalAddr, err := addr.InternalAndQuaiAddress()
 	if err != nil {
@@ -258,6 +259,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	// when we're in this also counts for code storage gas errors.
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
+		evm.ETXCache = etxs
 		if err != ErrExecutionReverted {
 			gas = 0
 		}
@@ -291,6 +293,7 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 		return nil, gas, ErrInsufficientBalance
 	}
 	var snapshot = evm.StateDB.Snapshot()
+	etxs := evm.ETXCache
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile, addr := evm.precompile(addr); isPrecompile {
@@ -310,6 +313,7 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 	}
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
+		evm.ETXCache = etxs
 		if err != ErrExecutionReverted {
 			gas = 0
 		}
@@ -331,7 +335,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 		return nil, gas, ErrDepth
 	}
 	var snapshot = evm.StateDB.Snapshot()
-
+	etxs := evm.ETXCache
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile, addr := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
@@ -349,6 +353,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 	}
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
+		evm.ETXCache = etxs
 		if err != ErrExecutionReverted {
 			gas = 0
 		}
@@ -375,7 +380,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 	// then certain tests start failing; stRevertTest/RevertPrecompiledTouchExactOOG.json.
 	// We could change this, but for now it's left for legacy reasons
 	var snapshot = evm.StateDB.Snapshot()
-
+	etxs := evm.ETXCache
 	if p, isPrecompile, addr := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
 	} else {
@@ -399,6 +404,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 	}
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
+		evm.ETXCache = etxs
 		if err != ErrExecutionReverted {
 			gas = 0
 		}
@@ -458,6 +464,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	}
 	// Create a new account on the state
 	snapshot := evm.StateDB.Snapshot()
+	etxs := evm.ETXCache
 	evm.StateDB.CreateAccount(internalContractAddr)
 
 	evm.StateDB.SetNonce(internalContractAddr, 1)
@@ -515,6 +522,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	// when we're in this also counts for code storage gas errors.
 	if err != nil && err != ErrCodeStoreOutOfGas {
 		evm.StateDB.RevertToSnapshot(snapshot)
+		evm.ETXCache = etxs
 		if err != ErrExecutionReverted {
 			contract.UseGas(contract.Gas)
 		}

@@ -204,6 +204,10 @@ func (progpow *Progpow) VerifyUncles(chain consensus.ChainReader, block *types.W
 		}
 		uncles.Add(hash)
 
+		if uncle.PrimaryCoinbase().IsInQiLedgerScope() && block.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+			return fmt.Errorf("uncle inclusion is not allowed before block %v", params.ControllerKickInBlock)
+		}
+
 		// Make sure the uncle has a valid ancestry
 		if ancestors[hash] != nil {
 			return consensus.ErrUncleIsAncestor
@@ -414,6 +418,9 @@ func (progpow *Progpow) verifyHeader(chain consensus.ChainHeaderReader, header, 
 		}
 		if header.ExpansionNumber() != expectedExpansionNumber {
 			return fmt.Errorf("invalid expansion number: have %v, want %v", header.ExpansionNumber(), expectedExpansionNumber)
+		}
+		if header.PrimaryCoinbase().IsInQiLedgerScope() && header.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+			return fmt.Errorf("Qi coinbase is not allowed before block %v", params.ControllerKickInBlock)
 		}
 	}
 

@@ -108,7 +108,7 @@ type Config struct {
 	QiCoinbase            common.Address  `toml:",omitempty"` // Public address for Qi mining rewards
 	CoinbaseLockup        uint8           `toml:",omitempty"` // Lockup byte the determines number of blocks before mining rewards can be spent
 	LockupContractAddress *common.Address `toml:",omitempty"` // Address of the lockup contract to use for coinbase rewards
-	MinerPreference       float64         // Determines the relative preference of Qi or Quai [0, 1] respectively
+	MinerPreference       float64         // Determines the relative preference of Quai or Qi [0, 1] respectively
 	Notify                []string        `toml:",omitempty"` // HTTP URL list to be notified of new work packages (only useful in ethash).
 	NotifyFull            bool            `toml:",omitempty"` // Notify with pending block headers instead of work packages
 	ExtraData             hexutil.Bytes   `toml:",omitempty"` // Block extra data set by the miner
@@ -540,6 +540,9 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 	)
 
 	start := time.Now()
+	if nodeCtx == common.ZONE_CTX && block.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+		w.minerPreference = 0 // only mine Quai until the controller kicks in
+	}
 	w.pickCoinbases()
 	// Set the primary coinbase if the worker is running or it's required
 	if w.hc.NodeCtx() == common.ZONE_CTX && w.GetPrimaryCoinbase().Equal(common.Address{}) && w.hc.ProcessingState() {
@@ -893,6 +896,9 @@ func (w *worker) commitUncle(env *environment, uncle *types.WorkObjectHeader) er
 	if err != nil {
 		return err
 	}
+	if uncle.PrimaryCoinbase().IsInQiLedgerScope() && env.wo.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+		return errors.New("workshare coinbase is in Qi, but Qi is disabled")
+	}
 	if !workShare && (env.wo.ParentHash(w.hc.NodeCtx()) == uncle.ParentHash()) {
 		return errors.New("uncle is sibling")
 	}
@@ -948,6 +954,16 @@ func (w *worker) commitTransaction(env *environment, parent *types.WorkObject, t
 			}
 		}
 		if tx.To().IsInQiLedgerScope() { // Qi coinbase
+			if env.wo.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+				// This should never happen, but it's here as a backup
+				receipt := &types.Receipt{Type: tx.Type(), Status: types.ReceiptStatusFailed, GasUsed: gasUsedForCoinbase, TxHash: tx.Hash()}
+				gasUsed := env.wo.GasUsed()
+				gasUsed += gasUsedForCoinbase
+				env.wo.Header().SetGasUsed(gasUsed)
+				env.txs = append(env.txs, tx)
+				env.receipts = append(env.receipts, receipt)
+				return receipt.Logs, true, nil
+			}
 
 			lockup := new(big.Int).SetUint64(params.LockupByteToBlockDepth[lockupByte])
 			if lockup.Uint64() < params.ConversionLockPeriod {
@@ -1198,6 +1214,13 @@ func (w *worker) commitTransaction(env *environment, parent *types.WorkObject, t
 			}
 		}
 		if tx.ETXSender().Location().Equal(*tx.To().Location()) { // Quai->Qi conversion
+			if env.wo.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+				receipt := &types.Receipt{Type: tx.Type(), Status: types.ReceiptStatusFailed, GasUsed: 0, TxHash: tx.Hash()}
+				env.wo.Header().SetGasUsed(gasUsed)
+				env.txs = append(env.txs, tx)
+				env.receipts = append(env.receipts, receipt)
+				return []*types.Log{}, false, nil
+			}
 			txGas := tx.Gas()
 			var lockup *big.Int
 			lockup = new(big.Int).SetUint64(params.ConversionLockPeriod)
@@ -1927,6 +1950,9 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 			if w.GetPrimaryCoinbase().Equal(common.Zero) {
 				w.logger.Error("Refusing to mine without primary coinbase")
 				return nil, errors.New("refusing to mine without primary coinbase")
+			} else if w.GetPrimaryCoinbase().IsInQiLedgerScope() && newWo.PrimeTerminusNumber().Uint64() < params.ControllerKickInBlock {
+				w.logger.Error("Refusing to mine with Qi primary coinbase before controller kick in block")
+				return nil, errors.New("refusing to mine with Qi primary coinbase before controller kick in block")
 			}
 			newWo.WorkObjectHeader().SetPrimaryCoinbase(w.GetPrimaryCoinbase())
 		}

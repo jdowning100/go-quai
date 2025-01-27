@@ -208,8 +208,8 @@ var (
 	OneOverBaseFeeControllerAlpha = big.NewInt(100)
 	BaseFeeMultiplier             = big.NewInt(50)
 
-	ConversionLockPeriod uint64 = BlocksPerDay
-	CoinbaseEpochBlocks  uint64 = 100 // Maximum number of blocks in a coinbase tranche TODO: change this
+	ConversionLockPeriod uint64 = 10
+	CoinbaseEpochBlocks  uint64 = 1000 // Maximum number of blocks in a coinbase tranche TODO: change this
 
 	StartingKQuaiDiscount               = big.NewInt(100)
 	StartingConversionFlowAmount        = new(big.Int).Mul(big.NewInt(10000), big.NewInt(Ether)) // Starting conversion flow amount in Quai

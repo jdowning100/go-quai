@@ -205,7 +205,7 @@ type Progpow struct {
 func New(config Config, notify []string, noverify bool, logger *log.Logger) *Progpow {
 	if config.CachesInMem <= 0 {
 		logger.WithField("requested", config.CachesInMem).Warn("Invalid ethash caches in memory, defaulting to 1")
-		config.CachesInMem = 1
+		config.CachesInMem = 10
 	}
 	if config.CacheDir != "" && config.CachesOnDisk > 0 {
 		logger.WithFields(log.Fields{

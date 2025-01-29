@@ -508,6 +508,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 		rawdb.DeleteCanonicalHash(hc.headerDb, prevHeader.NumberU64(hc.NodeCtx()))
 		// UTXO Rollback logic: Recreate deleted UTXOs and delete created UTXOs
 		if nodeCtx == common.ZONE_CTX && hc.ProcessingState() {
+			batch := hc.headerDb.NewBatch()
 			sutxos, err := rawdb.ReadSpentUTXOs(hc.headerDb, prevHeader.Hash())
 			if err != nil {
 				return err
@@ -518,7 +519,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 			}
 			sutxos = append(sutxos, trimmedUtxos...)
 			for _, sutxo := range sutxos {
-				rawdb.CreateUTXO(hc.headerDb, sutxo.TxHash, sutxo.Index, sutxo.UtxoEntry)
+				rawdb.CreateUTXO(batch, sutxo.TxHash, sutxo.Index, sutxo.UtxoEntry)
 			}
 			utxoKeys, err := rawdb.ReadCreatedUTXOKeys(hc.headerDb, prevHeader.Hash())
 			if err != nil {
@@ -528,7 +529,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				if len(key) == rawdb.UtxoKeyWithDenominationLength {
 					key = key[:rawdb.UtxoKeyLength] // The last byte of the key is the denomination (but only in CreatedUTXOKeys)
 				}
-				hc.headerDb.Delete(key)
+				batch.Delete(key)
 			}
 			createdCoinbaseKeys, err := rawdb.ReadCreatedCoinbaseLockupKeys(hc.headerDb, prevHeader.Hash())
 			if err != nil {
@@ -538,7 +539,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				if len(key) != rawdb.CoinbaseLockupKeyLength {
 					return fmt.Errorf("invalid created coinbase key length: %d", len(key))
 				}
-				hc.headerDb.Delete(key)
+				batch.Delete(key)
 			}
 			deletedCoinbases, err := rawdb.ReadDeletedCoinbaseLockups(hc.headerDb, prevHeader.Hash())
 			if err != nil {
@@ -548,8 +549,17 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				if len(key) != rawdb.CoinbaseLockupKeyLength {
 					return fmt.Errorf("invalid deleted coinbase key length: %d", len(key))
 				}
-				hc.headerDb.Put(key[:], coinbase)
+				batch.Put(key[:], coinbase)
 			}
+			rawdb.WriteHeadBlockHash(batch, prevHeader.Hash())
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			hc.logger.WithFields(log.Fields{
+				"Hash":   head.Hash(),
+				"Number": head.NumberArray(),
+			}).Info("Setting the current header")
+			hc.currentHeader.Store(prevHeader)
 		}
 		prevHeader = hc.GetHeaderByHash(prevHeader.ParentHash(hc.NodeCtx()))
 		if prevHeader == nil {
@@ -590,82 +600,15 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 					"block": block.Hash(),
 				}).Error("Error appending block during reorg")
 				rawdb.DeleteCanonicalHash(hc.headerDb, hashStack[i].NumberU64(hc.NodeCtx()))
-				// Append failed, rollback the UTXO set to the common header
-				for j := i + 1; j < len(hashStack); j++ {
-					hc.logger.Info("Append failed reverting header: ", " Number Array: ", hashStack[j].NumberArray(), " Hash: ", hashStack[j].Hash())
-					rawdb.DeleteCanonicalHash(hc.headerDb, hashStack[j].NumberU64(hc.NodeCtx()))
-					if nodeCtx == common.ZONE_CTX && hc.ProcessingState() {
-						sutxos, err := rawdb.ReadSpentUTXOs(hc.headerDb, hashStack[j].Hash())
-						if err != nil {
-							return err
-						}
-						trimmedUtxos, err := rawdb.ReadTrimmedUTXOs(hc.headerDb, hashStack[j].Hash())
-						if err != nil {
-							return err
-						}
-						sutxos = append(sutxos, trimmedUtxos...)
-						for _, sutxo := range sutxos {
-							rawdb.CreateUTXO(hc.headerDb, sutxo.TxHash, sutxo.Index, sutxo.UtxoEntry)
-						}
-						utxoKeys, err := rawdb.ReadCreatedUTXOKeys(hc.headerDb, hashStack[j].Hash())
-						if err != nil {
-							return err
-						}
-						for _, key := range utxoKeys {
-							hc.headerDb.Delete(key)
-						}
-						createdCoinbaseKeys, err := rawdb.ReadCreatedCoinbaseLockupKeys(hc.headerDb, hashStack[j].Hash())
-						if err != nil {
-							return err
-						}
-						for _, key := range createdCoinbaseKeys {
-							if len(key) != rawdb.CoinbaseLockupKeyLength {
-								return fmt.Errorf("invalid created coinbase key length: %d", len(key))
-							}
-							hc.headerDb.Delete(key)
-						}
-						deletedCoinbases, err := rawdb.ReadDeletedCoinbaseLockups(hc.headerDb, hashStack[j].Hash())
-						if err != nil {
-							return err
-						}
-						for key, coinbase := range deletedCoinbases {
-							if len(key) != rawdb.CoinbaseLockupKeyLength {
-								return fmt.Errorf("invalid deleted coinbase key length: %d", len(key))
-							}
-							hc.headerDb.Put(key[:], coinbase)
-						}
-					}
-				}
-				for k := len(prevHashStack) - 1; k >= 0; k-- {
-					hc.logger.Info("Append failed reapplying header: ", " Number Array: ", prevHashStack[k].NumberArray(), " Hash: ", prevHashStack[k].Hash())
-					rawdb.WriteCanonicalHash(hc.headerDb, prevHashStack[k].Hash(), prevHashStack[k].NumberU64(hc.NodeCtx()))
-					if nodeCtx == common.ZONE_CTX {
-						block := hc.GetBlockOrCandidate(prevHashStack[k].Hash(), prevHashStack[k].NumberU64(nodeCtx))
-						if block == nil {
-							return errors.New("could not find block during SetCurrentState: " + prevHashStack[k].Hash().String())
-						}
-						err := hc.AppendBlock(block)
-						if err != nil {
-							hc.logger.WithFields(log.Fields{
-								"error": err,
-								"block": block.Hash(),
-							}).Error("Error appending block during reapply reorg")
-							return err
-						}
-					}
-				}
-				return err
 			}
+			rawdb.WriteHeadBlockHash(hc.headerDb, block.Hash())
+			hc.logger.WithFields(log.Fields{
+				"Hash":   head.Hash(),
+				"Number": head.NumberArray(),
+			}).Info("Setting the current header")
+			hc.currentHeader.Store(block)
 		}
 	}
-	// write the head block hash to the db
-	rawdb.WriteHeadBlockHash(hc.headerDb, head.Hash())
-	hc.logger.WithFields(log.Fields{
-		"Hash":   head.Hash(),
-		"Number": head.NumberArray(),
-	}).Info("Setting the current header")
-	hc.currentHeader.Store(head)
-
 	return nil
 }
 

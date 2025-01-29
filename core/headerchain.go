@@ -504,11 +504,12 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 		if prevHeader.Hash() == commonHeader.Hash() {
 			break
 		}
+		batch := hc.headerDb.NewBatch()
 		prevHashStack = append(prevHashStack, prevHeader)
-		rawdb.DeleteCanonicalHash(hc.headerDb, prevHeader.NumberU64(hc.NodeCtx()))
+		rawdb.DeleteCanonicalHash(batch, prevHeader.NumberU64(hc.NodeCtx()))
 		// UTXO Rollback logic: Recreate deleted UTXOs and delete created UTXOs
 		if nodeCtx == common.ZONE_CTX && hc.ProcessingState() {
-			batch := hc.headerDb.NewBatch()
+
 			sutxos, err := rawdb.ReadSpentUTXOs(hc.headerDb, prevHeader.Hash())
 			if err != nil {
 				return err
@@ -551,16 +552,18 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				}
 				batch.Put(key[:], coinbase)
 			}
-			rawdb.WriteHeadBlockHash(batch, prevHeader.Hash())
-			if err := batch.Write(); err != nil {
-				return err
-			}
-			hc.logger.WithFields(log.Fields{
-				"Hash":   head.Hash(),
-				"Number": head.NumberArray(),
-			}).Info("Setting the current header")
-			hc.currentHeader.Store(prevHeader)
 		}
+
+		rawdb.WriteHeadBlockHash(batch, prevHeader.Hash())
+		if err := batch.Write(); err != nil {
+			return err
+		}
+		hc.logger.WithFields(log.Fields{
+			"Hash":   prevHeader.Hash(),
+			"Number": prevHeader.NumberArray(),
+		}).Info("Setting the current header")
+		hc.currentHeader.Store(prevHeader)
+
 		prevHeader = hc.GetHeaderByHash(prevHeader.ParentHash(hc.NodeCtx()))
 		if prevHeader == nil {
 			return errors.New("Could not find previously canonical header during reorg")
@@ -588,6 +591,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 	for i := len(hashStack) - 1; i >= 0; i-- {
 		hc.logger.Info("Reverting header: ", " Number Array: ", hashStack[i].NumberArray(), " Hash: ", hashStack[i].Hash())
 		rawdb.WriteCanonicalHash(hc.headerDb, hashStack[i].Hash(), hashStack[i].NumberU64(hc.NodeCtx()))
+		setCurrent := true
 		if nodeCtx == common.ZONE_CTX {
 			block := hc.GetBlockOrCandidate(hashStack[i].Hash(), hashStack[i].NumberU64(nodeCtx))
 			if block == nil {
@@ -600,13 +604,16 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 					"block": block.Hash(),
 				}).Error("Error appending block during reorg")
 				rawdb.DeleteCanonicalHash(hc.headerDb, hashStack[i].NumberU64(hc.NodeCtx()))
+				setCurrent = false
 			}
-			rawdb.WriteHeadBlockHash(hc.headerDb, block.Hash())
+		}
+		if setCurrent {
+			rawdb.WriteHeadBlockHash(hc.headerDb, hashStack[i].Hash())
 			hc.logger.WithFields(log.Fields{
-				"Hash":   head.Hash(),
-				"Number": head.NumberArray(),
+				"Hash":   hashStack[i].Hash(),
+				"Number": hashStack[i].NumberArray(),
 			}).Info("Setting the current header")
-			hc.currentHeader.Store(block)
+			hc.currentHeader.Store(hashStack[i])
 		}
 	}
 	return nil

@@ -764,8 +764,6 @@ func AddNewLock(statedb StateDB, batch ethdb.Batch, ownerContract common.Address
 	if err != nil {
 		return false, nil, nil, common.Hash{}, common.Hash{}, err
 	}
-	// Cut off prefix from keys
-	key = key[len(rawdb.CoinbaseLockupPrefix):]
 
 	newCoinbaseLockupHash := types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, delegate, lockupByte, epoch, balance, trancheUnlockHeight, elements)
 	if log_ {

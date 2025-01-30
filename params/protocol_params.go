@@ -208,7 +208,7 @@ var (
 	OneOverBaseFeeControllerAlpha = big.NewInt(100)
 	BaseFeeMultiplier             = big.NewInt(50)
 
-	ConversionLockPeriod uint64 = 200
+	ConversionLockPeriod uint64 = 1
 	CoinbaseEpochBlocks  uint64 = 100 // Maximum number of blocks in a coinbase tranche TODO: change this
 
 	StartingKQuaiDiscount               = big.NewInt(100)

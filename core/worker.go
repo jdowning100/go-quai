@@ -624,9 +624,18 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 		if work.wo.NumberU64(common.ZONE_CTX) > uint64(params.WorkSharesInclusionDepth) {
 
 			targetBlockNumber := work.wo.NumberU64(common.ZONE_CTX) - uint64(params.WorkSharesInclusionDepth)
-
-			targetBlock := w.hc.GetBlockByNumber(targetBlockNumber)
-
+			targetBlocks := make([]*types.WorkObject, 0, params.WorkSharesInclusionDepth)
+			for i := 0; i < params.WorkSharesInclusionDepth; i++ {
+				targetBlock := w.hc.GetBlockByHash(work.wo.ParentHash(nodeCtx))
+				if targetBlock == nil {
+					return nil, fmt.Errorf("target block not found, block hash %v", work.wo.ParentHash(nodeCtx))
+				}
+				targetBlocks = append(targetBlocks, targetBlock)
+			}
+			targetBlock := targetBlocks[params.WorkSharesInclusionDepth-1]
+			if targetBlock.NumberU64(common.ZONE_CTX) != targetBlockNumber {
+				return nil, fmt.Errorf("target block number %v does not match the target block number %v", targetBlock.NumberU64(common.ZONE_CTX), targetBlockNumber)
+			}
 			totalEntropy := big.NewInt(0)
 			powHash, err := w.engine.ComputePowHash(targetBlock.WorkObjectHeader())
 			if err != nil {
@@ -644,10 +653,7 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 			entropyOfSharesAtTargetBlockDepth = append(entropyOfSharesAtTargetBlockDepth, zoneThresholdEntropy)
 
 			for i := 0; i < params.WorkSharesInclusionDepth; i++ {
-				blockAtHeight := w.hc.GetBlockByNumber(targetBlockNumber + uint64(i))
-				if blockAtHeight == nil {
-					return nil, fmt.Errorf("block at height %d not found, block height %d", targetBlockNumber+uint64(i), work.wo.NumberU64(common.ZONE_CTX))
-				}
+				blockAtHeight := targetBlocks[i]
 				var uncles []*types.WorkObjectHeader
 				if i == params.WorkSharesInclusionDepth {
 					uncles = work.wo.Uncles()

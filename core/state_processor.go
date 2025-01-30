@@ -927,7 +927,18 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 
 		targetBlockNumber := block.NumberU64(common.ZONE_CTX) - uint64(params.WorkSharesInclusionDepth)
 
-		targetBlock := p.hc.GetBlockByNumber(targetBlockNumber)
+		targetBlocks := make([]*types.WorkObject, 0, params.WorkSharesInclusionDepth)
+		for i := 0; i < params.WorkSharesInclusionDepth; i++ {
+			targetBlock := p.hc.GetBlockByHash(block.ParentHash(nodeCtx))
+			if targetBlock == nil {
+				return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("cannot find target block %s", block.ParentHash(nodeCtx).Hex())
+			}
+			targetBlocks = append(targetBlocks, targetBlock)
+		}
+		targetBlock := targetBlocks[params.WorkSharesInclusionDepth-1]
+		if targetBlock.NumberU64(common.ZONE_CTX) != targetBlockNumber {
+			return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("target block number %d does not match the target block number %d", targetBlock.NumberU64(common.ZONE_CTX), targetBlockNumber)
+		}
 
 		totalEntropy := big.NewInt(0)
 		powHash, err := p.engine.ComputePowHash(targetBlock.WorkObjectHeader())
@@ -946,10 +957,7 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 		entropyOfSharesAtTargetBlockDepth = append(entropyOfSharesAtTargetBlockDepth, zoneThresholdEntropy)
 
 		for i := 0; i < params.WorkSharesInclusionDepth; i++ {
-			blockAtHeight := p.hc.GetBlockByNumber(targetBlockNumber + uint64(i))
-			if blockAtHeight == nil {
-				return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("cannot find block at height %d, current height %, current hash %s", targetBlockNumber+uint64(i), block.NumberU64(common.ZONE_CTX), block.Hash().Hex())
-			}
+			blockAtHeight := targetBlocks[i]
 
 			var uncles []*types.WorkObjectHeader
 			if i == params.WorkSharesInclusionDepth {

@@ -533,6 +533,36 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				}
 				batch.Delete(key)
 			}
+
+			deletedCoinbases, err := rawdb.ReadDeletedCoinbaseLockups(hc.headerDb, prevHeader.Hash())
+			if err != nil {
+				return err
+			}
+			coinbaseDeletedHashes := make([]common.Hash, 0)
+			for i := len(deletedCoinbases) - 1; i >= 0; i-- { // Reapply the deleted states in reverse order to get to the original state by the end
+				key := deletedCoinbases[i].Key
+				data := deletedCoinbases[i].Value
+				if len(key) != rawdb.CoinbaseLockupKeyLength {
+					return fmt.Errorf("invalid deleted coinbase key length: %d", len(key))
+				}
+				amount := new(big.Int).SetBytes(data[:32])
+				blockHeight := binary.BigEndian.Uint32(data[32:36])
+				elements := binary.BigEndian.Uint16(data[36:38])
+				var delegate common.Address
+				if len(data) == 58 {
+					delegate = common.BytesToAddress(data[38:], hc.NodeLocation())
+				} else {
+					delegate = common.Zero
+				}
+				ownerContract, beneficiaryMiner, lockupByte, epoch, err := rawdb.ReverseCoinbaseLockupKey(key[:], hc.NodeLocation())
+				if err != nil {
+					hc.logger.Errorf("Error reversing coinbase lockup key: %v", err)
+				} else {
+					coinbaseDeletedHashes = append(coinbaseDeletedHashes, types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, delegate, lockupByte, epoch, amount, blockHeight, elements))
+				}
+				batch.Put(key[:], data)
+			}
+			hc.logger.Infof("Restored %d deleted coinbase lockups", len(coinbaseDeletedHashes))
 			createdCoinbaseKeys, err := rawdb.ReadCreatedCoinbaseLockupKeys(hc.headerDb, prevHeader.Hash())
 			if err != nil {
 				return err
@@ -565,36 +595,6 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				batch.Delete(key)
 			}
 			hc.logger.Infof("Deleted %d created coinbase lockups", len(coinbaseCreatedHashes))
-
-			deletedCoinbases, err := rawdb.ReadDeletedCoinbaseLockups(hc.headerDb, prevHeader.Hash())
-			if err != nil {
-				return err
-			}
-			coinbaseDeletedHashes := make([]common.Hash, 0)
-			for i := len(deletedCoinbases) - 1; i >= 0; i-- { // Reapply the deleted states in reverse order to get to the original state by the end
-				key := deletedCoinbases[i].Key
-				data := deletedCoinbases[i].Value
-				if len(key) != rawdb.CoinbaseLockupKeyLength {
-					return fmt.Errorf("invalid deleted coinbase key length: %d", len(key))
-				}
-				amount := new(big.Int).SetBytes(data[:32])
-				blockHeight := binary.BigEndian.Uint32(data[32:36])
-				elements := binary.BigEndian.Uint16(data[36:38])
-				var delegate common.Address
-				if len(data) == 58 {
-					delegate = common.BytesToAddress(data[38:], hc.NodeLocation())
-				} else {
-					delegate = common.Zero
-				}
-				ownerContract, beneficiaryMiner, lockupByte, epoch, err := rawdb.ReverseCoinbaseLockupKey(key[:], hc.NodeLocation())
-				if err != nil {
-					hc.logger.Errorf("Error reversing coinbase lockup key: %v", err)
-				} else {
-					coinbaseDeletedHashes = append(coinbaseDeletedHashes, types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, delegate, lockupByte, epoch, amount, blockHeight, elements))
-				}
-				batch.Put(key[:], data)
-			}
-			hc.logger.Infof("Restored %d deleted coinbase lockups", len(coinbaseDeletedHashes))
 			multiSet := rawdb.ReadMultiSet(hc.headerDb, prevHeader.Hash())
 			if multiSet != nil {
 				for _, hash := range coinbaseCreatedHashes {

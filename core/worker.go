@@ -624,13 +624,16 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 		if work.wo.NumberU64(common.ZONE_CTX) > uint64(params.WorkSharesInclusionDepth) {
 
 			targetBlockNumber := work.wo.NumberU64(common.ZONE_CTX) - uint64(params.WorkSharesInclusionDepth)
+
 			targetBlocks := make([]*types.WorkObject, 0, params.WorkSharesInclusionDepth)
+			blockCopy := work.wo
 			for i := 0; i < params.WorkSharesInclusionDepth; i++ {
-				targetBlock := w.hc.GetBlockByHash(work.wo.ParentHash(nodeCtx))
+				targetBlock := w.hc.GetBlockByHash(blockCopy.ParentHash(nodeCtx))
 				if targetBlock == nil {
 					return nil, fmt.Errorf("target block not found, block hash %v", work.wo.ParentHash(nodeCtx))
 				}
 				targetBlocks = append(targetBlocks, targetBlock)
+				blockCopy = targetBlock
 			}
 			targetBlock := targetBlocks[params.WorkSharesInclusionDepth-1]
 			if targetBlock.NumberU64(common.ZONE_CTX) != targetBlockNumber {

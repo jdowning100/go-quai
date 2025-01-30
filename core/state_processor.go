@@ -928,12 +928,14 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 		targetBlockNumber := block.NumberU64(common.ZONE_CTX) - uint64(params.WorkSharesInclusionDepth)
 
 		targetBlocks := make([]*types.WorkObject, 0, params.WorkSharesInclusionDepth)
+		blockCopy := block
 		for i := 0; i < params.WorkSharesInclusionDepth; i++ {
-			targetBlock := p.hc.GetBlockByHash(block.ParentHash(nodeCtx))
+			targetBlock := p.hc.GetBlockByHash(blockCopy.ParentHash(nodeCtx))
 			if targetBlock == nil {
 				return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("cannot find target block %s", block.ParentHash(nodeCtx).Hex())
 			}
 			targetBlocks = append(targetBlocks, targetBlock)
+			blockCopy = targetBlock
 		}
 		targetBlock := targetBlocks[params.WorkSharesInclusionDepth-1]
 		if targetBlock.NumberU64(common.ZONE_CTX) != targetBlockNumber {

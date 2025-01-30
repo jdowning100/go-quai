@@ -681,6 +681,53 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 	return nil
 }
 
+func (hc *HeaderChain) ValidateCoinbaseLockSet() error {
+	head := hc.CurrentHeader()
+	blockNmr := head.NumberU64(common.ZONE_CTX)
+	log.Global.WithFields(log.Fields{"number": blockNmr, "hash": head.Hash()}).Info("Validating the coinbase lockup set of the current header")
+	it := hc.Database().NewIterator(rawdb.CoinbaseLockupPrefix, nil)
+	coinbaseLockSet := multiset.New()
+	setSize := 0
+	for it.Next() {
+		if len(it.Key()) != rawdb.CoinbaseLockupKeyLength {
+			continue
+		}
+		data := it.Value()
+		amount := new(big.Int).SetBytes(data[:32])
+		blockHeight := binary.BigEndian.Uint32(data[32:36])
+		elements := binary.BigEndian.Uint16(data[36:38])
+		var delegate common.Address
+		if len(data) == 58 {
+			delegate = common.BytesToAddress(data[38:], hc.NodeLocation())
+		} else {
+			delegate = common.Zero
+		}
+		ownerContract, beneficiaryMiner, lockupByte, epoch, err := rawdb.ReverseCoinbaseLockupKey(it.Key(), hc.NodeLocation())
+		if err != nil {
+			log.Global.Errorf("Error reversing coinbase lockup key: %v", err)
+		}
+		hash := types.CoinbaseLockupHash(ownerContract, beneficiaryMiner, delegate, lockupByte, epoch, amount, blockHeight, elements)
+		coinbaseLockSet.Add(hash.Bytes())
+		setSize += 1
+	}
+	hc.logger.WithField("set size", setSize).Infof("Found coinbase lockups in the set")
+	if coinbaseLockSet.Hash() != head.UTXORoot() {
+		log.Global.Errorf("State of the coinbase lockup set doesnt match the commitment in the current header. Head Root: %x, calculated: %x\n", head.UTXORoot(), coinbaseLockSet.Hash())
+		parent := hc.GetHeaderByHash(head.ParentHash(common.ZONE_CTX))
+		if parent != nil {
+			log.Global.Errorf("Parent hash: %x Parent root: %x\n", parent.Hash(), parent.UTXORoot())
+		}
+		return fmt.Errorf("Coinbase lockup hash: %x head.CoinbaseLockupRoot: %x\n", coinbaseLockSet.Hash(), head.UTXORoot())
+	}
+	utxoSetSize := rawdb.ReadUTXOSetSize(hc.headerDb, head.Hash())
+	if utxoSetSize != uint64(setSize) {
+		log.Global.Errorf("UTXO set size mismatch: Database %d counted %d\n", utxoSetSize, setSize)
+		return fmt.Errorf("UTXO set size mismatch: Database %d counted %d\n", utxoSetSize, setSize)
+	}
+	log.Global.Info("Coinbase lockup set validated")
+	return nil
+}
+
 func (hc *HeaderChain) ValidateUtxoSet() error {
 	head := hc.CurrentHeader()
 	blockNmr := head.NumberU64(common.ZONE_CTX)

@@ -127,12 +127,13 @@ func NewSlice(db ethdb.Database, config *Config, txConfig *TxPoolConfig, txLooku
 	}
 
 	if nodeCtx == common.ZONE_CTX {
-		err = sl.hc.ValidateUtxoSet()
+		err = sl.hc.ValidateCoinbaseLockSet()
 		if err != nil {
 			sl.logger.WithField("err", err).Fatal("Validation of the current utxo set failed on startup")
 		} else {
 			sl.logger.Info("utxo set is validated and matches the mu hash commitment in the current header")
 		}
+		return nil, errors.New("Root Check Success")
 	}
 
 	sl.validator = NewBlockValidator(chainConfig, sl.hc, engine)

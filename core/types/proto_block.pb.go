@@ -7,12 +7,13 @@
 package types
 
 import (
-	common "github.com/dominant-strategies/go-quai/common"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	common "github.com/dominant-strategies/go-quai/common"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -1777,6 +1778,20 @@ func (x *ProtoReceiptForStorage) GetOutboundEtxs() *ProtoTransactions {
 		return x.OutboundEtxs
 	}
 	return nil
+}
+
+func (x *ProtoReceiptForStorage) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *ProtoReceiptForStorage) GetRevertReason() string {
+	if x != nil {
+		return x.RevertReason
+	}
+	return ""
 }
 
 type ProtoReceiptsForStorage struct {

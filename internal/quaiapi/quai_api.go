@@ -760,7 +760,7 @@ func (s *PublicBlockChainQuaiAPI) Call(ctx context.Context, args TransactionArgs
 	}
 	// If the result contains a revert reason, try to unpack and return it.
 	if len(result.Revert()) > 0 {
-		return nil, newRevertError(result, s.b.NodeLocation())
+		return nil, core.NewRevertError(result, s.b.NodeLocation())
 	}
 	return result.Return(), result.Err
 }
@@ -1373,7 +1373,14 @@ func (s *PublicBlockChainQuaiAPI) GetTransactionReceipt(ctx context.Context, has
 		signer := types.MakeSigner(s.b.ChainConfig(), bigblock)
 		from, _ := types.Sender(signer, tx)
 		fields["from"] = from.Hex()
-
+	}
+	if s.b.Config().IndexAddressUtxos {
+		if receipt.Error != "" {
+			fields["error"] = receipt.Error
+		}
+		if receipt.RevertReason != "" {
+			fields["revertReason"] = receipt.RevertReason
+		}
 	}
 
 	if tx.Type() == types.ExternalTxType {

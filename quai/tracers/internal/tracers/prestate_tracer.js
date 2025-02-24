@@ -87,7 +87,10 @@
 				break;
 			case "CREATE":
 				var from = log.contract.getAddress();
-				this.lookupAccount(toContract(from, db.getNonce(from)), db);
+				var offset = log.stack.peek(1).valueOf()
+				var size = log.stack.peek(2).valueOf()
+				var end = offset + size
+				this.lookupAccount(toContract(from, db.getNonce(from)), log.memory.slice(offset, end), db);
 				break;
 			case "CREATE2":
 				var from = log.contract.getAddress();

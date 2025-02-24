@@ -416,7 +416,7 @@ func New(code string, ctx *Context, logger *log.Logger, nodeLocation common.Loca
 		if ptr, size := ctx.GetBuffer(-3); ptr != nil {
 			from = common.BytesToAddress(makeSlice(ptr, size), nodeLocation)
 		} else {
-			str := ctx.GetString(-2)
+			str := ctx.GetString(-3)
 			if len(str) == 39 {
 				str = "0" + str
 			} else if len(str) == 38 {
@@ -443,7 +443,7 @@ func New(code string, ctx *Context, logger *log.Logger, nodeLocation common.Loca
 		if ptr, size := ctx.GetBuffer(-3); ptr != nil {
 			from = common.BytesToAddress(makeSlice(ptr, size), nodeLocation)
 		} else {
-			str := ctx.GetString(-2)
+			str := ctx.GetString(-3)
 			if len(str) == 39 {
 				str = "0" + str
 			} else if len(str) == 38 {

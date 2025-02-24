@@ -11,7 +11,7 @@ import (
 
 func TestGenerateAssetBytesForPreState(t *testing.T) {
 	// Read the file into a byte slice.
-	data, err := ioutil.ReadFile("prestate_tracer.js")
+	data, err := ioutil.ReadFile("call_tracer.js")
 	if err != nil {
 		log.Fatalf("failed to read file: %v", err)
 	}

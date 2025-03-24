@@ -821,7 +821,8 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 				return 0, result.Err
 			}
 			// Otherwise, the specified gas cap is too low
-			return 0, fmt.Errorf("gas required exceeds allowance (%d)", cap)
+			return 0, fmt.Errorf("gas required exceeds allowance (%d) err: %s", cap, result.Err.Error())
+
 		}
 	}
 	// Add 33% to the final gas estimate

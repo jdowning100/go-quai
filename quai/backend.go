@@ -255,7 +255,7 @@ func New(stack *node.Node, p2p NetworkingAPI, config *quaiconfig.Config, nodeCtx
 	}
 
 	// Only index bloom if processing state
-	if quai.core.ProcessingState() && nodeCtx == common.ZONE_CTX {
+	if false && quai.core.ProcessingState() && nodeCtx == common.ZONE_CTX {
 		quai.bloomIndexer = core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms, chainConfig.Location.Context(), logger, config.IndexAddressUtxos)
 		quai.bloomIndexer.Start(quai.Core().Slice().HeaderChain(), newChainConfig)
 	}

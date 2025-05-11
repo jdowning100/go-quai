@@ -122,6 +122,7 @@ var NodeFlags = []Flag{
 	NodeLogLevelFlag,
 	GenesisNonce,
 	Telemetry,
+	UsePendingState,
 }
 
 var TXPoolFlags = []Flag{
@@ -621,6 +622,12 @@ var (
 		Name:  c_NodeFlagPrefix + "telemetry",
 		Value: true,
 		Usage: "Enable telemetry reporting" + generateEnvDoc(c_NodeFlagPrefix+"telemetry"),
+	}
+
+	UsePendingState = Flag{
+		Name:  c_NodeFlagPrefix + "pending-state",
+		Value: false,
+		Usage: "Use the pending state for API queries" + generateEnvDoc(c_NodeFlagPrefix+"use-pending-state"),
 	}
 )
 
@@ -1564,7 +1571,7 @@ func SetQuaiConfig(stack *node.Node, cfg *quaiconfig.Config, slicesRunning []com
 	cfg.TelemetryEnabled = viper.GetBool(Telemetry.Name)
 
 	cfg.RpcVersion = viper.GetString(RpcVersion.Name)
-
+	cfg.UsePendingState = viper.GetBool(UsePendingState.Name)
 	if viper.IsSet(RPCGlobalGasCapFlag.Name) {
 		cfg.RPCGasCap = viper.GetUint64(RPCGlobalGasCapFlag.Name)
 	}

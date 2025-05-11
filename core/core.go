@@ -1626,6 +1626,14 @@ func (c *Core) Pending() *types.WorkObject {
 	return c.sl.miner.Pending()
 }
 
+func (c *Core) PendingStateAndBlock() (*state.StateDB, *types.WorkObject) {
+	return c.sl.miner.worker.PendingStateAndBlock()
+}
+
+func (c *Core) PendingReceipts() types.Receipts {
+	return c.sl.miner.worker.PendingReceipts()
+}
+
 // PendingBlock returns the currently pending block.
 //
 // Note, to access both the pending block and the pending state

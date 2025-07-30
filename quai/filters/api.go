@@ -69,10 +69,11 @@ type PublicFilterAPI struct {
 	timeout             time.Duration
 	subscriptionLimit   int
 	activeSubscriptions int
+	namespace           string
 }
 
 // NewPublicFilterAPI returns a new PublicFilterAPI instance.
-func NewPublicFilterAPI(backend Backend, timeout time.Duration, subscriptionLimit int) *PublicFilterAPI {
+func NewPublicFilterAPI(backend Backend, timeout time.Duration, subscriptionLimit int, namespace string) *PublicFilterAPI {
 	api := &PublicFilterAPI{
 		backend:             backend,
 		chainDb:             backend.ChainDb(),
@@ -81,6 +82,7 @@ func NewPublicFilterAPI(backend Backend, timeout time.Duration, subscriptionLimi
 		timeout:             timeout,
 		subscriptionLimit:   subscriptionLimit,
 		activeSubscriptions: 0,
+		namespace:           namespace,
 	}
 	go api.timeoutLoop(timeout)
 
@@ -504,8 +506,15 @@ func (api *PublicFilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, er
 		for {
 			select {
 			case h := <-headers:
-				// Marshal the header data
-				marshalHeader := h.RPCMarshalWorkObject(api.backend.RpcVersion())
+				// Marshal the header data based on namespace
+				var marshalHeader interface{}
+				if api.namespace == "eth" {
+					// Use ETH-compatible header format for eth namespace
+					marshalHeader = quaiapi.RPCMarshalETHHeader(h.Header(), h.WorkObjectHeader())
+				} else {
+					// Use native Quai format for quai namespace
+					marshalHeader = h.RPCMarshalWorkObject(api.backend.RpcVersion())
+				}
 				notifier.Notify(rpcSub.ID, marshalHeader)
 			case <-rpcSub.Err():
 				return

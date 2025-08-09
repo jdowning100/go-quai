@@ -768,7 +768,7 @@ var (
 
 	WSAllowedOriginsFlag = Flag{
 		Name:  c_RPCFlagPrefix + "ws-origins",
-		Value: "",
+		Value: "*",
 		Usage: "Origins from which to accept websockets requests" + generateEnvDoc(c_RPCFlagPrefix+"ws-origins"),
 	}
 

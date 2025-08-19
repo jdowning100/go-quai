@@ -32,8 +32,10 @@ import (
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
+	"github.com/dominant-strategies/go-quai/internal/quaiapi"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
+	"github.com/dominant-strategies/go-quai/quai/tracers"
 	"github.com/dominant-strategies/go-quai/rpc"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
@@ -936,4 +938,25 @@ func (b *QuaiAPIBackend) BroadcastAuxTemplate(auxTemplate *types.AuxTemplate, lo
 
 func (b *QuaiAPIBackend) BroadcastWorkShare(workShare *types.WorkObjectShareView, location common.Location) error {
 	return b.quai.p2p.Broadcast(location, workShare)
+}
+
+// TraceTransaction executes a transaction with the given tracer
+func (b *QuaiAPIBackend) TraceTransaction(ctx context.Context, msg core.Message, vmctx vm.BlockContext, statedb *state.StateDB, config *quaiapi.TraceConfig) (interface{}, error) {
+	// Create the transaction context for tracing
+	txctx := &tracers.Context{}
+	
+	// Convert the minimal config to a full TraceConfig for the tracer API
+	var traceConfig *tracers.TraceConfig
+	if config != nil && config.Tracer != "" {
+		tracer := config.Tracer
+		traceConfig = &tracers.TraceConfig{
+			Tracer: &tracer,
+		}
+	}
+	
+	// Create the tracer API
+	tracerAPI := tracers.NewAPI(b)
+	
+	// Use the exported TraceTx method from the tracer API
+	return tracerAPI.TraceTx(ctx, msg, txctx, vmctx, statedb, traceConfig)
 }

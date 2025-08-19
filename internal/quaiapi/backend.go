@@ -37,6 +37,11 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
 
+// TraceConfig holds the tracing configuration.
+type TraceConfig struct {
+	Tracer string // The tracer to use, e.g., "callTracer"
+}
+
 // Backend interface provides the common API services (that are provided by
 // both full and light clients) with access to necessary functions.
 type Backend interface {
@@ -144,6 +149,9 @@ type Backend interface {
 
 	BadHashExistsInChain() bool
 	IsBlockHashABadHash(hash common.Hash) bool
+	
+	// Tracing API
+	TraceTransaction(ctx context.Context, msg core.Message, vmctx vm.BlockContext, statedb *state.StateDB, config *TraceConfig) (interface{}, error)
 
 	// Validator methods that checks the sanity of the Body
 	SanityCheckWorkObjectBlockViewBody(wo *types.WorkObject) error

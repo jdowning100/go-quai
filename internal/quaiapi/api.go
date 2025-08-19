@@ -1130,6 +1130,7 @@ type accessListResult struct {
 	Accesslist *types.MixedAccessList `json:"accessList"`
 	Error      string                 `json:"error,omitempty"`
 	GasUsed    hexutil.Uint64         `json:"gasUsed"`
+	Trace      interface{}            `json:"trace,omitempty"`
 }
 
 // CreateAccessList creates an AccessList for the given transaction.
@@ -1146,7 +1147,7 @@ func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args Transac
 	if blockNrOrHash != nil {
 		bNrOrHash = *blockNrOrHash
 	}
-	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHash, args)
+	acl, gasUsed, vmerr, trace, err := AccessList(ctx, s.b, bNrOrHash, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1154,30 +1155,34 @@ func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args Transac
 	if vmerr != nil {
 		result.Error = vmerr.Error()
 	}
+	if trace != nil {
+		result.Trace = trace
+	}
 	return result, nil
 }
 
 // AccessList creates an access list for the given transaction.
 // If the accesslist creation fails an error is returned.
 // If the transaction itself fails, an vmErr is returned.
-func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrHash, args TransactionArgs) (acl types.AccessList, gasUsed uint64, vmErr error, err error) {
+// If tracing is enabled and execution fails, trace data is captured.
+func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrHash, args TransactionArgs) (acl types.AccessList, gasUsed uint64, vmErr error, trace interface{}, err error) {
 	nodeLocation := b.NodeLocation()
 	nodeCtx := b.NodeCtx()
 	if nodeCtx != common.ZONE_CTX {
-		return nil, 0, nil, errors.New("AccessList can only be called in zone chain")
+		return nil, 0, nil, nil, errors.New("AccessList can only be called in zone chain")
 	}
 	if !b.ProcessingState() {
-		return nil, 0, nil, errors.New("accessList call can only be made on chain processing the state")
+		return nil, 0, nil, nil, errors.New("accessList call can only be made on chain processing the state")
 	}
 	// Retrieve the execution context
 	db, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
 	if db == nil || err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 
 	// Ensure any missing fields are filled, extract the recipient and input data
 	if err := args.setDefaults(ctx, b, db); err != nil {
-		return nil, 0, nil, err
+		return nil, 0, nil, nil, err
 	}
 	var to common.Address
 	if args.To != nil {
@@ -1187,7 +1192,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		if _, err := to.InternalAndQuaiAddress(); err != nil {
 			to, _, err = vm.GrindContract(args.from(nodeLocation), uint64(*args.Nonce), math.MaxUint64, 0, crypto.Keccak256Hash(*args.Data), b.CurrentBlock().Number(nodeCtx), nodeLocation)
 			if err != nil {
-				return nil, 0, nil, err
+				return nil, 0, nil, nil, err
 			}
 		}
 	}
@@ -1210,26 +1215,61 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 
 		msg, err := args.ToMessage(b.RPCGasCap(), header.BaseFee(), nodeLocation)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 
 		// Apply the transaction with the access list tracer
 		tracer := vm.NewAccessListTracer(accessList, args.from(nodeLocation), to, precompiles)
+		// Also create a debug tracer to capture execution details for failed transactions
+
 		config := vm.Config{Tracer: tracer, Debug: true, NoBaseFee: true}
 		parent, err := b.BlockByHash(ctx, header.ParentHash(b.NodeCtx()))
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		vmenv, _, err := b.GetEVM(ctx, msg, statedb, header, parent, &config)
 		if err != nil {
-			return nil, 0, nil, err
+			return nil, 0, nil, nil, err
 		}
 		res, err := core.ApplyMessage(vmenv, msg, new(types.GasPool).AddGas(msg.Gas()))
 		if err != nil {
-			return nil, 0, nil, fmt.Errorf("failed to apply transaction: %v err: %v", msg, err)
+			// Capture trace data for the failed execution using callTracer
+			statedbTrace := db.Copy()
+			vmenv, _, err := b.GetEVM(ctx, msg, statedb, header, parent, &config)
+			if err != nil {
+				return nil, 0, nil, nil, err
+			}
+			// Use the backend's TraceTransaction method with callTracer
+			traceConfig := &TraceConfig{Tracer: "callTracer"}
+			traceResult, traceErr := b.TraceTransaction(ctx, msg, vmenv.Context, statedbTrace, traceConfig)
+			if traceErr == nil {
+				return nil, 0, err, traceResult, fmt.Errorf("failed to apply transaction: %v err: %v", msg, err)
+			}
+			return nil, 0, nil, nil, fmt.Errorf("failed to apply transaction: %v err: %v", msg, err)
 		}
+
+		// Check if execution failed but transaction succeeded
+		if res.Err != nil {
+			// Capture trace data for the failed execution using callTracer
+			statedbTrace := db.Copy()
+			vmenv, _, err := b.GetEVM(ctx, msg, statedb, header, parent, &config)
+			if err != nil {
+				return nil, 0, nil, nil, err
+			}
+			// Use the backend's TraceTransaction method with callTracer
+			traceConfig := &TraceConfig{Tracer: "callTracer"}
+			traceResult, traceErr := b.TraceTransaction(ctx, msg, vmenv.Context, statedbTrace, traceConfig)
+
+			str := fmt.Sprintf("%s", traceResult) // fallback
+
+			log.Global.Infof("traceResult: %s", str)
+			if traceErr == nil && tracer.Equal(prevTracer) {
+				return accessList, res.UsedGas, res.Err, traceResult, nil
+			}
+		}
+
 		if tracer.Equal(prevTracer) {
-			return accessList, res.UsedGas, res.Err, nil
+			return accessList, res.UsedGas, res.Err, nil, nil
 		}
 		prevTracer = tracer
 	}

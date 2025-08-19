@@ -833,6 +833,11 @@ func (api *API) TraceCall(ctx context.Context, args quaiapi.TransactionArgs, blo
 	return api.traceTx(ctx, msg, new(Context), vmctx, statedb, traceConfig)
 }
 
+// TraceTx is the exported version of traceTx for use by other packages
+func (api *API) TraceTx(ctx context.Context, message core.Message, txctx *Context, vmctx vm.BlockContext, statedb *state.StateDB, config *TraceConfig) (interface{}, error) {
+	return api.traceTx(ctx, message, txctx, vmctx, statedb, config)
+}
+
 // traceTx configures a new tracer according to the provided configuration, and
 // executes the given message in the provided environment. The return value will
 // be tracer dependent.

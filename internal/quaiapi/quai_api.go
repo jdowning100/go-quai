@@ -2069,6 +2069,60 @@ func (s *PublicBlockChainQuaiAPI) SubmitAuxTemplate(ctx context.Context, templat
 	return nil
 }
 
+// GetBlockRewardInQuai returns the block reward in Quai for a given block
+func (s *PublicBlockChainQuaiAPI) GetBlockRewardInQuai(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Big, error) {
+	// Get the block
+	block, err := s.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		return nil, err
+	}
+
+	// Get the work object header which contains difficulty
+	woHeader := block.WorkObjectHeader()
+	if woHeader == nil {
+		return nil, errors.New("work object header not found")
+	}
+
+	// Get difficulty and exchange rate
+	difficulty := woHeader.Difficulty()
+	exchangeRate := block.ExchangeRate()
+
+	if difficulty == nil || exchangeRate == nil {
+		return nil, errors.New("difficulty or exchange rate not available")
+	}
+
+	// Calculate Quai reward using the misc package
+	quaiReward := misc.CalculateQuaiReward(woHeader, difficulty, exchangeRate)
+
+	return (*hexutil.Big)(quaiReward), nil
+}
+
+// GetBlockRewardInQi returns the block reward in Qi for a given block
+func (s *PublicBlockChainQuaiAPI) GetBlockRewardInQi(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Big, error) {
+	// Get the block
+	block, err := s.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		return nil, err
+	}
+
+	// Get the work object header which contains difficulty
+	woHeader := block.WorkObjectHeader()
+	if woHeader == nil {
+		return nil, errors.New("work object header not found")
+	}
+
+	// Get difficulty
+	difficulty := woHeader.Difficulty()
+	if difficulty == nil {
+		return nil, errors.New("difficulty not available")
+	}
+
+	// Calculate Qi reward using the misc package
+	qiReward := misc.CalculateQiReward(woHeader, difficulty)
+
+	return (*hexutil.Big)(qiReward), nil
+}
+
 // HashesPerQits returns the number of hashes needed to mine the given number of Qits at a given block.
 // This is calculated by multiplying the number of Qits by OneOverKqi (hashes per Qit).
 //
@@ -2522,4 +2576,110 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 	}
 
 	return fields, nil
+}
+
+// GetWorkshareByHash searches the last 10k blocks to find a workshare by its hash.
+// Returns the workshare details and the associated coinbase ETX from outboundEtxs.
+// Note: Coinbase ETXs for workshares are generated ~3-4 blocks AFTER the workshare is included.
+func (s *PublicBlockChainQuaiAPI) GetWorkshareByHash(ctx context.Context, workshareHash common.Hash) (map[string]interface{}, error) {
+	const maxSearchDepth = 10000
+	const coinbaseSearchDepth = 10 // Search forward this many blocks for coinbase ETX
+
+	// Build a map of recent blocks by number for forward searching
+	blocksByNumber := make(map[uint64]*types.WorkObject)
+
+	// Start from the current block
+	currentBlock := s.b.CurrentBlock()
+	if currentBlock == nil {
+		return nil, errors.New("current block not found")
+	}
+
+	latestBlockNum := currentBlock.NumberU64(s.b.NodeCtx())
+
+	// Search backwards up to maxSearchDepth blocks
+	for i := 0; i < maxSearchDepth; i++ {
+		blockNum := currentBlock.NumberU64(s.b.NodeCtx())
+		blocksByNumber[blockNum] = currentBlock
+
+		uncles := currentBlock.Uncles()
+
+		// Check each uncle/workshare for matching hash
+		for uncleIdx, uncle := range uncles {
+			if uncle.Hash() == workshareHash {
+				// Found the workshare
+				result := make(map[string]interface{})
+				result["workshare"] = uncle.RPCMarshalWorkObjectHeader(s.b.RpcVersion())
+				result["blockHash"] = currentBlock.Hash()
+				result["blockNumber"] = hexutil.Uint64(blockNum)
+				result["workshareIndex"] = hexutil.Uint(uncleIdx)
+
+				// Search FORWARD for the coinbase ETX (it's generated ~3-4 blocks later)
+				// The workshare hash is stored in the last 32 bytes of the ETX's Data field
+				for searchNum := blockNum + 1; searchNum <= blockNum+coinbaseSearchDepth && searchNum <= latestBlockNum; searchNum++ {
+					searchBlock, exists := blocksByNumber[searchNum]
+					if !exists {
+						// Need to fetch this block - it's ahead of where we found the workshare
+						searchBlock, _ = s.b.BlockByNumber(ctx, rpc.BlockNumber(searchNum))
+						if searchBlock == nil {
+							continue
+						}
+					}
+
+					for etxIdx, etx := range searchBlock.OutboundEtxs() {
+						if types.IsCoinBaseTx(etx) {
+							data := etx.Data()
+							// Check if the last 32 bytes match the workshare hash
+							if len(data) >= 32 {
+								etxWorkshareHash := common.BytesToHash(data[len(data)-32:])
+								if etxWorkshareHash == workshareHash {
+									result["coinbaseEtx"] = newRPCTransaction(etx, searchBlock.Hash(), searchBlock.NumberU64(s.b.NodeCtx()), uint64(etxIdx), searchBlock.BaseFee(), s.b.NodeLocation())
+									result["coinbaseEtxIndex"] = hexutil.Uint(etxIdx)
+									result["coinbaseBlockHash"] = searchBlock.Hash()
+									result["coinbaseBlockNumber"] = hexutil.Uint64(searchBlock.NumberU64(s.b.NodeCtx()))
+									result["coinbaseAddress"] = etx.To().Hex()
+									result["coinbaseValue"] = (*hexutil.Big)(etx.Value())
+									// Convert to decimal string with 18 decimal places
+									value := etx.Value()
+									if value != nil {
+										// Convert wei to decimal string (18 decimals)
+										divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+										wholePart := new(big.Int).Div(value, divisor)
+										remainder := new(big.Int).Mod(value, divisor)
+										// Format remainder with leading zeros (18 digits)
+										remainderStr := fmt.Sprintf("%018s", remainder.String())
+										// Trim trailing zeros for cleaner output
+										remainderStr = strings.TrimRight(remainderStr, "0")
+										if remainderStr == "" {
+											result["coinbaseValueDecimal"] = wholePart.String()
+										} else {
+											result["coinbaseValueDecimal"] = fmt.Sprintf("%s.%s", wholePart.String(), remainderStr)
+										}
+									}
+									return result, nil
+								}
+							}
+						}
+					}
+				}
+
+				// Return result even if coinbase ETX not found (might be too recent)
+				return result, nil
+			}
+		}
+
+		// Get the parent block
+		parentHash := currentBlock.ParentHash(s.b.NodeCtx())
+		if parentHash == (common.Hash{}) {
+			break
+		}
+
+		parentBlock := s.b.GetBlockByHash(parentHash)
+		if parentBlock == nil {
+			break
+		}
+
+		currentBlock = parentBlock
+	}
+
+	return nil, fmt.Errorf("workshare with hash %s not found within %d blocks", workshareHash.Hex(), maxSearchDepth)
 }

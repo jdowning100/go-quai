@@ -2363,3 +2363,57 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 
 	return fields, nil
 }
+
+// GetBlockRewardInQuai returns the block reward in Quai for a given block
+func (s *PublicBlockChainQuaiAPI) GetBlockRewardInQuai(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Big, error) {
+	// Get the block
+	block, err := s.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		return nil, err
+	}
+
+	// Get the work object header which contains difficulty
+	woHeader := block.WorkObjectHeader()
+	if woHeader == nil {
+		return nil, errors.New("work object header not found")
+	}
+
+	// Get difficulty and exchange rate
+	difficulty := woHeader.Difficulty()
+	exchangeRate := block.ExchangeRate()
+
+	if difficulty == nil || exchangeRate == nil {
+		return nil, errors.New("difficulty or exchange rate not available")
+	}
+
+	// Calculate Quai reward using the misc package
+	quaiReward := misc.CalculateQuaiReward(woHeader, difficulty, exchangeRate)
+
+	return (*hexutil.Big)(quaiReward), nil
+}
+
+// GetBlockRewardInQi returns the block reward in Qi for a given block
+func (s *PublicBlockChainQuaiAPI) GetBlockRewardInQi(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Big, error) {
+	// Get the block
+	block, err := s.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		return nil, err
+	}
+
+	// Get the work object header which contains difficulty
+	woHeader := block.WorkObjectHeader()
+	if woHeader == nil {
+		return nil, errors.New("work object header not found")
+	}
+
+	// Get difficulty
+	difficulty := woHeader.Difficulty()
+	if difficulty == nil {
+		return nil, errors.New("difficulty not available")
+	}
+
+	// Calculate Qi reward using the misc package
+	qiReward := misc.CalculateQiReward(woHeader, difficulty)
+
+	return (*hexutil.Big)(qiReward), nil
+}

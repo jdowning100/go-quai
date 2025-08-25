@@ -50,6 +50,7 @@ require (
 	golang.org/x/crypto v0.38.0
 	golang.org/x/tools v0.22.0
 	google.golang.org/protobuf v1.36.6
+	gopkg.in/olebedev/go-duktape.v3 v3.0.0-20210326210528-650f7c854440
 	gopkg.in/yaml.v3 v3.0.1
 	lukechampine.com/blake3 v1.2.1
 	modernc.org/mathutil v1.6.0
@@ -189,7 +190,6 @@ require (
 	gonum.org/v1/gonum v0.14.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
-	gopkg.in/olebedev/go-duktape.v3 v3.0.0-20210326210528-650f7c854440 // indirect
 	lukechampine.com/uint128 v1.3.0 // indirect
 )
 

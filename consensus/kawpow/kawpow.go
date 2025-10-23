@@ -76,8 +76,19 @@ const (
 // isLittleEndian returns whether the local system is running in little or big
 // endian byte order.
 func isLittleEndian() bool {
-	n := uint32(0x01020304)
-	return *(*byte)(unsafe.Pointer(&n)) == 0x04
+    n := uint32(0x01020304)
+    return *(*byte)(unsafe.Pointer(&n)) == 0x04
+}
+
+// reverseBytes32 returns a new slice with the contents of b reversed.
+// Intended for 32-byte hashes, but will reverse the entire slice length.
+func reverseBytes32(b []byte) []byte {
+    n := len(b)
+    out := make([]byte, n)
+    for i := 0; i < n; i++ {
+        out[i] = b[n-1-i]
+    }
+    return out
 }
 
 // memoryMap tries to memory map a file of uint32s for read only access.

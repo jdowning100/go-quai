@@ -558,6 +558,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 }
 
 // Create creates a new contract using code as deployment code.
+// Difference between Ethereum EVM and Quai EVM is that Quai EVM will grind the contract address if the contract address is not valid for the current shard.
 func (evm *EVM) Create(caller ContractRef, code []byte, gas uint64, value *big.Int) (ret []byte, contractAddr common.Address, leftOverGas uint64, stateUsed uint64, err error) {
 	internalAddr, err := caller.Address().InternalAndQuaiAddress()
 	if err != nil {
@@ -644,12 +645,14 @@ func GrindContract(senderAddress common.Address, nonce uint64, gas uint64, gasCo
 //
 // The different between Create2 with Create is Create2 uses sha3(0xff ++ msg.sender ++ salt ++ sha3(init_code))[12:]
 // instead of the usual sender-and-nonce-hash as the address where the contract is initialized at.
+// NOTE: In Quai EVM, Create2 does not grind the contract address if the contract address is not valid for the current shard. This means that the caller must provide a salt that creates an address that is valid for the current shard.
 func (evm *EVM) Create2(caller ContractRef, code []byte, gas uint64, endowment *big.Int, salt *uint256.Int) (ret []byte, contractAddr common.Address, leftOverGas uint64, stateUsed uint64, err error) {
 	codeAndHash := &codeAndHash{code: code}
 	contractAddr = crypto.CreateAddress2(caller.Address(), salt.Bytes32(), codeAndHash.Hash().Bytes(), evm.chainConfig.Location)
 	return evm.create(caller, codeAndHash, gas, endowment, contractAddr)
 }
 
+// CreateETX creates an external transaction that calls a function on a contract or sends a value to an address on a different shard. It is also used to create a conversion transaction.
 func (evm *EVM) CreateETX(toAddr common.Address, fromAddr common.Address, gas uint64, value *big.Int, data []byte) (ret []byte, leftOverGas uint64, stateGas uint64, err error) {
 
 	// Verify address is not in context

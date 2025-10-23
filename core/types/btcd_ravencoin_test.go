@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/dominant-strategies/go-quai/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,7 +37,12 @@ func TestBuildCoinbaseScriptSigRavencoinFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scriptSig := BuildCoinbaseScriptSigWithNonce(tt.blockHeight, 0, 0, tt.extraData)
+			// Convert extraData to Hash for testing purposes
+			var sealHash common.Hash
+			if len(tt.extraData) >= 32 {
+				copy(sealHash[:], tt.extraData[:32])
+			}
+			scriptSig := BuildCoinbaseScriptSigWithNonce(tt.blockHeight, 0, 0, sealHash)
 
 			// Check the height encoding prefix
 			hexStr := hex.EncodeToString(scriptSig)
@@ -72,7 +78,7 @@ func TestBuildCoinbaseScriptSigLargeData(t *testing.T) {
 		largeData[i] = byte(i % 256)
 	}
 
-	scriptSig := BuildCoinbaseScriptSigWithNonce(blockHeight, 0, 0, largeData)
+	scriptSig := BuildCoinbaseScriptSigWithNonce(blockHeight, 0, 0, common.Hash{})
 
 	// Should be: 5 (height) + 1 (OP_PUSHDATA1) + 1 (length) + 100 (data) = 107 bytes
 	require.Equal(t, 107, len(scriptSig))
@@ -87,7 +93,7 @@ func TestBuildCoinbaseScriptSigLargeData(t *testing.T) {
 		veryLargeData[i] = byte(i % 256)
 	}
 
-	scriptSig2 := BuildCoinbaseScriptSigWithNonce(blockHeight, 0, 0, veryLargeData)
+	scriptSig2 := BuildCoinbaseScriptSigWithNonce(blockHeight, 0, 0, common.Hash{})
 
 	// Should be: 5 (height) + 1 (OP_PUSHDATA2) + 2 (length) + 300 (data) = 308 bytes
 	require.Equal(t, 308, len(scriptSig2))
@@ -102,9 +108,8 @@ func TestBuildCoinbaseScriptSigWithNonce(t *testing.T) {
 	blockHeight := uint32(680000)
 	extraNonce1 := uint32(0x12345678)
 	extraNonce2 := uint64(0x123456789abcdef0)
-	extraData := []byte("KAWPOW")
 
-	scriptSig := BuildCoinbaseScriptSigWithNonce(blockHeight, extraNonce1, extraNonce2, extraData)
+	scriptSig := BuildCoinbaseScriptSigWithNonce(blockHeight, extraNonce1, extraNonce2, common.Hash{})
 
 	// Expected structure:
 	// [0x04][height 4 bytes][0x04][nonce1 4 bytes][0x08][nonce2 8 bytes][0x06]["KAWPOW"]
@@ -133,9 +138,8 @@ func TestBuildCoinbaseScriptSigWithPartialNonces(t *testing.T) {
 	blockHeight := uint32(700000)
 	extraNonce1 := uint32(0x11223344)
 	extraNonce2 := uint64(0) // No second nonce
-	extraData := []byte("Quai")
 
-	scriptSig := BuildCoinbaseScriptSigWithNonce(blockHeight, extraNonce1, extraNonce2, extraData)
+	scriptSig := BuildCoinbaseScriptSigWithNonce(blockHeight, extraNonce1, extraNonce2, common.Hash{})
 
 	// Expected: height(5) + nonce1(5) + data(5) = 15 bytes
 	require.Equal(t, 15, len(scriptSig))

@@ -2479,6 +2479,12 @@ func (w *worker) AddWorkShare(workShare *types.WorkObjectHeader) error {
 
 	validity := w.hc.UncleWorkShareClassification(workShare)
 	if validity == types.Invalid {
+		w.logger.WithFields(log.Fields{
+			"hash":     workShare.Hash().Hex(),
+			"number":   workShare.NumberU64(),
+			"powType":  workShare.AuxPow().PowID(),
+			"validity": validity,
+		}).Warn("Workshare failed validation - rejecting")
 		return errors.New("work share received from peer is not valid")
 	}
 
@@ -2487,6 +2493,13 @@ func (w *worker) AddWorkShare(workShare *types.WorkObjectHeader) error {
 	// Emit workshare event for real-time updates
 	workshareObj := types.NewWorkObjectWithHeaderAndTx(workShare, nil)
 	w.hc.workshareFeed.Send(NewWorkshareEvent{Workshare: workshareObj})
+
+	w.logger.WithFields(log.Fields{
+		"hash":     workShare.Hash().Hex(),
+		"number":   workShare.NumberU64(),
+		"powType":  workShare.AuxPow().PowID(),
+		"validity": validity,
+	}).Info("✓ Workshare accepted and sent to feed")
 
 	return nil
 }

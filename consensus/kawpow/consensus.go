@@ -665,11 +665,29 @@ func (kawpow *Kawpow) ComputePowLight(header *types.WorkObjectHeader) (mixHash, 
 	kawpowHeaderHash := ravencoinHeader.SealHash()
 	blockNumber := uint64(ravencoinHeader.Height())
 
-	// Create a unique cache key using kawpowHeaderHash + nonce
-	// This ensures different nonces for the same block template have separate cache entries
+	// Prepare RVN-compatible header hash bytes (byte-reversed)
+	headerBytes := kawpowHeaderHash.Bytes()
+	headerBytesRev := reverseBytes32(headerBytes)
+
+	// DEBUG: Log the KAWPOW header hash being passed to kawpowLight
+	// Also log the reversed version for comparison with Ravencoin
+	reversedForComparison := headerBytesRev
+
+	kawpow.logger.WithFields(log.Fields{
+		"kawpow_header_hash":           kawpowHeaderHash.Hex(),
+		"kawpow_header_hash_raw_bytes": fmt.Sprintf("%x", headerBytes),
+		"kawpow_header_hash_reversed":  fmt.Sprintf("%x", reversedForComparison),
+		"nonce64":                      nonce64,
+		"block_number":                 blockNumber,
+		"height":                       ravencoinHeader.Height(),
+	}).Info("🔍 KAWPOW DEBUG: Computing kawpow hash with header_hash (input to kawpowLight)")
+
+	// Create a unique cache key using the RVN-compatible (byte-reversed)
+	// header hash + nonce so results are cached consistently with the
+	// actual kernel input.
 	nonceBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(nonceBytes, nonce64)
-	cacheKey := crypto.Keccak256Hash(kawpowHeaderHash.Bytes(), nonceBytes)
+	cacheKey := crypto.Keccak256Hash(headerBytesRev, nonceBytes)
 
 	// Check cache with the unique key
 	hashes, ok := kawpow.hashCache.Peek(cacheKey)
@@ -685,9 +703,10 @@ func (kawpow *Kawpow) ComputePowLight(header *types.WorkObjectHeader) (mixHash, 
 		ethashCache.cDag = cDag
 	}
 
-	// Use the same kawpowLight function as the sealer
+	// Use the same kawpowLight function as the sealer, but feed the
+	// RVN-compatible (byte-reversed) header hash bytes.
 	size := datasetSize(blockNumber)
-	digest, result := kawpowLight(size, ethashCache.cache, kawpowHeaderHash.Bytes(), nonce64, blockNumber, ethashCache.cDag)
+	digest, result := kawpowLight(size, ethashCache.cache, headerBytesRev, nonce64, blockNumber, ethashCache.cDag)
 	mixHash = common.BytesToHash(digest)
 	powHash = common.BytesToHash(result)
 
@@ -743,11 +762,16 @@ func (kawpow *Kawpow) ComputePowHash(header *types.WorkObjectHeader) (common.Has
 
 	ravencoinHeader := auxPow.Header()
 
-	// Verify the calculated values against the ones provided in the Ravencoin header
-	if !bytes.Equal(ravencoinHeader.MixHash().Bytes(), mixHash.Bytes()) {
+	// Verify the calculated mix against the one provided in the Ravencoin header.
+	// The kawpowLight function returns mixHash in little-endian format (KAWPOW algorithm spec).
+	// The stratum proxy reverses the mixHash bytes before sending (stratum-converter.py:394).
+	// DecodeRavencoinHeader() reverses the bytes back when reading (ravencoin.go:241-244),
+	// so both the calculated and header mixHash are now in the same format (little-endian).
+	headerMix := ravencoinHeader.MixHash().Bytes()
+	if !bytes.Equal(headerMix, mixHash.Bytes()) {
 		kawpow.logger.WithFields(log.Fields{
-			"receivedMixHash":   ravencoinHeader.MixHash().Hex(),
-			"calculatedMixHash": mixHash.Hex(),
+			"receivedMixHash":   fmt.Sprintf("%x", headerMix),
+			"calculatedMixHash": fmt.Sprintf("%x", mixHash.Bytes()),
 		}).Error("MixHash mismatch in ComputePowHash")
 		return common.Hash{}, consensus.ErrInvalidMixHash
 	}

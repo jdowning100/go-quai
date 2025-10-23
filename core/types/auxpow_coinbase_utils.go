@@ -18,8 +18,15 @@ import (
 	bchutil "github.com/gcash/bchutil"
 )
 
-// ExtractSealHashFromCoinbase scans a Ravencoin coinbase scriptSig and returns the
-// embedded seal hash, if present.
+// ExtractSealHashFromCoinbase extracts the seal hash from the coinbase scriptSig format.
+// Format:
+//
+//	OP_PUSH<n> <height(variable bytes)> ← BIP34 height (minimal encoding, 0-5 bytes)
+//	OP_PUSH4   <fabe6d6d(4 bytes)>      ← Magic marker
+//	OP_PUSH32  <AuxPowHash(32 bytes)>   ← Seal hash (this is what we extract)
+//	OP_PUSH4   <merkle_size(4 bytes)>
+//	OP_PUSH4   <merkle_nonce(4 bytes)>
+//	OP_PUSH12  <extraNonce1(4 bytes) + extraNonce2(8 bytes)> ← Combined extranonces
 func ExtractSealHashFromCoinbase(scriptSig []byte) (common.Hash, error) {
 	if len(scriptSig) == 0 {
 		return common.Hash{}, errors.New("coinbase scriptSig empty")
@@ -27,46 +34,96 @@ func ExtractSealHashFromCoinbase(scriptSig []byte) (common.Hash, error) {
 
 	cursor := 0
 
-	// First push must be the encoded height (ignore the actual value).
-	_, consumed, err := parseScriptPush(scriptSig[cursor:])
+	// 1. Parse and skip height (variable length - BIP34 minimal encoding)
+	heightData, consumed, err := parseScriptPush(scriptSig[cursor:])
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("decode coinbase height: %w", err)
 	}
+	// Height can be 0-5 bytes (BIP34 allows minimal encoding)
+	if len(heightData) > 5 {
+		return common.Hash{}, fmt.Errorf("invalid height length: expected 0-5 bytes, got %d", len(heightData))
+	}
 	cursor += consumed
 
-	for cursor < len(scriptSig) {
-		sealBytes, consumed, err := parseScriptPush(scriptSig[cursor:])
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("decode coinbase push: %w", err)
-		}
-		cursor += consumed
+	// 2. Parse and verify magic marker (should be "fabe6d6d")
+	magicData, consumed, err := parseScriptPush(scriptSig[cursor:])
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("decode magic marker: %w", err)
+	}
+	if len(magicData) != 4 {
+		return common.Hash{}, fmt.Errorf("invalid magic marker length: expected 4, got %d", len(magicData))
+	}
+	expectedMagic := []byte{0xfa, 0xbe, 0x6d, 0x6d}
+	if !bytes.Equal(magicData, expectedMagic) {
+		return common.Hash{}, fmt.Errorf("invalid magic marker: expected %x, got %x", expectedMagic, magicData)
+	}
+	cursor += consumed
 
-		if len(sealBytes) == common.HashLength {
-			return common.BytesToHash(sealBytes), nil
-		}
-
-		if nested := searchSealHash(sealBytes); len(nested) == common.HashLength {
-			return common.BytesToHash(nested), nil
-		}
+	// 3. Parse seal hash (32 bytes) - this is what we're looking for!
+	sealHashData, consumed, err := parseScriptPush(scriptSig[cursor:])
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("decode seal hash: %w", err)
+	}
+	if len(sealHashData) != common.HashLength {
+		return common.Hash{}, fmt.Errorf("invalid seal hash length: expected %d, got %d", common.HashLength, len(sealHashData))
 	}
 
-	return common.Hash{}, errors.New("seal hash not found in coinbase script")
+	return common.BytesToHash(sealHashData), nil
 }
 
-func searchSealHash(payload []byte) []byte {
-	idx := 0
-	for idx < len(payload) {
-		data, consumed, err := parseScriptPush(payload[idx:])
-		if err != nil {
-			return nil
-		}
-		idx += consumed
-
-		if len(data) == common.HashLength {
-			return data
-		}
+// SetSealHashInCoinbase updates the seal hash in an existing coinbase scriptSig.
+// This is used by miners to insert the actual seal hash into the placeholder.
+// Returns the modified scriptSig or an error if the format is invalid.
+func SetSealHashInCoinbase(scriptSig []byte, sealHash common.Hash) ([]byte, error) {
+	if len(scriptSig) == 0 {
+		return nil, errors.New("coinbase scriptSig empty")
 	}
-	return nil
+
+	cursor := 0
+
+	// 1. Skip height (variable length - BIP34 minimal encoding)
+	heightData, consumed, err := parseScriptPush(scriptSig[cursor:])
+	if err != nil {
+		return nil, fmt.Errorf("decode coinbase height: %w", err)
+	}
+	// Height can be 0-5 bytes (BIP34 allows minimal encoding)
+	if len(heightData) > 5 {
+		return nil, fmt.Errorf("invalid height length: expected 0-5 bytes, got %d", len(heightData))
+	}
+	cursor += consumed
+
+	// 2. Skip magic marker (4 bytes)
+	magicData, consumed, err := parseScriptPush(scriptSig[cursor:])
+	if err != nil {
+		return nil, fmt.Errorf("decode magic marker: %w", err)
+	}
+	if len(magicData) != 4 {
+		return nil, fmt.Errorf("invalid magic marker length: expected 4, got %d", len(magicData))
+	}
+	cursor += consumed
+
+	// 3. Find the seal hash position (should be OP_PUSH32 followed by 32 bytes)
+	if cursor >= len(scriptSig) {
+		return nil, errors.New("scriptSig too short to contain seal hash")
+	}
+	if scriptSig[cursor] != 0x20 { // OP_PUSH32
+		return nil, fmt.Errorf("expected OP_PUSH32 (0x20) at seal hash position, got 0x%x", scriptSig[cursor])
+	}
+
+	// Calculate the position where the seal hash data starts (after the OP_PUSH32 opcode)
+	sealHashStart := cursor + 1
+	sealHashEnd := sealHashStart + 32
+
+	if sealHashEnd > len(scriptSig) {
+		return nil, errors.New("scriptSig too short to contain 32-byte seal hash")
+	}
+
+	// Create a copy of the scriptSig and update the seal hash
+	result := make([]byte, len(scriptSig))
+	copy(result, scriptSig)
+	copy(result[sealHashStart:sealHashEnd], sealHash[:])
+
+	return result, nil
 }
 
 func parseScriptPush(script []byte) ([]byte, int, error) {
@@ -104,59 +161,55 @@ func parseScriptPush(script []byte) ([]byte, int, error) {
 	return script[read : read+dataLen], read + dataLen, nil
 }
 
-// BuildCoinbaseScriptSigWithNonce creates a scriptSig for KAWPOW coinbase with nonces
-// Format: [height][extraNonce1][extraNonce2][extraData]
-func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, extraNonce2 uint64, extraData []byte) []byte {
+// BuildCoinbaseScriptSigWithNonce creates a scriptSig for AuxPow coinbase with the Bitcoin standard format
+// Format:
+//
+//	OP_PUSH<n> <height(variable bytes)> ← BIP34 height (MINIMAL encoding)
+//	OP_PUSH4   <fabe6d6d(4 bytes)>      ← Magic marker
+//	OP_PUSH32  <SealHash(32 bytes)>     ← Actual seal hash
+//	OP_PUSH4   <merkle_size(4 bytes)>   ← 1
+//	OP_PUSH4   <merkle_nonce(4 bytes)>  ← 0
+//	OP_PUSH12  <extraNonce1(4 bytes) + extraNonce2(8 bytes)> ← Combined extranonces (Bitcoin standard)
+func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, extraNonce2 uint64, sealHash common.Hash) []byte {
 	var buf bytes.Buffer
 
-	// BIP34: Block height encoding (4 bytes, little-endian)
+	// 1. BIP34: Block height (minimal encoding - variable length)
+	// Must use minimal/compact encoding for BIP34 compliance
+	heightBytes := encodeHeightForBIP34(blockHeight)
+	if len(heightBytes) <= 75 {
+		buf.WriteByte(byte(len(heightBytes))) // Direct push for <= 75 bytes
+	} else if len(heightBytes) <= 255 {
+		buf.WriteByte(0x4c)                    // OP_PUSHDATA1
+		buf.WriteByte(byte(len(heightBytes)))
+	}
+	buf.Write(heightBytes)
+
+	// 2. Magic marker "fabe6d6d" (4 bytes)
+	// This marks the start of the AuxPow-specific data
 	buf.WriteByte(0x04) // OP_PUSH4
-	buf.WriteByte(byte(blockHeight))
-	buf.WriteByte(byte(blockHeight >> 8))
-	buf.WriteByte(byte(blockHeight >> 16))
-	buf.WriteByte(byte(blockHeight >> 24))
+	buf.WriteByte(0xfa)
+	buf.WriteByte(0xbe)
+	buf.WriteByte(0x6d)
+	buf.WriteByte(0x6d)
 
-	// Extra nonce 1 (4 bytes, little-endian) - pool nonce
-	if extraNonce1 != 0 {
-		buf.WriteByte(0x04) // OP_PUSH4
-		buf.WriteByte(byte(extraNonce1))
-		buf.WriteByte(byte(extraNonce1 >> 8))
-		buf.WriteByte(byte(extraNonce1 >> 16))
-		buf.WriteByte(byte(extraNonce1 >> 24))
-	}
+	// 3. Seal hash (32 bytes)
+	// Use provided seal hash, or zeros if not provided
+	buf.WriteByte(0x20) // OP_PUSH32 (32 decimal = 0x20 hex)
+	buf.Write(sealHash[:])
 
-	// Extra nonce 2 (8 bytes, little-endian) - miner nonce space
-	if extraNonce2 != 0 {
-		buf.WriteByte(0x08) // OP_PUSH8
-		buf.WriteByte(byte(extraNonce2))
-		buf.WriteByte(byte(extraNonce2 >> 8))
-		buf.WriteByte(byte(extraNonce2 >> 16))
-		buf.WriteByte(byte(extraNonce2 >> 24))
-		buf.WriteByte(byte(extraNonce2 >> 32))
-		buf.WriteByte(byte(extraNonce2 >> 40))
-		buf.WriteByte(byte(extraNonce2 >> 48))
-		buf.WriteByte(byte(extraNonce2 >> 56))
-	}
+	// 4. Merkle size (4 bytes, little-endian) - always 1 for single coinbase
+	buf.WriteByte(0x04) // OP_PUSH4
+	binary.Write(&buf, binary.LittleEndian, uint32(1))
 
-	// Add extra data if present
-	if len(extraData) > 0 {
-		if len(extraData) <= 75 {
-			// Direct push for small data (OP_PUSHx where x is the length)
-			buf.WriteByte(byte(len(extraData)))
-			buf.Write(extraData)
-		} else if len(extraData) <= 255 {
-			// For larger data, use OP_PUSHDATA1
-			buf.WriteByte(0x4c) // OP_PUSHDATA1
-			buf.WriteByte(byte(len(extraData)))
-			buf.Write(extraData)
-		} else {
-			// For even larger data, use OP_PUSHDATA2 (up to 520 bytes total scriptSig)
-			buf.WriteByte(0x4d) // OP_PUSHDATA2
-			buf.WriteByte(byte(len(extraData)))
-			buf.WriteByte(byte(len(extraData) >> 8))
-			buf.Write(extraData)
-		}
-	}
+	// 5. Merkle nonce (4 bytes, little-endian) - always 0
+	buf.WriteByte(0x04) // OP_PUSH4
+	binary.Write(&buf, binary.LittleEndian, uint32(0))
+
+	// 6. Combined extra nonces (12 bytes total, little-endian)
+	// Bitcoin standard: extraNonce1 (4 bytes) + extraNonce2 (8 bytes) in a single push
+	buf.WriteByte(0x0c) // OP_PUSH12
+	binary.Write(&buf, binary.LittleEndian, extraNonce1)
+	binary.Write(&buf, binary.LittleEndian, extraNonce2)
 
 	return buf.Bytes()
 }
@@ -199,9 +252,14 @@ func CalculateMerkleRootFromTxs(powId PowID, txs []*AuxPowTx) common.Hash {
 			}
 			transactions[i] = bchutil.NewTx(bitcoinCashTx.MsgTx)
 		}
-		// TODO: Need to find the function for bchd
-		// root := bchblockchain.CalcMerkleRoot(transactions)
-		// return common.BytesToHash(root[:])
+		// Bitcoin Cash uses BuildMerkleTreeStore (no CalcMerkleRoot in bchd)
+		// The last element of the tree is the merkle root
+		tree := bchblockchain.BuildMerkleTreeStore(transactions)
+		if len(tree) == 0 {
+			return common.Hash{}
+		}
+		root := tree[len(tree)-1]
+		return common.BytesToHash(root[:])
 
 	case Scrypt:
 		Transactions := make([]*ltcutil.Tx, len(txs))
@@ -352,4 +410,76 @@ func ExtractMerkleBranch(merkleTree []*chainhash.Hash, txCount int) [][]byte {
 	}
 
 	return branch
+}
+
+// encodeHeightForBIP34 encodes block height in minimal little-endian format
+// This matches Bitcoin's CScriptNum serialization used for BIP34 compliance.
+// The height must be encoded with the minimum number of bytes required.
+func encodeHeightForBIP34(height uint32) []byte {
+	if height == 0 {
+		return []byte{}
+	}
+
+	// Convert to little-endian bytes, removing leading zeros
+	result := make([]byte, 0, 4)
+	for height > 0 {
+		result = append(result, byte(height&0xff))
+		height >>= 8
+	}
+
+	// If the most significant bit is set, add a zero byte to indicate positive number
+	// This is part of Bitcoin's CScriptNum format to distinguish positive/negative
+	if len(result) > 0 && (result[len(result)-1]&0x80) != 0 {
+		result = append(result, 0x00)
+	}
+
+	return result
+}
+
+// ExtractHeightFromCoinbase extracts the block height from the coinbase scriptSig.
+// The height is encoded at the beginning of the scriptSig using BIP34 minimal encoding.
+// Format:
+//
+//	OP_PUSH<n> <height(variable bytes)> ← BIP34 height (minimal encoding, 0-5 bytes)
+//	... (rest of scriptSig)
+//
+// Returns the decoded height and an error if the scriptSig is invalid.
+func ExtractHeightFromCoinbase(scriptSig []byte) (uint32, error) {
+	if len(scriptSig) == 0 {
+		return 0, errors.New("coinbase scriptSig empty")
+	}
+
+	// Parse the height push operation
+	heightData, _, err := parseScriptPush(scriptSig)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse height from scriptSig: %w", err)
+	}
+
+	// Height can be 0-5 bytes (BIP34 allows minimal encoding)
+	if len(heightData) > 5 {
+		return 0, fmt.Errorf("invalid height length: expected 0-5 bytes, got %d", len(heightData))
+	}
+
+	// Empty height data means height 0
+	if len(heightData) == 0 {
+		return 0, nil
+	}
+
+	// Decode the height from minimal little-endian format
+	var height uint32
+	for i := 0; i < len(heightData); i++ {
+		height |= uint32(heightData[i]) << (8 * uint(i))
+	}
+
+	// Handle negative flag (last byte with high bit set followed by 0x00)
+	// In BIP34, heights are always positive, but we need to handle the encoding
+	if len(heightData) > 0 && heightData[len(heightData)-1] == 0x00 && len(heightData) > 1 {
+		// Remove the sign byte and recalculate
+		height = 0
+		for i := 0; i < len(heightData)-1; i++ {
+			height |= uint32(heightData[i]) << (8 * uint(i))
+		}
+	}
+
+	return height, nil
 }

@@ -257,9 +257,9 @@ var (
 )
 
 var (
-	KawPowForkBlock            uint64 = 1  // Block at which KawPow activates
+	KawPowForkBlock            uint64 = 0  // Block at which KawPow activates
 	KawPowTransitionPeriod     uint64 = 10 // Number of blocks over which the transition happens
-	TotalPowEngines            uint64 = 2  // Total number of PoW engines supported
+	TotalPowEngines            uint64 = 3  // Total number of PoW engines supported (Progpow, Kawpow, SHA256d)
 	AuxTemplateLivenessTime    uint64 = 15
 	ShareDiffRelativeThreshold        = big.NewInt(90) // 90% of the current header diff
 

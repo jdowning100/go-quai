@@ -583,6 +583,18 @@ func (b *QuaiAPIBackend) ReceiveMinedHeader(wo *types.WorkObject) error {
 
 	// Broadcast the block and announce chain insertion event
 	if block.Header() != nil {
+		// Debug: Check if AuxPow and transaction are present before broadcast
+		if block.WorkObjectHeader().AuxPow() != nil {
+			b.Logger().WithFields(log.Fields{
+				"powID":       block.WorkObjectHeader().AuxPow().PowID(),
+				"hasTx":       block.WorkObjectHeader().AuxPow().Transaction() != nil,
+				"hasHeader":   block.WorkObjectHeader().AuxPow().Header() != nil,
+				"headerNonce": block.WorkObjectHeader().AuxPow().Header().Nonce64(),
+			}).Debug("AuxPow state before broadcasting block")
+		} else {
+			b.Logger().Warn("AuxPow is nil before broadcasting block")
+		}
+
 		err := b.BroadcastBlock(block, b.NodeLocation())
 		if err != nil {
 			b.Logger().WithField("err", err).Error("Error broadcasting block")

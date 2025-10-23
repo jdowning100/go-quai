@@ -207,6 +207,9 @@ func New(stack *node.Node, p2p NetworkingAPI, config *quaiconfig.Config, nodeCtx
 		// KawPow is exclusively used after the transition
 		quai.engine[1] = quaiconfig.CreateKawPowConsensusEngine(stack, config.NodeLocation, &progpowConfig, config.Miner.Notify, config.Miner.Noverify, chainDb, logger)
 
+		// SHA256d engine for Bitcoin/Litecoin merge mining
+		quai.engine[2] = quaiconfig.CreateSHA256dConsensusEngine(config.NodeLocation, logger)
+
 	}
 	logger.WithField("config", config).Info("Initialized chain configuration")
 

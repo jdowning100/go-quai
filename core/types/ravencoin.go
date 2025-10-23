@@ -173,7 +173,16 @@ func (h *RavencoinBlockHeader) EncodeBinaryRavencoinHeader() []byte {
 	binary.Write(&buf, binary.LittleEndian, h.Nonce64)
 
 	// MixHash (32 bytes)
-	buf.Write(h.MixHash.Bytes())
+	// Ravencoin uint256 fields are serialized little-endian on the wire.
+	// The kernel digest is interpreted in opposite endianness by RVN's
+	// uint256 display, so store the reverse of the digest bytes here such
+	// that RVN's in-memory uint256 equals the kernel-computed mix.
+	mix := make([]byte, len(h.MixHash))
+	copy(mix, h.MixHash[:])
+	for i, j := 0, len(mix)-1; i < j; i, j = i+1, j-1 {
+		mix[i], mix[j] = mix[j], mix[i]
+	}
+	buf.Write(mix)
 
 	return buf.Bytes()
 }
@@ -224,9 +233,16 @@ func DecodeRavencoinHeader(data []byte) (*RavencoinBlockHeader, error) {
 	}
 
 	// Read mixHash (32 bytes)
-	if _, err := io.ReadFull(buf, h.MixHash[:]); err != nil {
+	// The mixHash is stored byte-reversed on the wire (matching EncodeBinaryRavencoinHeader)
+	mixBytes := make([]byte, 32)
+	if _, err := io.ReadFull(buf, mixBytes); err != nil {
 		return nil, err
 	}
+	// Reverse the bytes to get the actual mixHash value
+	for i, j := 0, len(mixBytes)-1; i < j; i, j = i+1, j-1 {
+		mixBytes[i], mixBytes[j] = mixBytes[j], mixBytes[i]
+	}
+	copy(h.MixHash[:], mixBytes)
 
 	return h, nil
 }
@@ -383,11 +399,11 @@ type RavencoinTx struct {
 	*btcdwire.MsgTx
 }
 
-func NewRavencoinCoinbaseTx(height uint32, coinbaseOut *AuxPowCoinbaseOut, extraData []byte) *RavencoinTx {
+func NewRavencoinCoinbaseTx(height uint32, coinbaseOut *AuxPowCoinbaseOut, sealHash common.Hash) *RavencoinTx {
 	coinbaseTx := &RavencoinTx{MsgTx: btcdwire.NewMsgTx(2)} // Version 2 for Ravencoin
 
-	// Create the coinbase input
-	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, extraData)
+	// Create the coinbase input with seal hash
+	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash)
 	coinbaseTx.AddTxIn(&btcdwire.TxIn{
 		PreviousOutPoint: btcdwire.OutPoint{
 			Hash:  btchash.Hash{}, // Coinbase has no previous output
@@ -434,7 +450,31 @@ func (rct *RavencoinTx) version() int32 {
 	return rct.MsgTx.Version
 }
 
+func (rct *RavencoinTx) pkScript() []byte {
+	if rct.MsgTx == nil || len(rct.MsgTx.TxOut) == 0 {
+		return nil
+	}
+	return rct.MsgTx.TxOut[0].PkScript
+}
+
+func (rct *RavencoinTx) Serialize(w io.Writer) error {
+	if rct.MsgTx == nil {
+		return fmt.Errorf("cannot serialize: MsgTx is nil")
+	}
+	return rct.MsgTx.Serialize(w)
+}
+
+func (rct *RavencoinTx) Deserialize(r io.Reader) error {
+	if rct.MsgTx == nil {
+		return fmt.Errorf("cannot deserialize: MsgTx is nil")
+	}
+	return rct.MsgTx.Deserialize(r)
+}
+
 func (rct *RavencoinTx) DeserializeNoWitness(r io.Reader) error {
+	if rct.MsgTx == nil {
+		return fmt.Errorf("cannot deserialize: MsgTx is nil")
+	}
 	return rct.MsgTx.DeserializeNoWitness(r)
 }
 

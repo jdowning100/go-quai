@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: all build run test clean help mocks
+.PHONY: all build run test clean help mocks go-quai
 
 GOBIN = ./build/bin
 GO ?= latest

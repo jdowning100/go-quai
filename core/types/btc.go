@@ -184,11 +184,11 @@ func (bto *BitcoinCoinbaseTxOutWrapper) PkScript() []byte {
 	return bto.TxOut.PkScript
 }
 
-func NewBitcoinCoinbaseTxWrapper(height uint32, coinbaseOut *AuxPowCoinbaseOut, extraData []byte) *BitcoinTxWrapper {
+func NewBitcoinCoinbaseTxWrapper(height uint32, coinbaseOut *AuxPowCoinbaseOut, sealHash common.Hash) *BitcoinTxWrapper {
 	coinbaseTx := &BitcoinTxWrapper{MsgTx: btcdwire.NewMsgTx(1)}
 
-	// Create the coinbase input with height in scriptSig
-	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, extraData)
+	// Create the coinbase input with seal hash in scriptSig
+	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash)
 	coinbaseTx.AddTxIn(&btcdwire.TxIn{
 		PreviousOutPoint: btcdwire.OutPoint{
 			Hash:  btchash.Hash{}, // Coinbase has no previous output
@@ -230,4 +230,32 @@ func (btt *BitcoinTxWrapper) value() int64 {
 
 func (btt *BitcoinTxWrapper) version() int32 {
 	return btt.MsgTx.Version
+}
+
+func (btt *BitcoinTxWrapper) pkScript() []byte {
+	if btt.MsgTx == nil || len(btt.MsgTx.TxOut) == 0 {
+		return nil
+	}
+	return btt.MsgTx.TxOut[0].PkScript
+}
+
+func (btt *BitcoinTxWrapper) Serialize(w io.Writer) error {
+	if btt.MsgTx == nil {
+		return fmt.Errorf("cannot serialize: MsgTx is nil")
+	}
+	return btt.MsgTx.Serialize(w)
+}
+
+func (btt *BitcoinTxWrapper) Deserialize(r io.Reader) error {
+	if btt.MsgTx == nil {
+		return fmt.Errorf("cannot deserialize: MsgTx is nil")
+	}
+	return btt.MsgTx.Deserialize(r)
+}
+
+func (btt *BitcoinTxWrapper) DeserializeNoWitness(r io.Reader) error {
+	if btt.MsgTx == nil {
+		return fmt.Errorf("cannot deserialize: MsgTx is nil")
+	}
+	return btt.MsgTx.DeserializeNoWitness(r)
 }

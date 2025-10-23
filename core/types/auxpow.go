@@ -28,6 +28,23 @@ const (
 	Scrypt
 )
 
+func (p PowID) String() string {
+	switch p {
+	case Progpow:
+		return "Progpow"
+	case Kawpow:
+		return "Kawpow"
+	case SHA_BTC:
+		return "SHA_BTC"
+	case SHA_BCH:
+		return "SHA_BCH"
+	case Scrypt:
+		return "Scrypt"
+	default:
+		return "Unknown"
+	}
+}
+
 // NTimeMask represents a time mask for mining operations
 type NTimeMask uint32
 
@@ -143,9 +160,10 @@ func RPCMarshalAuxPowForKawPow(ap *AuxPow) map[string]interface{} {
 		"bits":              hexutil.EncodeUint64(uint64(bits)),
 		"previousblockhash": hexutil.Encode(prevBlock[:]),
 		"target":            GetTargetInHex(bits),
-		"merkleBranch":      merkleBranch,
+		"merklebranch":      merkleBranch,
 		"coinbaseaux":       hexutil.Bytes(ap.Transaction().ScriptSig()),            // Added coinbaseaux field
 		"coinbasevalue":     hexutil.EncodeUint64(uint64(ap.Transaction().Value())), // Added coinbasevalue field
+		"payoutscript":      hexutil.Bytes(ap.Transaction().PkScript()),             // Payout script from coinbase output
 	}
 }
 
@@ -174,7 +192,7 @@ func RPCMarshalAuxPow(ap *AuxPow) map[string]interface{} {
 		"bits":              hexutil.EncodeUint64(uint64(bits)),
 		"previousblockhash": hexutil.Encode(prevBlock[:]),
 		"target":            GetTargetInHex(bits),
-		"merkleBranch":      merkleBranch,
+		"merklebranch":      merkleBranch,
 	}
 }
 
@@ -563,18 +581,19 @@ type AuxPowTxData interface {
 	scriptSig() []byte
 	value() int64
 	version() int32
+	pkScript() []byte
 }
 
-func NewAuxPowCoinbaseTx(powId PowID, height uint32, coinbaseOut *AuxPowCoinbaseOut, extraData []byte) *AuxPowTx {
+func NewAuxPowCoinbaseTx(powId PowID, height uint32, coinbaseOut *AuxPowCoinbaseOut, sealHash common.Hash) *AuxPowTx {
 	switch powId {
 	case Kawpow:
-		return &AuxPowTx{inner: NewRavencoinCoinbaseTx(height, coinbaseOut, extraData)}
+		return &AuxPowTx{inner: NewRavencoinCoinbaseTx(height, coinbaseOut, sealHash)}
 	case SHA_BTC:
-		return &AuxPowTx{inner: NewBitcoinCoinbaseTxWrapper(height, coinbaseOut, extraData)}
+		return &AuxPowTx{inner: NewBitcoinCoinbaseTxWrapper(height, coinbaseOut, sealHash)}
 	case SHA_BCH:
-		return &AuxPowTx{inner: NewBitcoinCashCoinbaseTxWrapper(height, coinbaseOut, extraData)}
+		return &AuxPowTx{inner: NewBitcoinCashCoinbaseTxWrapper(height, coinbaseOut, sealHash)}
 	case Scrypt:
-		return &AuxPowTx{inner: NewLitecoinCoinbaseTxWrapper(height, coinbaseOut, extraData)}
+		return &AuxPowTx{inner: NewLitecoinCoinbaseTxWrapper(height, coinbaseOut, sealHash)}
 	default:
 		return &AuxPowTx{}
 	}
@@ -636,6 +655,13 @@ func (ac *AuxPowTx) Version() int32 {
 		return 0
 	}
 	return ac.inner.version()
+}
+
+func (ac *AuxPowTx) PkScript() []byte {
+	if ac.inner == nil {
+		return nil
+	}
+	return ac.inner.pkScript()
 }
 
 type AuxPowCoinbaseOut struct {
@@ -976,7 +1002,7 @@ func (ap *AuxPow) UnmarshalJSON(data []byte) error {
 		}
 		ap.transaction = &AuxPowTx{inner: coinbaseTx}
 	case SHA_BTC:
-		header := &BitcoinCashHeaderWrapper{}
+		header := &BitcoinHeaderWrapper{}
 		if err := header.Deserialize(bytes.NewReader(*dec.Header)); err != nil {
 			return err
 		}
@@ -1053,7 +1079,7 @@ func (ap *AuxPow) ProtoDecode(data *ProtoAuxPow) error {
 		}
 		ap.SetHeader(NewAuxPowHeader(header))
 	case SHA_BTC:
-		header := &BitcoinCashHeaderWrapper{}
+		header := &BitcoinHeaderWrapper{}
 		if err := header.Deserialize(bytes.NewReader(data.GetHeader())); err != nil {
 			return err
 		}

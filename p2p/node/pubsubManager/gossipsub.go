@@ -403,7 +403,7 @@ func (g *PubsubManager) ValidatorFunc() func(ctx context.Context, id p2p.PeerID,
 						return pubsub.ValidationReject
 					}
 				} else {
-					powHash = block.WorkObject.AuxPow().Header().PowHash()
+					/*powHash = block.WorkObject.AuxPow().Header().PowHash()
 					shareDiff := block.WorkObject.WorkObjectHeader().ShaDiffAndCount().Difficulty()
 					currentHeaderShareDiff := currentHeader.WorkObjectHeader().ShaDiffAndCount().Difficulty()
 					thresholdShareDiff := new(big.Int).Div(new(big.Int).Mul(currentHeaderShareDiff, params.ShareDiffRelativeThreshold), big.NewInt(100))
@@ -415,13 +415,19 @@ func (g *PubsubManager) ValidatorFunc() func(ctx context.Context, id p2p.PeerID,
 							"shareDiffThreshold": thresholdShareDiff,
 						}).Warn("Sha workshare difficulty is too high")
 						return pubsub.ValidationReject
-					}
+					*/
 				}
 
 				powHashBigInt := new(big.Int).SetBytes(powHash.Bytes())
 
 				// Check if satisfies workShareTarget
 				if powHashBigInt.Cmp(workShareTarget) > 0 {
+					backend.Logger().WithFields(log.Fields{
+						"peer":            id,
+						"workShareTarget": workShareTarget,
+						"powHash":         powHash.Hex(),
+						"powHashBigInt":   powHashBigInt.String(),
+					}).Warn("Workshare hash exceeds target")
 					return pubsub.ValidationReject
 				}
 

@@ -17,6 +17,7 @@
 package quaiapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -24,10 +25,12 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/hexutil"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
@@ -1109,24 +1112,233 @@ func (s *PublicBlockChainQuaiAPI) CreateAccessList(ctx context.Context, args Tra
 	return result, nil
 }
 
-// GetWork retrieves a new work item to mine
-func (s *PublicBlockChainQuaiAPI) GetBlockTemplate(ctx context.Context) (map[string]interface{}, error) {
-	pendingHeader, err := s.b.GetPendingHeader(types.Kawpow)
+// BlockTemplateRequest represents a getblocktemplate request
+type BlockTemplateRequest struct {
+	Mode         string   `json:"mode,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Rules        []string `json:"rules,omitempty"` // "kawpow", "sha", "scrypt"
+}
+
+// GetBlockTemplate retrieves a new block template to mine
+// Supports Bitcoin-compatible getblocktemplate API with PoW algorithm selection via "rules" parameter
+func (s *PublicBlockChainQuaiAPI) GetBlockTemplate(ctx context.Context, request *BlockTemplateRequest) (map[string]interface{}, error) {
+	// Default to KAWPOW if no request or rules specified
+	powId := types.Kawpow
+
+	// Parse rules to determine PoW algorithm
+	if request != nil && len(request.Rules) > 0 {
+		for _, rule := range request.Rules {
+			ruleLower := strings.ToLower(rule)
+			switch ruleLower {
+			case "kawpow":
+				powId = types.Kawpow
+			case "sha", "sha256d":
+				powId = types.SHA_BCH
+			case "scrypt":
+				powId = types.Scrypt
+			default:
+				return nil, fmt.Errorf("unsupported rule: %s", rule)
+			}
+		}
+	}
+
+	// Get the pending header for the specified PoW algorithm
+	pendingHeader, err := s.b.GetPendingHeader(powId)
 	if err != nil {
 		return nil, err
 	}
 
-	// add the seal hash to the end of the coinbase aux key
-	fields := types.RPCMarshalAuxPowForKawPow(pendingHeader.AuxPow())
+	// Build the response based on PoW type
+	switch powId {
+	case types.Kawpow:
+		return s.marshalKawpowTemplate(pendingHeader)
+	case types.SHA_BTC:
+		return s.marshalShaTemplate(pendingHeader, true)
+	case types.SHA_BCH:
+		return s.marshalShaTemplate(pendingHeader, true)
+	case types.Scrypt:
+		return s.marshalScryptTemplate(pendingHeader)
+	default:
+		return nil, fmt.Errorf("unsupported PoW algorithm: %d", powId)
+	}
+}
 
-	// Modify the logic here to produce workshares
-	bits, err := common.DifficultyToBits(pendingHeader.Difficulty())
+// marshalKawpowTemplate formats a WorkObject as a KAWPOW/Ravencoin getblocktemplate response
+func (s *PublicBlockChainQuaiAPI) marshalKawpowTemplate(wo *types.WorkObject) (map[string]interface{}, error) {
+	fields := types.RPCMarshalAuxPowForKawPow(wo.AuxPow())
+
+	bits, err := common.DifficultyToBits(wo.Difficulty())
 	if err != nil {
 		return nil, err
 	}
 	fields["target"] = types.GetTargetInHex(bits)
 
 	return fields, nil
+}
+
+// marshalShaTemplate formats a WorkObject as a SHA256d/Bitcoin getblocktemplate response
+// useTemplateDifficulty: if true, use the AuxPow template's nBits; if false, use Quai's block difficulty
+func (s *PublicBlockChainQuaiAPI) marshalShaTemplate(wo *types.WorkObject, useTemplateDifficulty bool) (map[string]interface{}, error) {
+	auxPow := wo.AuxPow()
+	if auxPow == nil {
+		return nil, errors.New("no AuxPow in pending header")
+	}
+
+	// Get the header first
+	auxHeader := auxPow.Header()
+	if auxHeader == nil {
+		return nil, errors.New("no header in AuxPow")
+	}
+
+	// Extract coinbase data from the new AuxPowTx type
+	var coinbaseValue uint64
+	var coinbaseAux []byte
+	var payoutScript []byte
+	blockHeight := auxHeader.Height() // Default to header height
+
+	if tx := auxPow.Transaction(); tx != nil {
+		// AuxPowTx.Value() returns int64, convert to uint64
+		if tx.Value() >= 0 {
+			coinbaseValue = uint64(tx.Value())
+		}
+		// Get the scriptSig (coinbase aux data)
+		coinbaseAux = tx.ScriptSig()
+
+		// Extract the block height from the coinbase scriptSig
+		extractedHeight, err := types.ExtractHeightFromCoinbase(coinbaseAux)
+		if err == nil {
+			// Use the extracted height from scriptSig if successful
+			blockHeight = extractedHeight
+		}
+
+		// For the payout script, we need to get it from the coinbase output
+		// Since AuxPowTx doesn't expose the output directly, we'll need to
+		// serialize and deserialize to get it, or add a method to types package
+		// For now, we'll extract it via the Bytes() method and parse
+		payoutScript = extractPayoutScriptFromAuxPowTx(tx)
+	}
+
+	// Get header fields using the typed accessor methods
+	prevBlock := auxHeader.PrevBlock()
+
+	// Marshal merkle branch
+	merkleBranch := make([]string, len(auxPow.MerkleBranch()))
+	for i, hash := range auxPow.MerkleBranch() {
+		merkleBranch[i] = hexutil.Encode(hash)
+	}
+
+	// Convert previousblockhash to hex without 0x prefix
+	prevBlockHex := hex.EncodeToString(prevBlock[:])
+
+	// Determine which difficulty to use based on useTemplateDifficulty parameter
+	var bits uint32
+	var err error
+
+	if useTemplateDifficulty {
+		// Use the template difficulty from AuxPow header
+		bits = auxHeader.Bits()
+	} else {
+		// Convert Quai difficulty to Bitcoin-style nBits
+		// Use the WorkObject's difficulty (Quai difficulty), not the AuxPow header bits
+		// Apply minimum Bitcoin difficulty of 2000 for mining
+		// Bitcoin difficulty 2000 = expected 2000 * 2^32 hashes
+		// Convert to Quai difficulty: quai_diff = (2000 * 2^32 * bitcoin_diff_1_target) / 2^256
+		// Simplified: quai_diff = 2000 * 2^32 * 0xFFFF / 2^(256-208) ≈ 2000 * 2^32 * 0xFFFF / 2^48
+		minBitcoinDifficulty := big.NewInt(2000)
+
+		// Bitcoin difficulty 1 target
+		diff1Target, _ := new(big.Int).SetString("00000000FFFF0000000000000000000000000000000000000000000000000000", 16)
+
+		// Minimum target for Bitcoin difficulty 2000: target = diff1_target / 2000
+		minTarget := new(big.Int).Div(diff1Target, minBitcoinDifficulty)
+
+		// Convert to Quai difficulty: quai_diff = 2^256 / target
+		two256 := new(big.Int).Lsh(big.NewInt(1), 256)
+		minQuaiDifficulty := new(big.Int).Div(two256, minTarget)
+
+		// Use the higher of the two: actual difficulty or minimum
+		miningDifficulty := wo.Difficulty()
+		if miningDifficulty.Cmp(minQuaiDifficulty) < 0 {
+			miningDifficulty = minQuaiDifficulty
+		}
+
+		bits, err = common.DifficultyToBits(miningDifficulty)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert difficulty to bits: %w", err)
+		}
+	}
+
+	// Convert bits to hex without 0x prefix
+	bitsHex := fmt.Sprintf("%08x", bits)
+
+	// Get target hex from Quai difficulty (not AuxPow bits)
+	targetHex := types.GetTargetInHex(bits)
+	if len(targetHex) > 2 && targetHex[:2] == "0x" {
+		targetHex = targetHex[2:]
+	}
+
+	// Convert payoutscript to hex without 0x prefix
+	payoutScriptHex := hex.EncodeToString(payoutScript)
+
+	// Convert coinbaseaux to hex without 0x prefix
+	coinbaseAuxHex := hex.EncodeToString(coinbaseAux)
+
+	return map[string]interface{}{
+		"version":           auxHeader.Version(),
+		"previousblockhash": prevBlockHex,
+		"coinbaseaux":       coinbaseAuxHex,
+		"coinbasevalue":     coinbaseValue,
+		// Miner target aligned with AuxPow header nBits (BCH/BTC style)
+		"target":       targetHex,
+		"mintime":      auxHeader.Timestamp(),
+		"noncerange":   "00000000ffffffff", // 32-bit nonce
+		"sigoplimit":   80000,              // Bitcoin default
+		"sizelimit":    1000000,            // 1MB
+		"curtime":      auxHeader.Timestamp(),
+		"bits":         bitsHex,
+		"height":       uint64(blockHeight),
+		"payoutscript": payoutScriptHex,
+		"merklebranch": merkleBranch,
+	}, nil
+}
+
+// extractPayoutScriptFromAuxPowTx extracts the payout script from the first output of an AuxPowTx
+// This is a helper function to work around the fact that AuxPowTx doesn't directly expose outputs
+func extractPayoutScriptFromAuxPowTx(tx *types.AuxPowTx) []byte {
+	if tx == nil {
+		return nil
+	}
+
+	// Serialize the transaction and deserialize it to access the outputs
+	txBytes := tx.Bytes()
+	if len(txBytes) == 0 {
+		return nil
+	}
+
+	// Create a wire.MsgTx to deserialize into
+	wireTx := &wire.MsgTx{}
+	if err := wireTx.DeserializeNoWitness(bytes.NewReader(txBytes)); err != nil {
+		return nil
+	}
+
+	// Extract the first output's PkScript
+	if len(wireTx.TxOut) > 0 {
+		return wireTx.TxOut[0].PkScript
+	}
+
+	return nil
+}
+
+// marshalScryptTemplate formats a WorkObject as a Scrypt/Litecoin getblocktemplate response
+func (s *PublicBlockChainQuaiAPI) marshalScryptTemplate(wo *types.WorkObject) (map[string]interface{}, error) {
+	// Scrypt uses the same header format as Bitcoin/SHA256d, just different PoW algorithm
+	result, err := s.marshalShaTemplate(wo, false)
+	if err != nil {
+		return nil, err
+	}
+	// Change the rules to indicate scrypt
+	result["rules"] = []string{"scrypt"}
+	return result, nil
 }
 
 func (s *PublicBlockChainQuaiAPI) SubmitBlock(ctx context.Context, raw hexutil.Bytes) error {
@@ -1735,4 +1947,47 @@ func cleanupOldSessions() {
 			delete(musig2Sessions, id)
 		}
 	}
+}
+
+// HashesPerQits returns the number of hashes needed to mine the given number of Qits at a given block.
+// This is calculated by multiplying the number of Qits by OneOverKqi (hashes per Qit).
+//
+// Parameters:
+//   - qiAmount: The number of Qits (note: 1 Qi = 1000 Qit)
+//   - blockNrOrHash: The block number or hash to query
+//
+// Returns:
+//   - The total number of hashes required
+//
+// Example:
+//
+//	// How many hashes to mine 1 Qi (1000 Qit)?
+//	hashes := HashesPerQits(ctx, 1000, "latest")
+//
+//	// How many hashes to mine 0.001 Qi (1 Qit)?
+//	hashes := HashesPerQits(ctx, 1, "latest")
+func (s *PublicBlockChainQuaiAPI) HashesPerQits(ctx context.Context, qiAmount hexutil.Big, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Big, error) {
+	// Handle zero or negative amounts
+	if qiAmount.ToInt().Sign() <= 0 {
+		return (*hexutil.Big)(big.NewInt(0)), nil
+	}
+	blockNumber, ok := blockNrOrHash.Number()
+	if !ok {
+		return nil, errors.New("invalid block number or hash")
+	}
+
+	// If "latest" (-1), get the current block number
+	var actualBlockNumber uint64
+	if blockNumber == rpc.LatestBlockNumber {
+		actualBlockNumber = s.b.CurrentHeader().NumberU64(s.b.NodeCtx())
+	} else {
+		actualBlockNumber = uint64(blockNumber)
+	}
+
+	// Calculate: qiAmount * OneOverKqi(blockNumber)
+	// OneOverKqi returns hashes per 1 Qit
+	hashesPerQit := params.OneOverKqi(actualBlockNumber)
+	totalHashes := new(big.Int).Mul(qiAmount.ToInt(), hashesPerQit)
+
+	return (*hexutil.Big)(totalHashes), nil
 }

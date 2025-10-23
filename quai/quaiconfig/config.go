@@ -30,6 +30,7 @@ import (
 	"github.com/dominant-strategies/go-quai/consensus/blake3pow"
 	"github.com/dominant-strategies/go-quai/consensus/kawpow"
 	"github.com/dominant-strategies/go-quai/consensus/progpow"
+	"github.com/dominant-strategies/go-quai/consensus/sha256d"
 	"github.com/dominant-strategies/go-quai/core"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/log"
@@ -218,6 +219,14 @@ func CreateKawPowConsensusEngine(stack *node.Node, nodeLocation common.Location,
 		WorkShareThreshold: config.WorkShareThreshold,
 	}, notify, noverify, logger)
 	engine.SetThreads(-1) // Disable CPU mining
+	return engine
+}
+
+// CreateSHA256dConsensusEngine creates a SHA256d consensus engine for the given chain configuration.
+func CreateSHA256dConsensusEngine(nodeLocation common.Location, logger *log.Logger) consensus.Engine {
+	engine := sha256d.New(sha256d.Config{
+		PowMode: sha256d.ModeNormal,
+	}, nodeLocation, logger)
 	return engine
 }
 

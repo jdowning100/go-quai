@@ -197,12 +197,31 @@ func (v *BlockValidator) SanityCheckWorkObjectBlockViewBody(wo *types.WorkObject
 }
 
 func (v *BlockValidator) ApplyPoWFilter(wo *types.WorkObject) pubsub.ValidationResult {
+	// Debug: Log AuxPow state when received for validation
+	if wo.WorkObjectHeader().AuxPow() != nil {
+		auxPow := wo.WorkObjectHeader().AuxPow()
+		log.Global.WithFields(log.Fields{
+			"blockHash":   wo.Hash().Hex(),
+			"powID":       auxPow.PowID(),
+			"hasTx":       auxPow.Transaction() != nil,
+			"hasHeader":   auxPow.Header() != nil,
+			"headerNonce": auxPow.Header().Nonce64(),
+			"mixHash":     auxPow.Header().MixHash().Hex(),
+		}).Debug("ApplyPoWFilter: Received AuxPow state")
+	} else {
+		log.Global.WithField("blockHash", wo.Hash().Hex()).Warn("ApplyPoWFilter: AuxPow is nil")
+	}
+
 	var err error
 	powhash, exists := v.hc.powHashCache.Peek(wo.Hash())
 	if !exists {
 		engine := v.getEngineForHeader(wo.WorkObjectHeader())
 		powhash, err = engine.VerifySeal(wo.WorkObjectHeader())
 		if err != nil {
+			log.Global.WithFields(log.Fields{
+				"blockHash": wo.Hash().Hex(),
+				"err":       err.Error(),
+			}).Error("ApplyPoWFilter: VerifySeal failed")
 			return pubsub.ValidationReject
 		}
 		v.hc.powHashCache.Add(wo.Hash(), powhash)

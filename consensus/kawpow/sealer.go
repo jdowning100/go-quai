@@ -189,8 +189,9 @@ search:
 				}).Info("KAWPOW mining progress")
 			}
 
-			// Compute the PoW value of this nonce using the KAWPOW header hash
-			digest, result := kawpowLight(size, cache.cache, kawpowHeaderHash.Bytes(), nonce, blockHeight, cache.cDag)
+			// Compute the PoW value of this nonce using the RVN-compatible
+			// (byte-reversed) KAWPOW header hash bytes
+			digest, result := kawpowLight(size, cache.cache, reverseBytes32(kawpowHeaderHash.Bytes()), nonce, blockHeight, cache.cDag)
 			resultBig := new(big.Int).SetBytes(result)
 
 			if resultBig.Cmp(target) <= 0 {

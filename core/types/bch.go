@@ -179,11 +179,11 @@ func (bch *BitcoinCashHeaderWrapper) Copy() AuxHeaderData {
 	return &BitcoinCashHeaderWrapper{BlockHeader: &copiedHeader}
 }
 
-func NewBitcoinCashCoinbaseTxWrapper(height uint32, coinbaseOut *AuxPowCoinbaseOut, extraData []byte) *BitcoinCashTxWrapper {
+func NewBitcoinCashCoinbaseTxWrapper(height uint32, coinbaseOut *AuxPowCoinbaseOut, sealHash common.Hash) *BitcoinCashTxWrapper {
 	coinbaseTx := &BitcoinCashTxWrapper{MsgTx: bchdwire.NewMsgTx(2)}
 
-	// Create the coinbase input with height in scriptSig
-	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, extraData)
+	// Create the coinbase input with seal hash in scriptSig
+	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash)
 	coinbaseTx.AddTxIn(&bchdwire.TxIn{
 		PreviousOutPoint: bchdwire.OutPoint{
 			Hash:  bchhash.Hash{}, // Coinbase has no previous output
@@ -230,8 +230,33 @@ func (bct *BitcoinCashTxWrapper) version() int32 {
 	return bct.MsgTx.Version
 }
 
+func (bct *BitcoinCashTxWrapper) pkScript() []byte {
+	if bct.MsgTx == nil || len(bct.MsgTx.TxOut) == 0 {
+		return nil
+	}
+	return bct.MsgTx.TxOut[0].PkScript
+}
+
+func (bct *BitcoinCashTxWrapper) Serialize(w io.Writer) error {
+	if bct.MsgTx == nil {
+		return errors.New("cannot serialize: MsgTx is nil")
+	}
+	return bct.MsgTx.Serialize(w)
+}
+
+func (bct *BitcoinCashTxWrapper) Deserialize(r io.Reader) error {
+	if bct.MsgTx == nil {
+		return errors.New("cannot deserialize: MsgTx is nil")
+	}
+	return bct.MsgTx.Deserialize(r)
+}
+
 func (bct *BitcoinCashTxWrapper) DeserializeNoWitness(r io.Reader) error {
-	return errors.New("DeserializeNoWitness not supported for Bitcoin Cash")
+	if bct.MsgTx == nil {
+		return errors.New("cannot deserialize: MsgTx is nil")
+	}
+	// Bitcoin Cash doesn't use SegWit, so Deserialize is the same as DeserializeNoWitness
+	return bct.MsgTx.Deserialize(r)
 }
 
 func (bco *BitcoinCashCoinbaseTxOutWrapper) Value() int64 {

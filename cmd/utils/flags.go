@@ -1235,11 +1235,13 @@ func setConsensusEngineConfig(cfg *quaiconfig.Config) {
 		case params.LocalName:
 			cfg.Progpow.DurationLimit = params.LocalDurationLimit
 			cfg.Progpow.GasCeil = params.LocalGasCeil
-			cfg.Progpow.MinDifficulty = new(big.Int).Div(core.DefaultLocalGenesisBlock(cfg.ConsensusEngine, cfg.GenesisNonce, cfg.GenesisExtra).Difficulty, common.Big2)
+			// Multiply by 100 instead of divide by 2 to increase difficulty by 100x
+			cfg.Progpow.MinDifficulty = new(big.Int).Mul(core.DefaultLocalGenesisBlock(cfg.ConsensusEngine, cfg.GenesisNonce, cfg.GenesisExtra).Difficulty, big.NewInt(100))
 		case params.DevName:
 			cfg.Progpow.DurationLimit = params.DurationLimit
 			cfg.Progpow.GasCeil = params.LocalGasCeil
-			cfg.Progpow.MinDifficulty = new(big.Int).Div(core.DefaultLocalGenesisBlock(cfg.ConsensusEngine, cfg.GenesisNonce, cfg.GenesisExtra).Difficulty, common.Big2)
+			// Multiply by 100 instead of divide by 2 to increase difficulty by 100x
+			cfg.Progpow.MinDifficulty = new(big.Int).Mul(core.DefaultLocalGenesisBlock(cfg.ConsensusEngine, cfg.GenesisNonce, cfg.GenesisExtra).Difficulty, big.NewInt(100))
 		default:
 			cfg.Progpow.DurationLimit = params.DurationLimit
 			cfg.Progpow.GasCeil = params.GasCeil

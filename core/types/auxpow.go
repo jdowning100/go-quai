@@ -599,6 +599,11 @@ func NewAuxPowCoinbaseTx(powId PowID, height uint32, coinbaseOut *AuxPowCoinbase
 	}
 }
 
+// NewAuxPowTx creates an AuxPowTx from an AuxPowTxData implementation
+func NewAuxPowTx(inner AuxPowTxData) *AuxPowTx {
+	return &AuxPowTx{inner: inner}
+}
+
 func (ac *AuxPowTx) Bytes() []byte {
 	if ac.inner == nil {
 		return nil

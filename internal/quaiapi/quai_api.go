@@ -1917,12 +1917,17 @@ func (s *PublicBlockChainQuaiAPI) SubmitAuxTemplate(ctx context.Context, templat
 	// For observability and signing message
 	messageHash := auxTemplate.Hash()
 	messageHashHex := hex.EncodeToString(messageHash[:])
+	merkleBranch := make([]string, len(auxTemplate.MerkleBranch()))
+	for i, hash := range auxTemplate.MerkleBranch() {
+		merkleBranch[i] = hexutil.Encode(hash)
+	}
 	s.b.Logger().WithFields(log.Fields{
-		"powID":       auxTemplate.PowID(),
-		"height":      auxTemplate.Height(),
-		"nBits":       fmt.Sprintf("0x%08x", auxTemplate.NBits()),
-		"prevHash":    fmt.Sprintf("%x", auxTemplate.PrevHash()),
-		"messageHash": messageHashHex,
+		"powID":        auxTemplate.PowID(),
+		"height":       auxTemplate.Height(),
+		"nBits":        fmt.Sprintf("0x%08x", auxTemplate.NBits()),
+		"prevHash":     fmt.Sprintf("%x", auxTemplate.PrevHash()),
+		"messageHash":  messageHashHex,
+		"merkleBranch": merkleBranch,
 	}).Info("✅ Received signed AuxTemplate with valid Signature")
 
 	// Broadcast the template to the network. The final signature is embedded in the template.

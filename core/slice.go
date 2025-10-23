@@ -1052,6 +1052,10 @@ func (sl *Slice) GetPendingHeader(powId types.PowID) (*types.WorkObject, error) 
 
 				// Update the auxpow in the best pending header
 				phCopy.WorkObjectHeader().SetAuxPow(auxPow)
+
+				// Update the pending block body cache with the populated AuxPow
+				// This ensures SubmitBlock can retrieve the complete AuxPow including merkle branch
+				sl.miner.worker.AddPendingWorkObjectBody(phCopy)
 			} else {
 				return nil, errors.New("no auxpow template available for " + powId.String() + " mining")
 			}

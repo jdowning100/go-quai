@@ -2,7 +2,6 @@ package core
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -16,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	bchdwire "github.com/gcash/bchd/wire"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -824,6 +825,7 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 
 // verifyBCHMerkleRoot verifies the merkle root in a BCH block header matches the calculated merkle root
 // by using the coinbase transaction and the provided merkle branch.
+// Uses btcd's blockchain.HashMerkleBranches for correct Bitcoin merkle tree calculation.
 func (c *Core) VerifyBCHMerkleRoot(blockData []byte, merkleBranch [][]byte) error {
 	if len(blockData) < 80 {
 		return fmt.Errorf("block too short: %d bytes", len(blockData))
@@ -831,7 +833,8 @@ func (c *Core) VerifyBCHMerkleRoot(blockData []byte, merkleBranch [][]byte) erro
 
 	// Parse header (80 bytes)
 	headerBytes := blockData[:80]
-	merkleRootInHeader := headerBytes[36:68]
+	var merkleRootInHeader chainhash.Hash
+	copy(merkleRootInHeader[:], headerBytes[36:68])
 
 	// Parse transactions (after 80-byte header)
 	txBytes := blockData[80:]
@@ -840,70 +843,71 @@ func (c *Core) VerifyBCHMerkleRoot(blockData []byte, merkleBranch [][]byte) erro
 	}
 
 	// Read varint for tx count
-	txCount := uint64(txBytes[0])
+	reader := bytes.NewReader(txBytes)
+	txCount, err := wire.ReadVarInt(reader, 0)
+	if err != nil {
+		return fmt.Errorf("failed to read transaction count: %w", err)
+	}
 	if txCount == 0 {
 		return errors.New("block has zero transactions")
 	}
 
-	// Get the coinbase transaction (first transaction)
-	coinbaseTxBytes := txBytes[1:] // Skip the varint byte
+	// Deserialize the coinbase transaction to get its exact serialized bytes
+	coinbaseTx := &wire.MsgTx{}
+	if err := coinbaseTx.Deserialize(reader); err != nil {
+		return fmt.Errorf("failed to deserialize coinbase transaction: %w", err)
+	}
 
-	// Calculate coinbase transaction hash (double SHA256)
-	hash1 := sha256.Sum256(coinbaseTxBytes)
-	coinbaseTxHash := sha256.Sum256(hash1[:])
+	// Calculate the coinbase transaction hash using btcd's TxHash method
+	coinbaseTxHash := coinbaseTx.TxHash()
 
 	// If only one transaction and no merkle branch, the coinbase hash IS the merkle root
 	if txCount == 1 && len(merkleBranch) == 0 {
-		if !bytes.Equal(merkleRootInHeader, coinbaseTxHash[:]) {
+		if !merkleRootInHeader.IsEqual(&coinbaseTxHash) {
 			c.logger.WithFields(log.Fields{
-				"merkleRootInHeader": hex.EncodeToString(merkleRootInHeader),
-				"coinbaseTxHash":     hex.EncodeToString(coinbaseTxHash[:]),
+				"merkleRootInHeader": merkleRootInHeader.String(),
+				"coinbaseTxHash":     coinbaseTxHash.String(),
 			}).Error("Merkle root mismatch in single-tx BCH block")
 			return errors.New("merkle root in header does not match coinbase transaction hash")
 		}
 		return nil
 	}
 
-	// Use the merkle branch to calculate the merkle root
-	// Start with the coinbase transaction hash
-	currentHash := coinbaseTxHash[:]
-
-	// Walk up the merkle tree using the branch
-	for i, branchHash := range merkleBranch {
-		// Concatenate current hash with branch hash
-		// In Bitcoin/BCH, the coinbase is always at index 0, so it goes on the left
-		combined := make([]byte, 64)
-		copy(combined[:32], currentHash)
-		copy(combined[32:], branchHash)
-
-		// Double SHA256
-		firstHash := sha256.Sum256(combined)
-		secondHash := sha256.Sum256(firstHash[:])
-		currentHash = secondHash[:]
+	// Walk up the merkle tree using btcd's HashMerkleBranches function
+	currentHash := &coinbaseTxHash
+	for i, branchHashBytes := range merkleBranch {
+		var branchHash chainhash.Hash
+		copy(branchHash[:], branchHashBytes)
+		// Use btcd's HashMerkleBranches to hash current + sibling
+		// Coinbase is always at index 0 (left side)
+		newHash := blockchain.HashMerkleBranches(currentHash, &branchHash)
+		currentHash = &newHash
 
 		c.logger.WithFields(log.Fields{
 			"level":       i,
-			"branchHash":  hex.EncodeToString(branchHash),
-			"currentHash": hex.EncodeToString(currentHash),
+			"branchHash":  branchHash.String(),
+			"currentHash": currentHash.String(),
 		}).Info("BCH merkle tree step")
 	}
 
 	// The final hash should match the merkle root in the header
-	if !bytes.Equal(merkleRootInHeader, currentHash) {
+	if !merkleRootInHeader.IsEqual(currentHash) {
 		merkleBranch_str := make([]string, len(merkleBranch))
 		for i, hash := range merkleBranch {
-			merkleBranch_str[i] = hex.EncodeToString(hash[:])
+			var h chainhash.Hash
+			copy(h[:], hash)
+			merkleBranch_str[i] = h.String()
 		}
 		c.logger.WithFields(log.Fields{
-			"merkleRootInHeader": hex.EncodeToString(merkleRootInHeader),
-			"calculatedRoot":     hex.EncodeToString(currentHash),
+			"merkleRootInHeader": merkleRootInHeader.String(),
+			"calculatedRoot":     currentHash.String(),
 			"merkleBranch":       merkleBranch_str,
 		}).Error("Merkle root mismatch after applying merkle branch")
 		return errors.New("merkle root in header does not match calculated root from merkle branch")
 	}
 
 	c.logger.WithFields(log.Fields{
-		"merkleRoot":         hex.EncodeToString(currentHash),
+		"merkleRoot":         currentHash.String(),
 		"merkleBranchLevels": len(merkleBranch),
 	}).Info("BCH merkle root verification successful")
 

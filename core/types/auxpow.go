@@ -577,6 +577,7 @@ type AuxPowTxData interface {
 	Deserialize(r io.Reader) error
 	DeserializeNoWitness(r io.Reader) error
 	Copy() AuxPowTxData
+	txHash() [32]byte
 
 	scriptSig() []byte
 	value() int64
@@ -667,6 +668,13 @@ func (ac *AuxPowTx) PkScript() []byte {
 		return nil
 	}
 	return ac.inner.pkScript()
+}
+
+func (ac *AuxPowTx) TxHash() common.Hash {
+	if ac.inner == nil {
+		return common.Hash{}
+	}
+	return ac.inner.txHash()
 }
 
 type AuxPowCoinbaseOut struct {

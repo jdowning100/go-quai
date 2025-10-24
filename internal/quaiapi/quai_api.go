@@ -1222,9 +1222,15 @@ func (s *PublicBlockChainQuaiAPI) marshalShaTemplate(wo *types.WorkObject, useTe
 	prevBlock := auxHeader.PrevBlock()
 
 	// Marshal merkle branch
+	// Note: Internally stored in little-endian, but getblocktemplate expects big-endian (display order)
 	merkleBranch := make([]string, len(auxPow.MerkleBranch()))
 	for i, hash := range auxPow.MerkleBranch() {
-		merkleBranch[i] = hexutil.Encode(hash)
+		// Reverse bytes from little-endian to big-endian for getblocktemplate compatibility
+		reversed := make([]byte, len(hash))
+		for j := range hash {
+			reversed[j] = hash[len(hash)-1-j]
+		}
+		merkleBranch[i] = hexutil.Encode(reversed)
 	}
 
 	// Convert previousblockhash to hex without 0x prefix

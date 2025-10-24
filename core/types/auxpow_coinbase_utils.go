@@ -161,6 +161,58 @@ func parseScriptPush(script []byte) ([]byte, int, error) {
 	return script[read : read+dataLen], read + dataLen, nil
 }
 
+// VerifyMerkleProof verifies a merkle proof for a transaction at index 0 (coinbase)
+// merkleBranch contains the sibling hashes from leaf to root
+func CalculateMerkleRoot(coinbaseTx *AuxPowTx, merkleBranch [][]byte) [common.HashLength]byte {
+
+	switch coinbaseTx.inner.(type) {
+	case *RavencoinTx, *BitcoinTxWrapper:
+		// Start with the transaction hash
+		currentHash := chainhash.Hash(coinbaseTx.TxHash())
+
+		// For coinbase (index 0), we always take the right branch
+		// and our hash goes on the left
+		for _, siblingBytes := range merkleBranch {
+			var sibling chainhash.Hash
+			copy(sibling[:], siblingBytes)
+
+			// Since we're at index 0 (coinbase), we're always the left child
+			currentHash = btcblockchain.HashMerkleBranches(&currentHash, &sibling)
+		}
+		return currentHash
+	case *LitecoinTxWrapper:
+		// Start with the transaction hash
+		currentHash := ltcchainhash.Hash(coinbaseTx.TxHash())
+
+		// For coinbase (index 0), we always take the right branch
+		// and our hash goes on the left
+		for _, siblingBytes := range merkleBranch {
+			var sibling ltcchainhash.Hash
+			copy(sibling[:], siblingBytes)
+
+			// Since we're at index 0 (coinbase), we're always the left child
+			currentHash = ltcblockchain.HashMerkleBranches(&currentHash, &sibling)
+		}
+		return currentHash
+	case *BitcoinCashTxWrapper:
+		// Start with the transaction hash
+		currentHash := bchchainhash.Hash(coinbaseTx.TxHash())
+
+		// For coinbase (index 0), we always take the right branch
+		// and our hash goes on the left
+		for _, siblingBytes := range merkleBranch {
+			var sibling bchchainhash.Hash
+			copy(sibling[:], siblingBytes)
+
+			// Since we're at index 0 (coinbase), we're always the left child
+			currentHash = *bchblockchain.HashMerkleBranches(&currentHash, &sibling)
+		}
+		return currentHash
+	default:
+		return [common.HashLength]byte{}
+	}
+}
+
 // BuildCoinbaseScriptSigWithNonce creates a scriptSig for AuxPow coinbase with the Bitcoin standard format
 // Format:
 //
@@ -179,7 +231,7 @@ func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, ext
 	if len(heightBytes) <= 75 {
 		buf.WriteByte(byte(len(heightBytes))) // Direct push for <= 75 bytes
 	} else if len(heightBytes) <= 255 {
-		buf.WriteByte(0x4c)                    // OP_PUSHDATA1
+		buf.WriteByte(0x4c) // OP_PUSHDATA1
 		buf.WriteByte(byte(len(heightBytes)))
 	}
 	buf.Write(heightBytes)

@@ -230,6 +230,14 @@ func (bct *BitcoinCashTxWrapper) version() int32 {
 	return bct.MsgTx.Version
 }
 
+// txHash returns the little endian hash of the transaction
+func (bct *BitcoinCashTxWrapper) txHash() [32]byte {
+	if bct.MsgTx == nil {
+		return [32]byte{}
+	}
+	return bct.MsgTx.TxHash()
+}
+
 func (bct *BitcoinCashTxWrapper) pkScript() []byte {
 	if bct.MsgTx == nil || len(bct.MsgTx.TxOut) == 0 {
 		return nil

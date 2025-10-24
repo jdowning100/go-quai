@@ -450,6 +450,14 @@ func (rct *RavencoinTx) version() int32 {
 	return rct.MsgTx.Version
 }
 
+// txHash returns the little endian hash of the transaction
+func (rct *RavencoinTx) txHash() [32]byte {
+	if rct.MsgTx == nil {
+		return [32]byte{}
+	}
+	return rct.MsgTx.TxHash()
+}
+
 func (rct *RavencoinTx) pkScript() []byte {
 	if rct.MsgTx == nil || len(rct.MsgTx.TxOut) == 0 {
 		return nil

@@ -601,10 +601,11 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 	// This is because DecodeRavencoinHeader can successfully parse the first 120 bytes
 	// of a SHA block, leading to false positives.
 	var (
-		auxHeader *types.AuxPowHeader
-		sealHash  common.Hash
-		powType   types.PowID
-		err       error
+		auxHeader          *types.AuxPowHeader
+		sealHash           common.Hash
+		powType            types.PowID
+		heightFromCoinbase uint32
+		err                error
 	)
 
 	var coinbaseTx *types.AuxPowTx // Store the parsed coinbase transaction
@@ -663,12 +664,21 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 					auxHeader = types.NewAuxPowHeader(btcHeaderWrapper)
 					powType = types.SHA_BCH
 
+					heightFromCoinbase, err = types.ExtractHeightFromCoinbase(coinbaseTx.ScriptSig())
+					if err != nil {
+						c.logger.WithFields(log.Fields{
+							"type":  "SHA256d",
+							"error": err.Error(),
+						}).Error("Failed to extract height from SHA256d block")
+					}
+
 					c.logger.WithFields(log.Fields{
 						"type":       "SHA256d",
 						"version":    shaHeader.Version,
 						"nonce":      shaHeader.Nonce,
 						"bits":       shaHeader.Bits,
 						"headerHash": shaHeader.BlockHash().String(),
+						"height":     heightFromCoinbase,
 						"seal":       sealHash.Hex(),
 					}).Info("Received mined SHA256d block")
 				}
@@ -765,6 +775,20 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 	}
 
 	workObjectCopy := types.CopyWorkObject(workObject)
+	heightFromWorkObject, err := types.ExtractHeightFromCoinbase(workObjectCopy.AuxPow().Transaction().ScriptSig())
+	if err != nil {
+		c.logger.WithFields(log.Fields{
+			"error": err.Error(),
+		}).Error("Failed to extract height from work object")
+		return nil, fmt.Errorf("failed to extract height from work object: %w", err)
+	}
+	if heightFromWorkObject != heightFromCoinbase {
+		c.logger.WithFields(log.Fields{
+			"heightFromWorkObject": heightFromWorkObject,
+			"heightFromCoinbase":   heightFromCoinbase,
+		}).Error("Height mismatch between work object and decoded height")
+		return nil, fmt.Errorf("height mismatch between work object and decoded height")
+	}
 
 	// Verify the AuxPow type matches what we decoded
 	if workObjectCopy.AuxPow() != nil && workObjectCopy.AuxPow().PowID() != powType {
@@ -780,10 +804,18 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 	workObjectCopy.AuxPow().SetHeader(auxHeader)
 	workObjectCopy.AuxPow().SetTransaction(coinbaseTx)
 
-	c.logger.WithFields(log.Fields{
-		"powType":  powType,
-		"sealHash": sealHash.Hex(),
-	}).Info("Block successfully submitted")
+	// Additional BCH-specific merkle root verification
+	if powType == types.SHA_BCH {
+		if err := c.VerifyBCHMerkleRoot(data, workObjectCopy.AuxPow().MerkleBranch()); err != nil {
+			c.logger.WithFields(log.Fields{
+				"err":      err.Error(),
+				"powType":  powType,
+				"sealHash": sealHash.Hex(),
+			}).Error("BCH block failed merkle root verification")
+			return nil, fmt.Errorf("BCH block failed merkle root verification: %w", err)
+		}
+		c.logger.Info("BCH block passed merkle root verification")
+	}
 
 	// Verify the proof of work before accepting the block
 	engine := c.sl.GetEngineForHeader(workObjectCopy.WorkObjectHeader())
@@ -806,19 +838,6 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 		"powType":  powType,
 		"sealHash": sealHash.Hex(),
 	}).Info("Block passed PoW verification")
-
-	// Additional BCH-specific merkle root verification
-	if powType == types.SHA_BCH {
-		if err := c.VerifyBCHMerkleRoot(data, workObjectCopy.AuxPow().MerkleBranch()); err != nil {
-			c.logger.WithFields(log.Fields{
-				"err":      err.Error(),
-				"powType":  powType,
-				"sealHash": sealHash.Hex(),
-			}).Error("BCH block failed merkle root verification")
-			return nil, fmt.Errorf("BCH block failed merkle root verification: %w", err)
-		}
-		c.logger.Info("BCH block passed merkle root verification")
-	}
 
 	return workObjectCopy, nil
 }
@@ -865,8 +884,8 @@ func (c *Core) VerifyBCHMerkleRoot(blockData []byte, merkleBranch [][]byte) erro
 	if txCount == 1 && len(merkleBranch) == 0 {
 		if !merkleRootInHeader.IsEqual(&coinbaseTxHash) {
 			c.logger.WithFields(log.Fields{
-				"merkleRootInHeader": merkleRootInHeader.String(),
-				"coinbaseTxHash":     coinbaseTxHash.String(),
+				"merkleRootInHeader": hex.EncodeToString(merkleRootInHeader[:]),
+				"coinbaseTxHash":     hex.EncodeToString(coinbaseTxHash[:]),
 			}).Error("Merkle root mismatch in single-tx BCH block")
 			return errors.New("merkle root in header does not match coinbase transaction hash")
 		}
@@ -885,8 +904,8 @@ func (c *Core) VerifyBCHMerkleRoot(blockData []byte, merkleBranch [][]byte) erro
 
 		c.logger.WithFields(log.Fields{
 			"level":       i,
-			"branchHash":  branchHash.String(),
-			"currentHash": currentHash.String(),
+			"branchHash":  hex.EncodeToString(branchHash[:]),
+			"currentHash": hex.EncodeToString(currentHash[:]),
 		}).Info("BCH merkle tree step")
 	}
 
@@ -896,18 +915,18 @@ func (c *Core) VerifyBCHMerkleRoot(blockData []byte, merkleBranch [][]byte) erro
 		for i, hash := range merkleBranch {
 			var h chainhash.Hash
 			copy(h[:], hash)
-			merkleBranch_str[i] = h.String()
+			merkleBranch_str[i] = hex.EncodeToString(h[:])
 		}
 		c.logger.WithFields(log.Fields{
-			"merkleRootInHeader": merkleRootInHeader.String(),
-			"calculatedRoot":     currentHash.String(),
+			"merkleRootInHeader": hex.EncodeToString(merkleRootInHeader[:]),
+			"calculatedRoot":     hex.EncodeToString(currentHash[:]),
 			"merkleBranch":       merkleBranch_str,
 		}).Error("Merkle root mismatch after applying merkle branch")
 		return errors.New("merkle root in header does not match calculated root from merkle branch")
 	}
 
 	c.logger.WithFields(log.Fields{
-		"merkleRoot":         currentHash.String(),
+		"merkleRoot":         hex.EncodeToString(currentHash[:]),
 		"merkleBranchLevels": len(merkleBranch),
 	}).Info("BCH merkle root verification successful")
 

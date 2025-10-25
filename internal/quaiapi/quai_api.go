@@ -1218,6 +1218,21 @@ func (s *PublicBlockChainQuaiAPI) marshalShaTemplate(wo *types.WorkObject, useTe
 		payoutScript = extractPayoutScriptFromAuxPowTx(tx)
 	}
 
+	txBytes := auxPow.Transaction().Bytes()
+
+	// Build coinb1/coinb2 following Stratum's mining.notify convention:
+	// - coinb1: entire start of the tx up to the start of the combined extranonce push data
+	// <12 bytes of data>
+	// - coinb2: everything after the combined extranonce push data (coinb2 includes the 32 bytes of extradata)
+	coinb1, coinb2, err := extractCoinb1AndCoinb2FromAuxPowTx(txBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract coinb1 and coinb2 from AuxPowTx: %w", err)
+	}
+
+	if len(txBytes) == 0 {
+		return nil, errors.New("empty coinbase tx bytes in AuxPow")
+	}
+
 	// Get header fields using the typed accessor methods
 	prevBlock := auxHeader.PrevBlock()
 
@@ -1233,12 +1248,13 @@ func (s *PublicBlockChainQuaiAPI) marshalShaTemplate(wo *types.WorkObject, useTe
 		merkleBranch[i] = hexutil.Encode(reversed)
 	}
 
+	merkleRoot := types.CalculateMerkleRoot(auxPow.Transaction(), auxPow.MerkleBranch())
+
 	// Convert previousblockhash to hex without 0x prefix
 	prevBlockHex := hex.EncodeToString(prevBlock[:])
 
 	// Determine which difficulty to use based on useTemplateDifficulty parameter
 	var bits uint32
-	var err error
 
 	if useTemplateDifficulty {
 		// Use the template difficulty from AuxPow header
@@ -1283,29 +1299,194 @@ func (s *PublicBlockChainQuaiAPI) marshalShaTemplate(wo *types.WorkObject, useTe
 		targetHex = targetHex[2:]
 	}
 
-	// Convert payoutscript to hex without 0x prefix
-	payoutScriptHex := hex.EncodeToString(payoutScript)
-
-	// Convert coinbaseaux to hex without 0x prefix
-	coinbaseAuxHex := hex.EncodeToString(coinbaseAux)
-
 	return map[string]interface{}{
 		"version":           auxHeader.Version(),
 		"previousblockhash": prevBlockHex,
-		"coinbaseaux":       coinbaseAuxHex,
 		"coinbasevalue":     coinbaseValue,
+		"payoutscript":      hex.EncodeToString(payoutScript),
+		"coinbaseaux":       hex.EncodeToString(coinbaseAux),
 		// Miner target aligned with AuxPow header nBits (BCH/BTC style)
-		"target":       targetHex,
-		"mintime":      auxHeader.Timestamp(),
-		"noncerange":   "00000000ffffffff", // 32-bit nonce
-		"sigoplimit":   80000,              // Bitcoin default
-		"sizelimit":    1000000,            // 1MB
-		"curtime":      auxHeader.Timestamp(),
-		"bits":         bitsHex,
-		"height":       uint64(blockHeight),
-		"payoutscript": payoutScriptHex,
-		"merklebranch": merkleBranch,
+		"target":            targetHex,
+		"mintime":           auxHeader.Timestamp(),
+		"noncerange":        "00000000ffffffff", // 32-bit nonce
+		"sigoplimit":        80000,              // Bitcoin default
+		"sizelimit":         1000000,            // 1MB
+		"curtime":           auxHeader.Timestamp(),
+		"bits":              bitsHex,
+		"height":            uint64(blockHeight),
+		"coinb1":            hex.EncodeToString(coinb1),
+		"extranonce1Length": 4, // 4 bytes
+		"extranonce2Length": 8, // 8 bytes
+		// Keep the 32-byte aux extra data inside coinb2; miners do not fill it
+		"coinbaseAuxExtraBytesLength": 32, // 32 bytes
+		"coinb2":                      hex.EncodeToString(coinb2),
+		"merklebranch":                merkleBranch,
+		"merkleroot":                  hex.EncodeToString(merkleRoot[:]),
 	}, nil
+}
+
+func extractCoinb1AndCoinb2FromAuxPowTx(txBytes []byte) ([]byte, []byte, error) {
+	// Helpers to parse CompactSize varints and script pushes
+	readVarInt := func(b []byte) (val uint64, size int, err error) {
+		if len(b) == 0 {
+			return 0, 0, errors.New("short varint")
+		}
+		prefix := b[0]
+		switch prefix {
+		case 0xFF:
+			if len(b) < 9 {
+				return 0, 0, errors.New("short varint 0xff")
+			}
+			return binary.LittleEndian.Uint64(b[1:9]), 9, nil
+		case 0xFE:
+			if len(b) < 5 {
+				return 0, 0, errors.New("short varint 0xfe")
+			}
+			return uint64(binary.LittleEndian.Uint32(b[1:5])), 5, nil
+		case 0xFD:
+			if len(b) < 3 {
+				return 0, 0, errors.New("short varint 0xfd")
+			}
+			return uint64(binary.LittleEndian.Uint16(b[1:3])), 3, nil
+		default:
+			return uint64(prefix), 1, nil
+		}
+	}
+
+	// Returns (dataStartOffset, dataLen, headerLen) for the next push
+	parsePushHeader := func(script []byte) (int, int, int, error) {
+		if len(script) == 0 {
+			return 0, 0, 0, errors.New("empty script segment")
+		}
+		opcode := script[0]
+		if opcode <= 75 {
+			return 1, int(opcode), 1, nil
+		}
+		if opcode == 0x4c { // OP_PUSHDATA1
+			if len(script) < 2 {
+				return 0, 0, 0, errors.New("short OP_PUSHDATA1")
+			}
+			return 2, int(script[1]), 2, nil
+		}
+		if opcode == 0x4d { // OP_PUSHDATA2
+			if len(script) < 3 {
+				return 0, 0, 0, errors.New("short OP_PUSHDATA2")
+			}
+			ln := int(binary.LittleEndian.Uint16(script[1:3]))
+			return 3, ln, 3, nil
+		}
+		return 0, 0, 0, fmt.Errorf("unsupported opcode 0x%x in coinbase script", opcode)
+	}
+
+	// Walk the transaction encoding to find scriptSig and split positions
+	pos := 0
+	// version (4 bytes)
+	if len(txBytes) < pos+4 {
+		return nil, nil, errors.New("tx too short for version")
+	}
+	pos += 4
+	// input count (varint)
+	vinCount, sz, err := readVarInt(txBytes[pos:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse vin count: %w", err)
+	}
+	pos += sz
+	if vinCount == 0 {
+		return nil, nil, errors.New("coinbase tx has zero vin")
+	}
+	// prevout (32 + 4)
+	if len(txBytes) < pos+36 {
+		return nil, nil, errors.New("tx too short for prevout")
+	}
+	pos += 36
+	// scriptSig length (varint)
+	scriptLenU64, sz2, err := readVarInt(txBytes[pos:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse scriptsig length: %w", err)
+	}
+	pos += sz2
+	scriptLen := int(scriptLenU64)
+	if scriptLen < 0 || len(txBytes) < pos+scriptLen {
+		return nil, nil, errors.New("tx too short for scriptsig bytes")
+	}
+	scriptStart := pos
+	script := txBytes[scriptStart : scriptStart+scriptLen]
+
+	// Parse pushes per our format
+	// 1) height
+	_, l, hdr, err := parsePushHeader(script)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse height push: %w", err)
+	}
+	cur := hdr + l
+	// 2) magic
+	if cur >= len(script) {
+		return nil, nil, errors.New("unexpected end after height push")
+	}
+	off, l, hdr, err := parsePushHeader(script[cur:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse magic push: %w", err)
+	}
+	if l != 4 || cur+off+l > len(script) {
+		return nil, nil, errors.New("invalid magic push length")
+	}
+	if !bytes.Equal(script[cur+off:cur+off+l], []byte{0xfa, 0xbe, 0x6d, 0x6d}) {
+		return nil, nil, errors.New("unexpected magic marker in coinbase script")
+	}
+	cur += hdr + l
+	// 3) seal hash (32)
+	_, l, hdr, err = parsePushHeader(script[cur:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse seal hash push: %w", err)
+	}
+	if l != 32 {
+		return nil, nil, fmt.Errorf("unexpected seal hash length %d", l)
+	}
+	cur += hdr + l
+	// 4) merkle size (4)
+	_, l, hdr, err = parsePushHeader(script[cur:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse merkle size push: %w", err)
+	}
+	if l != 4 {
+		return nil, nil, fmt.Errorf("unexpected merkle size length %d", l)
+	}
+	cur += hdr + l
+	// 5) merkle nonce (4)
+	_, l, hdr, err = parsePushHeader(script[cur:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse merkle nonce push: %w", err)
+	}
+	if l != 4 {
+		return nil, nil, fmt.Errorf("unexpected merkle nonce length %d", l)
+	}
+	cur += hdr + l
+	// 6) combined extranonces + extraData push
+	if cur >= len(script) {
+		return nil, nil, errors.New("unexpected end before extranonce push")
+	}
+	dataStartOff, dataLen, _, err := parsePushHeader(script[cur:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse extranonce push: %w", err)
+	}
+	if dataLen < 1 || cur+dataStartOff+dataLen > len(script) {
+		return nil, nil, errors.New("invalid extranonce push bounds")
+	}
+
+	pushDataAbsStart := scriptStart + cur + dataStartOff
+	pushDataAbsEnd := pushDataAbsStart + dataLen
+
+	if pushDataAbsStart < 0 || pushDataAbsEnd > len(txBytes) || pushDataAbsStart > pushDataAbsEnd {
+		return nil, nil, errors.New("computed coinbase split out of bounds")
+	}
+	// Only carve out extranonce1 (4B) and extranonce2 (8B). Keep the trailing 32B zeros in coinb2.
+	coinb1 := txBytes[:pushDataAbsStart]
+	coinb2Start := pushDataAbsStart + 4 + 8
+	if coinb2Start < 0 || coinb2Start > len(txBytes) {
+		return nil, nil, errors.New("computed coinb2 start out of bounds")
+	}
+	coinb2 := txBytes[coinb2Start:]
+	return coinb1, coinb2, nil
 }
 
 // extractPayoutScriptFromAuxPowTx extracts the payout script from the first output of an AuxPowTx
@@ -1925,7 +2106,7 @@ func (s *PublicBlockChainQuaiAPI) SubmitAuxTemplate(ctx context.Context, templat
 	messageHashHex := hex.EncodeToString(messageHash[:])
 	merkleBranch := make([]string, len(auxTemplate.MerkleBranch()))
 	for i, hash := range auxTemplate.MerkleBranch() {
-		merkleBranch[i] = hexutil.Encode(hash)
+		merkleBranch[i] = hex.EncodeToString(hash)
 	}
 	s.b.Logger().WithFields(log.Fields{
 		"powID":        auxTemplate.PowID(),

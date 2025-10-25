@@ -92,7 +92,7 @@ func (ltb *LitecoinBlockWrapper) AddTransaction(tx *AuxPowTx) error {
 }
 
 func (ltc *LitecoinHeaderWrapper) PowHash() common.Hash {
-	blockHash := ltc.BlockHeader.BlockHash()
+	blockHash := ltc.BlockHeader.PowHash()
 	return common.BytesToHash(reverseBytesCopy(blockHash[:]))
 }
 

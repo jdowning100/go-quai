@@ -26,7 +26,8 @@ import (
 //	OP_PUSH32  <AuxPowHash(32 bytes)>   ← Seal hash (this is what we extract)
 //	OP_PUSH4   <merkle_size(4 bytes)>
 //	OP_PUSH4   <merkle_nonce(4 bytes)>
-//	OP_PUSH12  <extraNonce1(4 bytes) + extraNonce2(8 bytes)> ← Combined extranonces
+//	OP_PUSH44  <extraNonce1(4 bytes) + extraNonce2(8 bytes) + extraData(32 bytes)> ← Combined extranonces (Bitcoin standard) + extraData (32 bytes)
+
 func ExtractSealHashFromCoinbase(scriptSig []byte) (common.Hash, error) {
 	if len(scriptSig) == 0 {
 		return common.Hash{}, errors.New("coinbase scriptSig empty")
@@ -221,7 +222,7 @@ func CalculateMerkleRoot(coinbaseTx *AuxPowTx, merkleBranch [][]byte) [common.Ha
 //	OP_PUSH32  <SealHash(32 bytes)>     ← Actual seal hash
 //	OP_PUSH4   <merkle_size(4 bytes)>   ← 1
 //	OP_PUSH4   <merkle_nonce(4 bytes)>  ← 0
-//	OP_PUSH12  <extraNonce1(4 bytes) + extraNonce2(8 bytes)> ← Combined extranonces (Bitcoin standard)
+//	OP_PUSH44  <extraNonce1(4 bytes) + extraNonce2(8 bytes) + extraData(32 bytes)> ← Combined extranonces (Bitcoin standard) + extraData (32 bytes)
 func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, extraNonce2 uint64, sealHash common.Hash) []byte {
 	var buf bytes.Buffer
 
@@ -257,11 +258,13 @@ func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, ext
 	buf.WriteByte(0x04) // OP_PUSH4
 	binary.Write(&buf, binary.LittleEndian, uint32(0))
 
-	// 6. Combined extra nonces (12 bytes total, little-endian)
-	// Bitcoin standard: extraNonce1 (4 bytes) + extraNonce2 (8 bytes) in a single push
-	buf.WriteByte(0x0c) // OP_PUSH12
+	// 6. Combined extra nonces and extraData (44 bytes total, little-endian)
+	// Bitcoin standard: extraNonce1 (4 bytes) + extraNonce2 (8 bytes) + extraData (32 bytes) in a single push
+	buf.WriteByte(0x2c) // OP_PUSH44 (44 decimal = 0x2c hex)
 	binary.Write(&buf, binary.LittleEndian, extraNonce1)
 	binary.Write(&buf, binary.LittleEndian, extraNonce2)
+	// extraData: 32 bytes of zeros for now (can be used for additional miner data)
+	buf.Write(make([]byte, 32))
 
 	return buf.Bytes()
 }

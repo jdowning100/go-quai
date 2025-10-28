@@ -18,9 +18,11 @@ import (
 
 	"github.com/dominant-strategies/go-quai/cmd/utils"
 	"github.com/dominant-strategies/go-quai/common"
+	"github.com/dominant-strategies/go-quai/internal/quaiapi"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/p2p/node"
 	"github.com/dominant-strategies/go-quai/params"
+	"github.com/dominant-strategies/go-quai/stratum"
 )
 
 var gitCommit, gitDate string
@@ -99,6 +101,39 @@ func runStart(cmd *cobra.Command, args []string) error {
 		log.Global.WithField("error", err).Fatal("error starting node")
 	}
 
+	// Optionally start stratum-like TCP server when enabled and a zone backend is available
+	var stratumServer *stratum.Server
+	if viper.GetBool(utils.StratumEnabledFlag.Name) {
+		addr := viper.GetString(utils.StratumAddrFlag.Name)
+		// Choose first processing zone backend
+		var chosen quaiapi.Backend
+		found := false
+		// Attempt all reasonable region/zone combinations; stop at first processing state
+		for i := 0; i < int(common.MaxRegions); i++ {
+			for j := 0; j < int(common.MaxZones); j++ {
+				backend := hc.GetBackend(common.Location{byte(i), byte(j)})
+				if backend != nil && backend.NodeCtx() == common.ZONE_CTX && backend.ProcessingState() {
+					chosen = backend
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			log.Global.Warn("Stratum endpoint enabled but no processing zone backend found; skipping start")
+		} else {
+			stratumServer = stratum.NewServer(addr, chosen)
+			if err := stratumServer.Start(); err != nil {
+				log.Global.WithField("error", err).Error("failed to start stratum endpoint")
+			} else {
+				log.Global.WithField("addr", addr).Info("Stratum-like TCP endpoint started")
+			}
+		}
+	}
+
 	if viper.IsSet(utils.MetricsEnabledFlag.Name) {
 		log.Global.Info("Starting metrics")
 		var (
@@ -130,6 +165,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 	cancel()
 	// stop the hierarchical co-ordinator
 	hc.Stop()
+	if stratumServer != nil {
+		_ = stratumServer.Stop()
+	}
 	if err := node.Stop(); err != nil {
 		panic(err)
 	}

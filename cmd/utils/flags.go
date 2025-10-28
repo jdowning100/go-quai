@@ -59,6 +59,7 @@ var Flags = [][]Flag{
 	RPCFlags,
 	PeersFlags,
 	MetricsFlags,
+	StratumFlags,
 }
 
 var GlobalFlags = []Flag{
@@ -616,6 +617,27 @@ var (
 		Name:  c_NodeFlagPrefix + "telemetry",
 		Value: true,
 		Usage: "Enable telemetry reporting" + generateEnvDoc(c_NodeFlagPrefix+"telemetry"),
+	}
+)
+
+// ****************************************
+// **            STRATUM FLAGS           **
+// ****************************************
+var StratumFlags = []Flag{
+	StratumEnabledFlag,
+	StratumAddrFlag,
+}
+
+var (
+	StratumEnabledFlag = Flag{
+		Name:  c_NodeFlagPrefix + "stratum-enabled",
+		Value: false,
+		Usage: "enable TCP stratum-like endpoint to serve auxpow headers",
+	}
+	StratumAddrFlag = Flag{
+		Name:  c_NodeFlagPrefix + "stratum-addr",
+		Value: "0.0.0.0:3333",
+		Usage: "listen address for stratum-like TCP endpoint",
 	}
 )
 

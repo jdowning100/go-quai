@@ -1146,16 +1146,7 @@ func (s *PublicBlockChainQuaiAPI) GetBlockTemplate(ctx context.Context, request 
 	if err != nil {
 		return nil, err
 	}
-
-	// Build the response based on PoW type
-	switch powId {
-	case types.Kawpow, types.SHA_BCH, types.SHA_BTC:
-		return s.marshalAuxPowTemplate(pendingHeader)
-	case types.Scrypt:
-		return s.marshalScryptTemplate(pendingHeader)
-	default:
-		return nil, fmt.Errorf("unsupported PoW algorithm: %d", powId)
-	}
+	return s.marshalAuxPowTemplate(pendingHeader)
 }
 
 // marshalAuxPowTemplate formats a WorkObject as a SHA256d/Bitcoin getblocktemplate response
@@ -1180,6 +1171,8 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject) (m
 		if err == nil {
 			// Use the extracted height from scriptSig if successful
 			blockHeight = extractedHeight
+		} else {
+			return nil, fmt.Errorf("failed to extract height from coinbase scriptSig: %w", err)
 		}
 
 	}
@@ -1434,20 +1427,20 @@ func extractCoinb1AndCoinb2FromAuxPowTx(txBytes []byte) ([]byte, []byte, error) 
 	return coinb1, coinb2, nil
 }
 
-// marshalScryptTemplate formats a WorkObject as a Scrypt/Litecoin getblocktemplate response
-func (s *PublicBlockChainQuaiAPI) marshalScryptTemplate(wo *types.WorkObject) (map[string]interface{}, error) {
-	// Scrypt uses the same header format as Bitcoin/SHA256d, just different PoW algorithm
-	result, err := s.marshalAuxPowTemplate(wo)
-	if err != nil {
-		return nil, err
-	}
-	// Change the rules to indicate scrypt
-	result["rules"] = []string{"scrypt"}
-	return result, nil
+func (s *PublicBlockChainQuaiAPI) SubmitBlock(ctx context.Context, raw hexutil.Bytes) error {
+	return s.b.SubmitBlock(raw, types.Kawpow)
 }
 
-func (s *PublicBlockChainQuaiAPI) SubmitBlock(ctx context.Context, raw hexutil.Bytes) error {
-	return s.b.SubmitBlock(raw)
+func (s *PublicBlockChainQuaiAPI) SubmitScryptBlock(ctx context.Context, raw hexutil.Bytes) error {
+	return s.b.SubmitBlock(raw, types.Scrypt)
+}
+
+func (s *PublicBlockChainQuaiAPI) SubmitKawpowBlock(ctx context.Context, raw hexutil.Bytes) error {
+	return s.b.SubmitBlock(raw, types.Kawpow)
+}
+
+func (s *PublicBlockChainQuaiAPI) SubmitShaBlock(ctx context.Context, raw hexutil.Bytes) error {
+	return s.b.SubmitBlock(raw, types.SHA_BCH)
 }
 
 // ReceiveMinedHeader will run checks on the block and add to canonical chain if valid.

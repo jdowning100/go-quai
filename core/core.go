@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
+	ltcdwire "github.com/dominant-strategies/ltcd/wire"
 	bchdwire "github.com/gcash/bchd/wire"
 	lru "github.com/hashicorp/golang-lru/v2"
 	expireLru "github.com/hashicorp/golang-lru/v2/expirable"
@@ -575,7 +576,7 @@ func (c *Core) ReceiveMinedHeader(workObject *types.WorkObject) (*types.WorkObje
 	return c.sl.ReceiveMinedHeader(workObject)
 }
 
-func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
+func (c *Core) SubmitBlock(raw hexutil.Bytes, powId types.PowID) (*types.WorkObject, error) {
 	const (
 		bitcoinHeaderSize   = 80
 		ravencoinHeaderSize = 120
@@ -607,8 +608,65 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 		coinbaseTx         []byte
 	)
 
-	// Try SHA256d/Bitcoin format (80 byte header) FIRST
-	if len(data) >= bitcoinHeaderSize {
+	if powId == types.Scrypt {
+		litecoinHeaderBytes := data[:bitcoinHeaderSize]
+		litecoinHeader := &ltcdwire.BlockHeader{}
+		litecoinErr := litecoinHeader.Deserialize(bytes.NewReader(litecoinHeaderBytes))
+		if litecoinErr == nil {
+			// Successfully decoded as Bitcoin - parse coinbase to extract seal hash
+			extra := data[bitcoinHeaderSize:]
+			if len(extra) == 0 {
+				c.logger.Error("No transaction data after Litecoin header - must include coinbase transaction")
+				return nil, errors.New("Litecoin block submission must include coinbase transaction after 80-byte header")
+			}
+
+			// Parse the var_int transaction count (Bitcoin block format)
+			reader := bytes.NewReader(extra)
+			txCount, err := wire.ReadVarInt(reader, 0)
+			if err != nil {
+				c.logger.WithField("error", err.Error()).Error("Failed to read Litecoin transaction count")
+				return nil, errors.New("failed to read Litecoin transaction count: " + err.Error())
+			}
+			if txCount == 0 {
+				c.logger.Error("Litecoin block has zero transactions")
+				return nil, errors.New("Litecoin block must have at least one transaction (coinbase)")
+			}
+
+			// Now deserialize the first transaction (coinbase)
+			// Create an AuxPowTx with correct type (Litecoin) for deserialization
+			coinbaseTx = extra[1:] // Skip var_int byte(s)
+
+			scriptSig := types.ExtractScriptSigFromCoinbaseTx(coinbaseTx)
+			if len(scriptSig) == 0 {
+				c.logger.Error("Failed to extract scriptSig from KAWPOW coinbase transaction")
+				return nil, errors.New("failed to extract scriptSig from KAWPOW coinbase transaction")
+			}
+
+			// Extract seal hash from the parsed transaction
+			sealHash, err = types.ExtractSealHashFromCoinbase(scriptSig)
+			if err != nil {
+				c.logger.WithFields(log.Fields{
+					"type":  "Litecoin",
+					"error": err.Error(),
+				}).Error("Failed to extract seal hash from Litecoin block, will try KAWPOW")
+				return nil, errors.New("failed to extract seal hash from Litecoin block: " + err.Error())
+			}
+
+			heightFromCoinbase, err = types.ExtractHeightFromCoinbase(scriptSig)
+			if err != nil {
+				c.logger.WithFields(log.Fields{
+					"type":  "scrypt",
+					"error": err.Error(),
+				}).Error("Failed to extract height from scrypt block")
+			}
+
+			// Successfully parsed as Litecoin
+			// Create wrapped Litecoin header
+			litecoinHeaderWrapper := &types.LitecoinHeaderWrapper{BlockHeader: litecoinHeader}
+			auxHeader = types.NewAuxPowHeader(litecoinHeaderWrapper)
+			powType = types.Scrypt
+		}
+	} else if powId == types.SHA_BCH {
 		shaHeaderBytes := data[:bitcoinHeaderSize]
 		// Decode using btcd wire protocol
 		shaHeader := &bchdwire.BlockHeader{}
@@ -677,10 +735,7 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes) (*types.WorkObject, error) {
 				}
 			}
 		}
-	}
-
-	// If SHA256d parsing failed, try KAWPOW/Ravencoin format (120 byte header)
-	if auxHeader == nil && len(data) >= ravencoinHeaderSize {
+	} else if powId == types.Kawpow {
 		rvnHeaderBytes := data[:ravencoinHeaderSize]
 		ravencoinHeader, rvnErr := types.DecodeRavencoinHeader(rvnHeaderBytes)
 		if rvnErr == nil {

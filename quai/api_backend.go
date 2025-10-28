@@ -552,8 +552,8 @@ func (b *QuaiAPIBackend) AddPendingAuxPow(powId types.PowID, sealHash common.Has
 	b.quai.core.AddPendingAuxPow(powId, sealHash, auxpow)
 }
 
-func (b *QuaiAPIBackend) SubmitBlock(raw hexutil.Bytes) error {
-	wo, err := b.quai.core.SubmitBlock(raw)
+func (b *QuaiAPIBackend) SubmitBlock(raw hexutil.Bytes, powId types.PowID) error {
+	wo, err := b.quai.core.SubmitBlock(raw, powId)
 	if err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
+	"github.com/dominant-strategies/go-quai/internal/telemetry"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/trie"
@@ -739,6 +740,16 @@ func (hc *HeaderChain) AppendBlock(block *types.WorkObject) error {
 	if err != nil {
 		return err
 	}
+
+	if hc.NodeCtx() == common.ZONE_CTX {
+		// Telemetry: move candidate workshares to 'candidate' LRU
+		for _, u := range block.Uncles() {
+			if hc.UncleWorkShareClassification(u) == types.Valid {
+				telemetry.RemoveCandidateShare(u.Hash())
+			}
+		}
+	}
+
 	if unlocks != nil && len(unlocks) > 0 {
 		hc.unlocksFeed.Send(UnlocksEvent{
 			Hash:    block.Hash(),

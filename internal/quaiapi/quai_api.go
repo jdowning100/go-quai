@@ -38,6 +38,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/crypto"
 	"github.com/dominant-strategies/go-quai/crypto/musig2"
+	"github.com/dominant-strategies/go-quai/internal/telemetry"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/metrics_config"
 	"github.com/dominant-strategies/go-quai/params"
@@ -269,6 +270,16 @@ func (s *PublicBlockChainQuaiAPI) GetSupplyAnalyticsForBlock(ctx context.Context
 		"qiSupplyRemoved":   (*hexutil.Big)(supplyRemovedQi),
 		"qiSupplyTotal":     (*hexutil.Big)(totalSupplyQi),
 	}, nil
+}
+
+// GetWorkshareLRUDump returns a JSON-encoded dump of all workshares in the LRU caches.
+// The limit parameter caps the number of entries returned per list (0 or negative means no limit).
+func (s *PublicBlockChainQuaiAPI) GetWorkshareLRUDump(ctx context.Context, limit int) (map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 0 // No limit
+	}
+	dump := s.b.GetWorkshareLRUDump(limit)
+	return dump, nil
 }
 
 func (s *PublicBlockChainQuaiAPI) GetOutPointsByAddressAndRange(ctx context.Context, address common.Address, start, end hexutil.Uint64) (map[string][]interface{}, error) {
@@ -1478,10 +1489,16 @@ func (s *PublicBlockChainQuaiAPI) ReceiveRawWorkShare(ctx context.Context, raw h
 		return err
 	}
 
+	if nodeCtx == common.ZONE_CTX {
+		// Track mined workshare (mined LRU)
+		telemetry.RecordMinedHeader(workShareHeader)
+	}
+
 	return s.ReceiveWorkShare(ctx, workShareHeader)
 }
 
 func (s *PublicBlockChainQuaiAPI) ReceiveWorkShare(ctx context.Context, workShare *types.WorkObjectHeader) error {
+	// Ensure record in mined LRU even if called directly
 	return s.b.ReceiveWorkShare(workShare)
 }
 

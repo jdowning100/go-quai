@@ -125,6 +125,7 @@ type Backend interface {
 	GetMinerEndpoints() []string
 	GetWorkShareP2PThreshold() int
 	SetWorkShareP2PThreshold(threshold int)
+	GetWorkshareLRUDump(limit int) map[string]interface{}
 
 	BadHashExistsInChain() bool
 	IsBlockHashABadHash(hash common.Hash) bool

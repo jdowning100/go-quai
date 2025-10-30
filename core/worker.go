@@ -25,6 +25,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
+	"github.com/dominant-strategies/go-quai/internal/telemetry"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/trie"
@@ -2517,6 +2518,10 @@ func (w *worker) AddWorkShare(workShare *types.WorkObjectHeader) error {
 	}
 
 	w.uncles.ContainsOrAdd(workShare.Hash(), *workShare)
+
+	if w.hc.NodeCtx() == common.ZONE_CTX {
+		telemetry.RecordCandidateHeader(workShare)
+	}
 
 	// Emit workshare event for real-time updates
 	workshareObj := types.NewWorkObjectWithHeaderAndTx(workShare, nil)

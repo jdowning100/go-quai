@@ -702,9 +702,9 @@ func (kawpow *Kawpow) ComputePowLight(header *types.WorkObjectHeader) (mixHash, 
 	// RVN-compatible (byte-reversed) header hash bytes, since the
 	// implementation expects the hash as big endian, it needs to be
 	size := datasetSize(blockNumber)
-	digest, result := kawpowLight(size, ethashCache.cache, kawpowHeaderHash.Bytes(), nonce64, blockNumber, ethashCache.cDag)
+	digest, result := kawpowLight(size, ethashCache.cache, reverseBytes32(kawpowHeaderHash.Bytes()), nonce64, blockNumber, ethashCache.cDag)
 	// MixHash stored in the header should be little endian, so reverse it back to little endian
-	mixHash = common.BytesToHash(digest)
+	mixHash = common.BytesToHash(reverseBytes32(digest)) // reverse to little-endian
 	powHash = common.BytesToHash(result)
 
 	// Cache the result with the unique key

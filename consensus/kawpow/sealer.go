@@ -191,7 +191,7 @@ search:
 
 			// Compute the PoW value of this nonce using the RVN-compatible
 			// (byte-reversed) KAWPOW header hash bytes
-			digest, result := kawpowLight(size, cache.cache, kawpowHeaderHash.Bytes(), nonce, blockHeight, cache.cDag)
+			digest, result := kawpowLight(size, cache.cache, reverseBytes32(kawpowHeaderHash.Bytes()), nonce, blockHeight, cache.cDag)
 			resultBig := new(big.Int).SetBytes(result)
 
 			if resultBig.Cmp(target) <= 0 {
@@ -206,7 +206,7 @@ search:
 				// Update the Ravencoin header with the found nonce and mix hash
 				workObject.WorkObjectHeader().AuxPow().Header().SetNonce64(nonce)
 				// reverse the digest to little endian before populating the mix hash into the kawpow
-				workObject.WorkObjectHeader().AuxPow().Header().SetMixHash(common.BytesToHash(digest))
+				workObject.WorkObjectHeader().AuxPow().Header().SetMixHash(common.BytesToHash(reverseBytes32(digest)))
 
 				// Create a new AuxPow with the updated header and coinbase
 				updatedAuxPow := types.NewAuxPow(

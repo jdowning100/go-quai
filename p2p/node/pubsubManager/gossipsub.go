@@ -15,6 +15,7 @@ import (
 	"github.com/dominant-strategies/go-quai/cmd/utils"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/core/types"
+	"github.com/dominant-strategies/go-quai/internal/telemetry"
 	"github.com/dominant-strategies/go-quai/log"
 	p2p "github.com/dominant-strategies/go-quai/p2p"
 	"github.com/dominant-strategies/go-quai/p2p/pb"
@@ -560,10 +561,22 @@ func (g *PubsubManager) Broadcast(location common.Location, data interface{}) er
 	if err != nil {
 		return err
 	}
+
+	// If broadcasting a workshare, track it as sent and attach WO into LRU
+	if wsv, ok := data.(*types.WorkObjectShareView); ok && wsv != nil && wsv.WorkObject != nil && wsv.WorkObject.WorkObjectHeader() != nil {
+		telemetry.RecordSentWO(wsv.WorkObject)
+	}
+
 	protoData, err := pb.ConvertAndMarshal(data)
 	if err != nil {
 		return err
 	}
+
+	// If broadcasting a workshare, track it as sent
+	if wsv, ok := data.(*types.WorkObjectShareView); ok && wsv != nil && wsv.WorkObject != nil && wsv.WorkObject.WorkObjectHeader() != nil {
+		telemetry.RecordSent(wsv.WorkObject.WorkObjectHeader())
+	}
+
 	if value, ok := g.topics.Load(topicName.String()); ok {
 		return value.(*pubsub.Topic).Publish(g.ctx, protoData)
 	}

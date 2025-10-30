@@ -20,6 +20,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
+	"github.com/dominant-strategies/go-quai/internal/telemetry"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/trie"
@@ -739,6 +740,16 @@ func (hc *HeaderChain) AppendBlock(block *types.WorkObject) error {
 	if err != nil {
 		return err
 	}
+	// After append, compute and log workshare inclusion stats
+	hc.recordWorkshareInclusions(block)
+
+	// Telemetry: move included workshares to 'included' LRU
+	for _, u := range block.Uncles() {
+		if hc.UncleWorkShareClassification(u) == types.Valid {
+			telemetry.RecordIncludedHeader(u)
+		}
+	}
+
 	if unlocks != nil && len(unlocks) > 0 {
 		hc.unlocksFeed.Send(UnlocksEvent{
 			Hash:    block.Hash(),
@@ -752,6 +763,41 @@ func (hc *HeaderChain) AppendBlock(block *types.WorkObject) error {
 	}
 
 	return nil
+}
+
+func (hc *HeaderChain) recordWorkshareInclusions(b *types.WorkObject) {
+	if b == nil {
+		return
+	}
+	perAlgoTotal := map[string]int{"progpow": 0, "kawpow": 0, "sha": 0, "scrypt": 0}
+	perAlgoMine := map[string]int{"progpow": 0, "kawpow": 0, "sha": 0, "scrypt": 0}
+
+	for _, u := range b.Uncles() {
+		// Only count true workshares (not full blocks)
+		if hc.UncleWorkShareClassification(u) != types.Valid {
+			continue
+		}
+		// Determine algo
+		algo := "progpow"
+		if u.AuxPow() != nil {
+			switch u.AuxPow().PowID() {
+			case types.Kawpow:
+				algo = "kawpow"
+			case types.SHA_BTC, types.SHA_BCH:
+				algo = "sha"
+			case types.Scrypt:
+				algo = "scrypt"
+			default:
+				algo = "progpow"
+			}
+		}
+		perAlgoTotal[algo]++
+		if telemetry.IsLocalShare(u.Hash()) {
+			perAlgoMine[algo]++
+		}
+	}
+
+	telemetry.RecordBlockInclusions(b.Hash(), perAlgoTotal, perAlgoMine)
 }
 
 // SetCurrentHeader sets the current header based on the POEM choice

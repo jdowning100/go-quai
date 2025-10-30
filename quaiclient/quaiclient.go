@@ -393,3 +393,11 @@ func (ec *Client) GetWorkShareP2PThreshold(ctx context.Context) uint64 {
 	}
 	return uint64(threshold)
 }
+
+// GetWorkshareLRUDump returns a dump of all workshares in the LRU caches.
+// The limit parameter caps the number of entries returned per list (0 means no limit).
+func (ec *Client) GetWorkshareLRUDump(ctx context.Context, limit int) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	err := ec.c.CallContext(ctx, &result, "quai_getWorkshareLRUDump", limit)
+	return result, err
+}

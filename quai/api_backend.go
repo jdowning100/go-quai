@@ -734,6 +734,10 @@ func (b *QuaiAPIBackend) GetWorkShareThreshold() int {
 	return b.quai.core.GetWorkShareThreshold()
 }
 
+func (b *QuaiAPIBackend) GetWorkshareLRUDump(limit int) map[string]interface{} {
+	return b.quai.core.GetWorkshareLRUDump(limit)
+}
+
 func (b *QuaiAPIBackend) GetMinerEndpoints() []string {
 	return b.quai.core.GetMinerEndpoints()
 }

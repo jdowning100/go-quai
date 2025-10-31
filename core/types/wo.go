@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -86,6 +87,40 @@ func NewPowShareDiffAndCount(difficulty *big.Int, count *big.Int) *PowShareDiffA
 	}
 }
 
+func (p *PowShareDiffAndCount) RPCMarshal() map[string]interface{} {
+	if p == nil {
+		return nil
+	}
+	result := make(map[string]interface{})
+	if p.difficulty != nil {
+		result["difficulty"] = (*hexutil.Big)(p.Difficulty())
+	}
+	if p.count != nil {
+		result["count"] = (*hexutil.Big)(p.Count())
+	}
+	return result
+}
+
+func (p *PowShareDiffAndCount) UnmarshalJSON(data []byte) error {
+
+	var dec struct {
+		Difficulty *hexutil.Big `json:"difficulty"`
+		Count      *hexutil.Big `json:"count"`
+	}
+
+	if err := json.Unmarshal(data, &dec); err != nil {
+		return err
+	}
+
+	if dec.Difficulty != nil {
+		p.SetDifficulty((*big.Int)(dec.Difficulty))
+	}
+	if dec.Count != nil {
+		p.SetCount((*big.Int)(dec.Count))
+	}
+	return nil
+}
+
 func (p *PowShareDiffAndCount) Clone() *PowShareDiffAndCount {
 	var difficulty *big.Int
 	if p.difficulty != nil {
@@ -103,6 +138,14 @@ func (p *PowShareDiffAndCount) Difficulty() *big.Int {
 
 func (p *PowShareDiffAndCount) Count() *big.Int {
 	return p.count
+}
+
+func (p *PowShareDiffAndCount) SetDifficulty(difficulty *big.Int) {
+	p.difficulty = difficulty
+}
+
+func (p *PowShareDiffAndCount) SetCount(count *big.Int) {
+	p.count = count
 }
 
 func (p *PowShareDiffAndCount) ProtoEncode() *ProtoPowShareDiffAndCount {
@@ -1244,24 +1287,12 @@ func (wh *WorkObjectHeader) RPCMarshalWorkObjectHeader() map[string]interface{} 
 		result["auxpow"] = wh.AuxPow().RPCMarshal()
 	}
 
-	if scrypt := wh.ScryptDiffAndCount(); scrypt.Difficulty() != nil || scrypt.Count() != nil {
-		scryptResult := map[string]interface{}{
-			"count": (*hexutil.Big)(scrypt.Count()),
-		}
-		if scrypt.Difficulty() != nil {
-			scryptResult["difficulty"] = (*hexutil.Big)(scrypt.Difficulty())
-		}
-		result["scryptDiffAndCount"] = scryptResult
+	if wh.ShaDiffAndCount() != nil {
+		result["shaDiffAndCount"] = wh.ShaDiffAndCount().RPCMarshal()
 	}
 
-	if sha := wh.ShaDiffAndCount(); sha.Difficulty() != nil || sha.Count() != nil {
-		shaResult := map[string]interface{}{
-			"count": (*hexutil.Big)(sha.Count()),
-		}
-		if sha.Difficulty() != nil {
-			shaResult["difficulty"] = (*hexutil.Big)(sha.Difficulty())
-		}
-		result["shaDiffAndCount"] = shaResult
+	if wh.ScryptDiffAndCount() != nil {
+		result["scryptDiffAndCount"] = wh.ScryptDiffAndCount().RPCMarshal()
 	}
 
 	result["shareTarget"] = hexutil.Bytes(wh.ShareTargetBytes())

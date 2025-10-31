@@ -360,6 +360,7 @@ func (wh *WorkObjectHeader) MarshalJSON() ([]byte, error) {
 		Lock                hexutil.Uint64        `json:"lock" gencoden:"required"`
 		PrimaryCoinbase     string                `json:"primaryCoinbase" gencoden:"required"`
 		Data                hexutil.Bytes         `json:"data" gencoden:"required"`
+		AuxPow              *AuxPow               `json:"auxpow,omitempty"`
 		ScryptDiffAndCount  *PowShareDiffAndCount `json:"scryptDiffAndCount,omitempty"`
 		ShaDiffAndCount     *PowShareDiffAndCount `json:"shaDiffAndCount,omitempty"`
 		ShareTarget        hexutil.Bytes         `json:"shareTarget,omitempty"`
@@ -377,6 +378,11 @@ func (wh *WorkObjectHeader) MarshalJSON() ([]byte, error) {
 	enc.Lock = hexutil.Uint64(wh.Lock())
 	enc.PrimaryCoinbase = wh.PrimaryCoinbase().Hex()
 	enc.Data = wh.Data()
+
+	// Only include AuxPow if it's non-nil
+	if wh.AuxPow() != nil {
+		enc.AuxPow = wh.AuxPow()
+	}
 
 	// Only include these fields if they are non-nil and non-empty (for backward compatibility)
 	scrypt := wh.ScryptDiffAndCount()
@@ -412,10 +418,10 @@ func (wh *WorkObjectHeader) UnmarshalJSON(input []byte) error {
 		Lock                hexutil.Uint64        `json:"lock" gencoden:"required"`
 		PrimaryCoinbase     string                `json:"primaryCoinbase" gencoden:"required"`
 		Data                hexutil.Bytes         `json:"data" gencoden:"required"`
-		AuxPow              json.RawMessage       `json:"auxpow"`
+		AuxPow              *AuxPow               `json:"auxpow,omitempty"`
 		ScryptDiffAndCount  *PowShareDiffAndCount `json:"scryptDiffAndCount,omitempty"`
 		ShaDiffAndCount     *PowShareDiffAndCount `json:"shaDiffAndCount,omitempty"`
-		ShareTarget        hexutil.Bytes         `json:"shareTarget,omitempty"`
+		ShareTarget         hexutil.Bytes          `json:"shareTarget,omitempty"`
 	}
 
 	err := json.Unmarshal(input, &dec)
@@ -445,12 +451,8 @@ func (wh *WorkObjectHeader) UnmarshalJSON(input []byte) error {
 	wh.SetData(dec.Data)
 
 	// Handle AuxPow if present
-	if len(dec.AuxPow) > 0 {
-		auxPow := &AuxPow{}
-		if err := auxPow.UnmarshalJSON(dec.AuxPow); err != nil {
-			return err
-		}
-		wh.SetAuxPow(auxPow)
+	if dec.AuxPow != nil {
+		wh.SetAuxPow(dec.AuxPow)
 	}
 
 	// Handle ScryptDiffAndCount if present

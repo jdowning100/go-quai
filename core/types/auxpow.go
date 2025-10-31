@@ -13,6 +13,7 @@ import (
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/hexutil"
 	"github.com/dominant-strategies/go-quai/crypto/musig2"
+	"github.com/dominant-strategies/go-quai/log"
 	ltcchainhash "github.com/dominant-strategies/ltcd/chaincfg/chainhash"
 	ltcdwire "github.com/dominant-strategies/ltcd/wire"
 	bchchainhash "github.com/gcash/bchd/chaincfg/chainhash"
@@ -241,6 +242,20 @@ func (at *AuxTemplate) Hash() [32]byte {
 	if at.powID != Kawpow {
 		tempTemplate.Version = proto.Uint32(*tempTemplate.Version & versionMask)
 	}
+
+	// Debug logging to identify field differences between signing and verification
+	log.Global.WithFields(log.Fields{
+		"chainId":         *tempTemplate.ChainId,
+		"prevHash":        common.BytesToHash(tempTemplate.PrevHash).Hex(),
+		"auxPow2":         common.BytesToHash(tempTemplate.AuxPow2).Hex(),
+		"version":         *tempTemplate.Version,
+		"nbits":           *tempTemplate.Nbits,
+		"ntimeMask":       *tempTemplate.NtimeMask,
+		"height":          *tempTemplate.Height,
+		"coinbaseOutLen":  len(tempTemplate.CoinbaseOut),
+		"coinbaseOut":     common.Bytes2Hex(tempTemplate.CoinbaseOut),
+		"merkleBranchLen": len(tempTemplate.MerkleBranch),
+	}).Debug("Template fields before hashing")
 
 	// Marshal the template without signatures to get the message hash
 	templateData, err := proto.Marshal(tempTemplate)
@@ -541,16 +556,16 @@ type AuxPowTxData interface {
 	pkScript() []byte
 }
 
-func NewAuxPowCoinbaseTx(powId PowID, height uint32, coinbaseOut []byte, sealHash common.Hash, signatureTime uint32, witness bool) []byte {
+func NewAuxPowCoinbaseTx(powId PowID, height uint32, coinbaseOut []byte, auxMerkleRoot common.Hash, signatureTime uint32, witness bool) []byte {
 	switch powId {
 	case Kawpow:
-		return NewRavencoinCoinbaseTx(height, coinbaseOut, sealHash, signatureTime, witness)
+		return NewRavencoinCoinbaseTx(height, coinbaseOut, auxMerkleRoot, signatureTime, witness)
 	case SHA_BTC:
-		return NewBitcoinCoinbaseTxWrapper(height, coinbaseOut, sealHash, signatureTime, witness)
+		return NewBitcoinCoinbaseTxWrapper(height, coinbaseOut, auxMerkleRoot, signatureTime, witness)
 	case SHA_BCH:
-		return NewBitcoinCashCoinbaseTxWrapper(height, coinbaseOut, sealHash, signatureTime)
+		return NewBitcoinCashCoinbaseTxWrapper(height, coinbaseOut, auxMerkleRoot, signatureTime)
 	case Scrypt:
-		return NewLitecoinCoinbaseTxWrapper(height, coinbaseOut, sealHash, signatureTime, witness)
+		return NewLitecoinCoinbaseTxWrapper(height, coinbaseOut, auxMerkleRoot, signatureTime, witness)
 	default:
 		return []byte{}
 	}
@@ -760,15 +775,17 @@ func (aco *AuxPowCoinbaseOut) UnmarshalJSON(data []byte) error {
 // AuxPow represents auxiliary proof-of-work data
 type AuxPow struct {
 	powID        PowID         // PoW algorithm identifier
+	auxPow2      []byte        // Auxiliary proof-of-work data
 	header       *AuxPowHeader // 120B donor header for KAWPOW
 	signature    []byte        // Signature proving the work
 	merkleBranch [][]byte      // siblings for coinbase index=0 up to root (little endian 32-byte hashes)
 	transaction  []byte        // Full coinbase transaction (contains value in TxOut[0])
 }
 
-func NewAuxPow(powID PowID, header *AuxPowHeader, signature []byte, merkleBranch [][]byte, transaction []byte) *AuxPow {
+func NewAuxPow(powID PowID, header *AuxPowHeader, auxPow2 []byte, signature []byte, merkleBranch [][]byte, transaction []byte) *AuxPow {
 	return &AuxPow{
 		powID:        powID,
+		auxPow2:      auxPow2,
 		header:       header,
 		signature:    signature,
 		merkleBranch: merkleBranch,
@@ -782,6 +799,7 @@ func (ap *AuxPow) ConvertToTemplate() *AuxTemplate {
 	auxTemplate.SetPrevHash(ap.header.PrevBlock())
 	auxTemplate.SetVersion(uint32(ap.header.Version()))
 	auxTemplate.SetNBits(ap.header.Bits())
+	auxTemplate.SetAuxPow2(ap.auxPow2)
 
 	scriptSig := ExtractScriptSigFromCoinbaseTx(ap.transaction)
 
@@ -814,11 +832,15 @@ func (ap *AuxPow) Header() *AuxPowHeader { return ap.header }
 
 func (ap *AuxPow) Signature() []byte { return ap.signature }
 
+func (ap *AuxPow) AuxPow2() []byte { return ap.auxPow2 }
+
 func (ap *AuxPow) MerkleBranch() [][]byte { return ap.merkleBranch }
 
 func (ap *AuxPow) Transaction() []byte { return ap.transaction }
 
 func (ap *AuxPow) SetPowID(id PowID) { ap.powID = id }
+
+func (ap *AuxPow) SetAuxPow2(auxPow2 []byte) { ap.auxPow2 = auxPow2 }
 
 func (ap *AuxPow) SetHeader(header *AuxPowHeader) { ap.header = header }
 
@@ -852,9 +874,12 @@ func CopyAuxPow(ap *AuxPow) *AuxPow {
 	if ap.header != nil {
 		header = ap.header.Copy()
 	}
+	auxpow2 := make([]byte, len(ap.auxPow2))
+	copy(auxpow2, ap.auxPow2)
 
 	return &AuxPow{
 		powID:        ap.powID,
+		auxPow2:      auxpow2,
 		header:       header,
 		signature:    signature,
 		merkleBranch: merkleBranch,
@@ -877,6 +902,7 @@ func (ap *AuxPow) RPCMarshal() map[string]interface{} {
 	return map[string]interface{}{
 		"powId":        hexutil.Uint64(ap.powID),
 		"header":       hexutil.Bytes(ap.header.Bytes()),
+		"auxpow2":      hexutil.Bytes(ap.auxPow2),
 		"signature":    hexutil.Bytes(ap.signature),
 		"merkleBranch": merkleBranch,
 		"transaction":  hexutil.Bytes(ap.transaction),
@@ -888,6 +914,7 @@ func (ap *AuxPow) UnmarshalJSON(data []byte) error {
 	var dec struct {
 		PowID        *hexutil.Uint64 `json:"powId"`
 		Header       *hexutil.Bytes  `json:"header"`
+		Auxpow2      *hexutil.Bytes  `json:"auxpow2"`
 		Signature    *hexutil.Bytes  `json:"signature"`
 		MerkleBranch []hexutil.Bytes `json:"merkleBranch"`
 		Transaction  *hexutil.Bytes  `json:"transaction"`
@@ -903,6 +930,10 @@ func (ap *AuxPow) UnmarshalJSON(data []byte) error {
 
 	if dec.Header == nil {
 		return errors.New("missing required fields 'header' in AuxPow")
+	}
+
+	if dec.Auxpow2 == nil {
+		return errors.New("missing required fields 'auxpow2' in AuxPow")
 	}
 
 	if dec.Signature == nil {
@@ -942,6 +973,8 @@ func (ap *AuxPow) UnmarshalJSON(data []byte) error {
 		ap.header = NewAuxPowHeader(header)
 	}
 
+	// Decode auxpow2
+	ap.auxPow2 = *dec.Auxpow2
 	// Decode signature
 	ap.signature = *dec.Signature
 	// Decode merkle branch
@@ -970,6 +1003,7 @@ func (ap *AuxPow) ProtoEncode() *ProtoAuxPow {
 
 	return &ProtoAuxPow{
 		ChainId:      &powID,
+		Auxpow2:      ap.auxPow2,
 		Header:       ap.Header().Bytes(),
 		Signature:    ap.Signature(),
 		MerkleBranch: merkleBranch,
@@ -1023,6 +1057,7 @@ func (ap *AuxPow) ProtoDecode(data *ProtoAuxPow) error {
 	}
 
 	ap.transaction = data.GetTransaction()
+	ap.auxPow2 = data.GetAuxpow2()
 
 	return nil
 }

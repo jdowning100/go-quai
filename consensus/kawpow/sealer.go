@@ -212,6 +212,7 @@ search:
 				updatedAuxPow := types.NewAuxPow(
 					auxPow.PowID(),
 					workObject.WorkObjectHeader().AuxPow().Header(),
+					auxPow.AuxPow2(),
 					auxPow.Signature(),
 					auxPow.MerkleBranch(),
 					auxPow.Transaction(),

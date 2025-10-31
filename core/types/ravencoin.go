@@ -388,7 +388,7 @@ func NewRavencoinCoinbaseTx(height uint32, coinbaseOut []byte, sealHash common.H
 	coinbaseTx := &RavencoinTx{MsgTx: btcdwire.NewMsgTx(2)} // Version 2 for Ravencoin
 
 	// Create the coinbase input with seal hash
-	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash, signatureTime)
+	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash, 1, signatureTime)
 	coinbaseIn := &btcdwire.TxIn{
 		PreviousOutPoint: btcdwire.OutPoint{
 			Hash:  btchash.Hash{}, // Coinbase has no previous output

@@ -41,7 +41,7 @@ const (
 	minRecommitInterval = 1 * time.Second
 
 	// pendingBlockBodyLimit is maximum number of pending block bodies to be kept in cache.
-	pendingBlockBodyLimit = 300
+	pendingBlockBodyLimit = 3000
 
 	// c_headerPrintsExpiryTime is how long a header hash is kept in the cache, so that currentInfo
 	// is not printed on a Proc frequency
@@ -762,7 +762,7 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 	}
 
 	// If there is no auxpow template, then just fill the pow id for now
-	auxPow := types.NewAuxPow(types.Kawpow, &types.AuxPowHeader{}, []byte{}, nil, []byte{})
+	auxPow := types.NewAuxPow(types.Kawpow, &types.AuxPowHeader{}, []byte{}, []byte{}, nil, []byte{})
 
 	// Setting the auxpow so that pow id is registered properly
 	work.wo.WorkObjectHeader().SetAuxPow(auxPow)
@@ -2427,6 +2427,10 @@ func (w *worker) AddPendingWorkObjectBody(wo *types.WorkObject) {
 	// the same sealhash, so storing the auxpow separately
 	woHeaderCopy.SetAuxPow(nil)
 	w.pendingBlockBody.Add(woHeaderCopy.SealHash(), *wo)
+}
+
+func (w *worker) AddPendingWorkObjectBodyWithKey(wo *types.WorkObject, key common.Hash) {
+	w.pendingBlockBody.Add(key, *wo)
 }
 
 func (w *worker) AddPendingAuxPow(powId types.PowID, sealHash common.Hash, auxpow *types.AuxPow) {

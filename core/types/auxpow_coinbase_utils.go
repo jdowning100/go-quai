@@ -176,12 +176,12 @@ func parseScriptPush(script []byte) ([]byte, int, error) {
 //
 //		OP_PUSH<n> <height(variable bytes)> ← BIP34 height (MINIMAL encoding)
 //		OP_PUSH4   <fabe6d6d(4 bytes)>      ← Magic marker
-//		OP_PUSH32  <SealHash(32 bytes)>     ← Actual seal hash
+//		OP_PUSH32  <AuxMerkleRoot(32 bytes)>     ← Quai seal hash or aux merkle root
 //		OP_PUSH4   <merkle_size(4 bytes)>   ← 1
 //		OP_PUSH4   <merkle_nonce(4 bytes)>  ← 0
 //		OP_PUSH42  <extraNonce1(4 bytes) + extraNonce2(8 bytes) + extraData(30 bytes)> ← Combined extranonces (Bitcoin standard) + extraData (30 bytes)
 //	    OP_PUSH4   <signature_time> ← time from the aux template
-func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, extraNonce2 uint64, sealHash common.Hash, signatureTime uint32) []byte {
+func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, extraNonce2 uint64, auxMerkleRoot common.Hash, merkleSize uint32, signatureTime uint32) []byte {
 	var buf bytes.Buffer
 
 	// 1. BIP34: Block height (minimal encoding - variable length)
@@ -206,11 +206,11 @@ func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, ext
 	// 3. Seal hash (32 bytes)
 	// Use provided seal hash, or zeros if not provided
 	buf.WriteByte(0x20) // OP_PUSH32 (32 decimal = 0x20 hex)
-	buf.Write(sealHash[:])
+	buf.Write(auxMerkleRoot[:])
 
 	// 4. Merkle size (4 bytes, little-endian) - always 1 for single coinbase
 	buf.WriteByte(0x04) // OP_PUSH4
-	binary.Write(&buf, binary.LittleEndian, uint32(1))
+	binary.Write(&buf, binary.LittleEndian, merkleSize)
 
 	// 5. Merkle nonce (4 bytes, little-endian) - always 0
 	buf.WriteByte(0x04) // OP_PUSH4
@@ -579,4 +579,102 @@ func ExtractHeightFromCoinbase(scriptSig []byte) (uint32, error) {
 	}
 
 	return height, nil
+}
+
+// CreateAuxMerkleRoot creates an aux work merkle root for merged mining with multiple chains.
+// According to the Bitcoin merged mining specification:
+// - Each chain has a chain_id that determines its slot in the merkle tree
+// - The merkle tree must have a power-of-two size (merkle_size)
+// - A merkle_nonce is used to resolve slot collisions (though the algorithm is broken)
+// - Block hashes are inserted in reversed byte order
+// - The final merkle root is reversed before insertion into the coinbase
+//
+// For Dogecoin + Quai merged mining:
+// - Dogecoin chain_id = 98
+// - Quai chain_id = 9
+// - merkle_size = smallest power of 2 that fits both chains without collision
+// - merkle_nonce = 0
+//
+// Parameters:
+//   - dogeHash: Dogecoin block hash (32 bytes)
+//   - quaiSealHash: Quai seal hash (32 bytes)
+//
+// Returns:
+//   - auxMerkleRoot: The merkle root to insert into the Litecoin coinbase (32 bytes, byte-reversed)
+func CreateAuxMerkleRoot(dogeHash common.Hash, quaiSealHash common.Hash) common.Hash {
+	// Chain IDs for merged mining
+	const (
+		dogeChainID uint32 = 98 // Dogecoin's chain ID
+		quaiChainID uint32 = 9  // Quai's chain ID
+	)
+
+	// For merkle_size=2, the slot calculation simplifies to: slot ≡ (merkle_nonce + chain_id) mod 2
+	// Since Dogecoin (98) is even and Quai (9) is odd, they have different parity
+	// and will never collide at size=2 regardless of merkle_nonce.
+	merkleNonce := uint32(0)
+	merkleSize := uint32(2)
+
+	// Calculate slot positions using the merged mining algorithm
+	// Both chains use the SAME merkle_nonce (as per the spec - there's only one nonce in the coinbase)
+	dogeSlot := CalculateMerkleSlot(dogeChainID, merkleNonce, merkleSize)
+	quaiSlot := CalculateMerkleSlot(quaiChainID, merkleNonce, merkleSize)
+
+	// Create the leaf level of the merkle tree
+	// Fill with zeros and insert the chain hashes in reversed order
+	leaves := make([][]byte, merkleSize)
+	for i := range leaves {
+		leaves[i] = make([]byte, 32) // Fill with zeros
+	}
+
+	// Reverse the bytes of each chain's block hash before inserting
+	// (This is required by the merged mining spec)
+	dogeHashReversed := reverseBytesCopy(dogeHash[:])
+	quaiHashReversed := reverseBytesCopy(quaiSealHash[:])
+
+	leaves[dogeSlot] = dogeHashReversed
+	leaves[quaiSlot] = quaiHashReversed
+
+	// Build the merkle tree by hashing pairs up to the root
+	currentLevel := leaves
+	for len(currentLevel) > 1 {
+		nextLevel := make([][]byte, len(currentLevel)/2)
+		for i := 0; i < len(currentLevel); i += 2 {
+			left := currentLevel[i]
+			right := currentLevel[i+1]
+
+			// Double SHA256 of concatenated hashes
+			combined := append(left, right...)
+			hash1 := doubleSHA256(combined)
+			nextLevel[i/2] = hash1[:]
+		}
+		currentLevel = nextLevel
+	}
+
+	// The root is the last remaining hash
+	merkleRoot := currentLevel[0]
+
+	// Reverse the bytes of the merkle root before returning
+	// (Required by the merged mining spec for coinbase insertion)
+	merkleRootReversed := reverseBytesCopy(merkleRoot)
+
+	return common.BytesToHash(merkleRootReversed)
+}
+
+// calculateMerkleSlot calculates the slot position for a chain in the aux merkle tree
+// using the algorithm from the Bitcoin merged mining specification.
+func CalculateMerkleSlot(chainID uint32, merkleNonce uint32, merkleSize uint32) uint32 {
+	// This is the exact algorithm from the merged mining spec
+	rand := merkleNonce
+	rand = rand*1103515245 + 12345
+	rand += chainID
+	rand = rand*1103515245 + 12345
+	return rand % merkleSize
+}
+
+// doubleSHA256 performs double SHA256 hashing
+func doubleSHA256(data []byte) [32]byte {
+	first := chainhash.DoubleHashB(data)
+	var result [32]byte
+	copy(result[:], first)
+	return result
 }

@@ -88,6 +88,7 @@ message ProtoAuxPow {
   repeated bytes merkle_branch = 4;  // Merkle branch for coinbase
   optional bytes transaction = 5;  // Full coinbase transaction (serialized wire format, contains value in TxOut[0])
   optional uint64 signature_time = 6;  // Timestamp when signature was created
+  optional bytes auxpow2 = 7; // Dogecoin block hash
 }
 
 // Removed ProtoRavencoinTransaction messages as we're using btcd wire.MsgTx serialization

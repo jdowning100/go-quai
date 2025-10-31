@@ -208,10 +208,10 @@ func (ltc *LitecoinHeaderWrapper) Copy() AuxHeaderData {
 
 // CoinbaseTx functions
 
-func NewLitecoinCoinbaseTxWrapper(height uint32, coinbaseOut []byte, sealHash common.Hash, signatureTime uint32, witness bool) []byte {
+func NewLitecoinCoinbaseTxWrapper(height uint32, coinbaseOut []byte, auxMerkleRoot common.Hash, signatureTime uint32, witness bool) []byte {
 	coinbaseTx := &LitecoinTxWrapper{MsgTx: ltcdwire.NewMsgTx(2)}
 	// Create the coinbase input with seal hash in scriptSig
-	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash, signatureTime)
+	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, auxMerkleRoot, 2, signatureTime)
 	coinbaseTx.AddTxIn(&ltcdwire.TxIn{
 		PreviousOutPoint: ltcdwire.OutPoint{
 			Hash:  ltchash.Hash{}, // Coinbase has no previous output

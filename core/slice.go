@@ -20,6 +20,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/state/snapshot"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
+	"github.com/dominant-strategies/go-quai/crypto"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
 	"github.com/dominant-strategies/go-quai/log"
@@ -1046,8 +1047,15 @@ func (sl *Slice) GetPendingHeader(powId types.PowID) (*types.WorkObject, error) 
 		case types.Kawpow, types.SHA_BTC, types.SHA_BCH, types.Scrypt:
 			// If we have an auxpow template, we need to create a proper Ravencoin header
 			if sl.NodeCtx() == common.ZONE_CTX && auxTemplate != nil {
-
-				coinbaseTransaction := types.NewAuxPowCoinbaseTx(powId, auxTemplate.Height(), auxTemplate.CoinbaseOut(), phCopy.SealHash(), uint32(auxTemplate.NTimeMask()), false)
+				auxMerkleRoot := phCopy.SealHash()
+				if powId == types.Scrypt {
+					if len(auxTemplate.AuxPow2()) == 0 {
+						return nil, errors.New("no auxpow2 available for scrypt mining")
+					}
+					dogeHash := common.Hash(auxTemplate.AuxPow2())
+					auxMerkleRoot = types.CreateAuxMerkleRoot(dogeHash, phCopy.SealHash())
+				}
+				coinbaseTransaction := types.NewAuxPowCoinbaseTx(powId, auxTemplate.Height(), auxTemplate.CoinbaseOut(), auxMerkleRoot, uint32(auxTemplate.NTimeMask()), false)
 
 				merkleRoot := types.CalculateMerkleRoot(powId, coinbaseTransaction, auxTemplate.MerkleBranch())
 
@@ -1055,14 +1063,20 @@ func (sl *Slice) GetPendingHeader(powId types.PowID) (*types.WorkObject, error) 
 				auxHeader := types.NewBlockHeader(powId, int32(auxTemplate.Version()), auxTemplate.PrevHash(), merkleRoot, uint32(auxTemplate.NTimeMask()), auxTemplate.NBits(), 0, auxTemplate.Height())
 
 				// Dont have the actual hash of the block yet
-				auxPow := types.NewAuxPow(powId, auxHeader, auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
+				auxPow := types.NewAuxPow(powId, auxHeader, auxTemplate.AuxPow2(), auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
 
 				// Update the auxpow in the best pending header
 				phCopy.WorkObjectHeader().SetAuxPow(auxPow)
 
+				// Create composite cache key: hash(auxMerkleRoot || ntimeMask)
+				// This ensures each template with different ntimeMask gets its own cache entry
+				compositeKey := crypto.Keccak256Hash(auxMerkleRoot.Bytes(), common.BigToHash(big.NewInt(int64(auxTemplate.NTimeMask()))).Bytes())
+
 				// Update the pending block body cache with the populated AuxPow
 				// This ensures SubmitBlock can retrieve the complete AuxPow including merkle branch
 				sl.miner.worker.AddPendingWorkObjectBody(phCopy)
+				sl.miner.worker.AddPendingWorkObjectBodyWithKey(phCopy, compositeKey)
+				sl.miner.worker.AddPendingAuxPow(powId, compositeKey, types.CopyAuxPow(auxPow))
 				sl.miner.worker.AddPendingAuxPow(powId, phCopy.SealHash(), types.CopyAuxPow(auxPow))
 
 			} else {

@@ -1368,47 +1368,22 @@ func extractCoinb1AndCoinb2FromAuxPowTx(txBytes []byte) ([]byte, []byte, error) 
 		return nil, nil, fmt.Errorf("parse height push: %w", err)
 	}
 	cur := hdr + l
-	// 2) magic
+	// 2) AuxPoW commitment as a single push: magic(4) | root(32) | size(4 LE) | nonce(4 LE)
 	if cur >= len(script) {
 		return nil, nil, errors.New("unexpected end after height push")
 	}
 	off, l, hdr, err := parsePushHeader(script[cur:])
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse magic push: %w", err)
+		return nil, nil, fmt.Errorf("parse auxpow commitment push: %w", err)
 	}
-	if l != 4 || cur+off+l > len(script) {
-		return nil, nil, errors.New("invalid magic push length")
+	if l != 44 || cur+off+l > len(script) {
+		return nil, nil, errors.New("invalid auxpow commitment length; expected 44 bytes")
 	}
-	if !bytes.Equal(script[cur+off:cur+off+l], []byte{0xfa, 0xbe, 0x6d, 0x6d}) {
-		return nil, nil, errors.New("unexpected magic marker in coinbase script")
+	payload := script[cur+off : cur+off+l]
+	if !bytes.Equal(payload[0:4], []byte{0xfa, 0xbe, 0x6d, 0x6d}) {
+		return nil, nil, errors.New("unexpected magic marker in auxpow commitment")
 	}
-	cur += hdr + l
-	// 3) seal hash (32)
-	_, l, hdr, err = parsePushHeader(script[cur:])
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse seal hash push: %w", err)
-	}
-	if l != 32 {
-		return nil, nil, fmt.Errorf("unexpected seal hash length %d", l)
-	}
-	cur += hdr + l
-	// 4) merkle size (4)
-	_, l, hdr, err = parsePushHeader(script[cur:])
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse merkle size push: %w", err)
-	}
-	if l != 4 {
-		return nil, nil, fmt.Errorf("unexpected merkle size length %d", l)
-	}
-	cur += hdr + l
-	// 5) merkle nonce (4)
-	_, l, hdr, err = parsePushHeader(script[cur:])
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse merkle nonce push: %w", err)
-	}
-	if l != 4 {
-		return nil, nil, fmt.Errorf("unexpected merkle nonce length %d", l)
-	}
+
 	cur += hdr + l
 	// 6) combined extranonces + extraData push
 	if cur >= len(script) {

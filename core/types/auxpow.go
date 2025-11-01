@@ -13,6 +13,7 @@ import (
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/hexutil"
 	"github.com/dominant-strategies/go-quai/crypto/musig2"
+	"github.com/dominant-strategies/go-quai/log"
 	ltcchainhash "github.com/dominant-strategies/ltcd/chaincfg/chainhash"
 	ltcdwire "github.com/dominant-strategies/ltcd/wire"
 	bchchainhash "github.com/gcash/bchd/chaincfg/chainhash"
@@ -259,6 +260,7 @@ func (at *AuxTemplate) Hash() [32]byte {
 func (at *AuxTemplate) VerifySignature() bool {
 	// Check Signature presence
 	if len(at.sigs) == 0 {
+		log.Global.Warn("Sig is empty, signature failed")
 		return false
 	}
 
@@ -277,6 +279,9 @@ func (at *AuxTemplate) VerifySignature() bool {
 			return true
 		}
 	}
+
+	log.Global.Warn("Signature verification failed for all signer combinations", at)
+
 	return false
 }
 

@@ -23,11 +23,8 @@ import (
 // Format:
 //
 //	OP_PUSH<n> <height(variable bytes)> ← BIP34 height (minimal encoding, 0-5 bytes)
-//	OP_PUSH4   <fabe6d6d(4 bytes)>      ← Magic marker
-//	OP_PUSH32  <AuxPowHash(32 bytes)>   ← Seal hash (this is what we extract)
-//	OP_PUSH4   <merkle_size(4 bytes)>
-//	OP_PUSH4   <merkle_nonce(4 bytes)>
-//	OP_PUSH44  <extraNonce1(4 bytes) + extraNonce2(8 bytes) + extraData(32 bytes)> ← Combined extranonces (Bitcoin standard) + extraData (32 bytes)
+//	OP_PUSH44  <fabe6d6d | aux_merkle_root(32 LE) | merkle_size(4 LE) | merkle_nonce(4 LE)>
+//	OP_PUSH42  <extraNonce1(4) + extraNonce2(8) + extraData(30)>
 //  OP_PUSH4   <signature_time>
 
 func ExtractSealHashFromCoinbase(scriptSig []byte) (common.Hash, error) {
@@ -48,28 +45,23 @@ func ExtractSealHashFromCoinbase(scriptSig []byte) (common.Hash, error) {
 	}
 	cursor += consumed
 
-	// 2. Parse and verify magic marker (should be "fabe6d6d")
-	magicData, consumed, err := parseScriptPush(scriptSig[cursor:])
+	// 2. Parse AuxPoW commitment as a single push
+	// It must contain exactly: 4-byte magic, 32-byte root, 4-byte size (LE), 4-byte nonce (LE)
+	payload, consumed, err := parseScriptPush(scriptSig[cursor:])
 	if err != nil {
-		return common.Hash{}, fmt.Errorf("decode magic marker: %w", err)
-	}
-	if len(magicData) != 4 {
-		return common.Hash{}, fmt.Errorf("invalid magic marker length: expected 4, got %d", len(magicData))
-	}
-	expectedMagic := []byte{0xfa, 0xbe, 0x6d, 0x6d}
-	if !bytes.Equal(magicData, expectedMagic) {
-		return common.Hash{}, fmt.Errorf("invalid magic marker: expected %x, got %x", expectedMagic, magicData)
+		return common.Hash{}, fmt.Errorf("decode auxpow commitment: %w", err)
 	}
 	cursor += consumed
+	if len(payload) != 44 {
+		return common.Hash{}, fmt.Errorf("invalid auxpow commitment length: expected 44, got %d", len(payload))
+	}
 
-	// 3. Parse seal hash (32 bytes) - this is what we're looking for!
-	sealHashData, _, err := parseScriptPush(scriptSig[cursor:])
-	if err != nil {
-		return common.Hash{}, fmt.Errorf("decode seal hash: %w", err)
+	expectedMagic := []byte{0xfa, 0xbe, 0x6d, 0x6d}
+	if !bytes.Equal(payload[0:4], expectedMagic) {
+		return common.Hash{}, fmt.Errorf("invalid magic marker: expected %x, got %x", expectedMagic, payload[0:4])
 	}
-	if len(sealHashData) != common.HashLength {
-		return common.Hash{}, fmt.Errorf("invalid seal hash length: expected %d, got %d", common.HashLength, len(sealHashData))
-	}
+
+	sealHashData := payload[4 : 4+common.HashLength]
 
 	return common.BytesToHash(sealHashData), nil
 }
@@ -78,11 +70,8 @@ func ExtractSealHashFromCoinbase(scriptSig []byte) (common.Hash, error) {
 // Format:
 //
 //	OP_PUSH<n> <height(variable bytes)> ← BIP34 height (minimal encoding, 0-5 bytes)
-//	OP_PUSH4   <fabe6d6d(4 bytes)>      ← Magic marker
-//	OP_PUSH32  <AuxPowHash(32 bytes)>   ← Seal hash (this is what we extract)
-//	OP_PUSH4   <merkle_size(4 bytes)>
-//	OP_PUSH4   <merkle_nonce(4 bytes)>
-//	OP_PUSH42  <extraNonce1(4 bytes) + extraNonce2(8 bytes) + extraData(30 bytes)> ← Combined extranonces (Bitcoin standard) + extraData (30 bytes)
+//	OP_PUSH44  <fabe6d6d | aux_merkle_root(32 LE) | merkle_size(4 LE) | merkle_nonce(4 LE)>
+//	OP_PUSH42  <extraNonce1(4) + extraNonce2(8) + extraData(30)>
 //  OP_PUSH4   <signature_time>
 
 func ExtractSignatureTimeFromCoinbase(scriptSig []byte) (uint32, error) {
@@ -103,28 +92,32 @@ func ExtractSignatureTimeFromCoinbase(scriptSig []byte) (uint32, error) {
 	}
 	cursor += consumed
 
-	// 2. Parse and verify magic marker (should be "fabe6d6d")
-	magicData, consumed, err := parseScriptPush(scriptSig[cursor:])
+	// 2. Parse AuxPoW commitment as a single push and skip it
+	payload, consumed, err := parseScriptPush(scriptSig[cursor:])
 	if err != nil {
 		return 0, fmt.Errorf("decode magic marker: %w", err)
 	}
-	if len(magicData) != 4 {
-		return 0, fmt.Errorf("invalid magic marker length: expected 4, got %d", len(magicData))
+	if len(payload) != 44 {
+		return 0, fmt.Errorf("invalid auxpow commitment length: expected 44, got %d", len(payload))
 	}
 	expectedMagic := []byte{0xfa, 0xbe, 0x6d, 0x6d}
-	if !bytes.Equal(magicData, expectedMagic) {
-		return 0, fmt.Errorf("invalid magic marker: expected %x, got %x", expectedMagic, magicData)
+	if !bytes.Equal(payload[0:4], expectedMagic) {
+		return 0, fmt.Errorf("invalid magic marker: expected %x, got %x", expectedMagic, payload[0:4])
 	}
 	cursor += consumed
 
-	// Add 86 bytes to skip: which covers the seal hash (32 bytes), merkle size (4 bytes), merkle nonce (4 bytes), and combined extra nonces + extraData (44 bytes)
-	cursor += 86
+	// 3. Skip extranonces push (extraNonce1(4) + extraNonce2(8) + extraData(30) = 42 bytes)
+	_, consumed, err = parseScriptPush(scriptSig[cursor:])
+	if err != nil {
+		return 0, fmt.Errorf("decode extranonces: %w", err)
+	}
+	cursor += consumed
 
 	if cursor >= len(scriptSig) {
 		return 0, errors.New("scriptSig too short to contain signature time")
 	}
 
-	// 3. Parse signature time (4 bytes)
+	// 4. Parse signature time (4 bytes)
 	signatureTimeData, _, err := parseScriptPush(scriptSig[cursor:])
 	if err != nil {
 		return 0, fmt.Errorf("decode signature time: %w", err)
@@ -175,11 +168,8 @@ func parseScriptPush(script []byte) ([]byte, int, error) {
 // Format:
 //
 //		OP_PUSH<n> <height(variable bytes)> ← BIP34 height (MINIMAL encoding)
-//		OP_PUSH4   <fabe6d6d(4 bytes)>      ← Magic marker
-//		OP_PUSH32  <AuxMerkleRoot(32 bytes)>     ← Quai seal hash or aux merkle root
-//		OP_PUSH4   <merkle_size(4 bytes)>   ← 1
-//		OP_PUSH4   <merkle_nonce(4 bytes)>  ← 0
-//		OP_PUSH42  <extraNonce1(4 bytes) + extraNonce2(8 bytes) + extraData(30 bytes)> ← Combined extranonces (Bitcoin standard) + extraData (30 bytes)
+//		OP_PUSH44  <fabe6d6d | AuxMerkleRoot(32 LE) | merkle_size(4 LE) | merkle_nonce(4 LE)>
+//		OP_PUSH42  <extraNonce1(4) + extraNonce2(8) + extraData(30)>
 //	    OP_PUSH4   <signature_time> ← time from the aux template
 func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, extraNonce2 uint64, auxMerkleRoot common.Hash, merkleSize uint32, signatureTime uint32) []byte {
 	var buf bytes.Buffer
@@ -195,38 +185,41 @@ func BuildCoinbaseScriptSigWithNonce(blockHeight uint32, extraNonce1 uint32, ext
 	}
 	buf.Write(heightBytes)
 
-	// 2. Magic marker "fabe6d6d" (4 bytes)
-	// This marks the start of the AuxPow-specific data
-	buf.WriteByte(0x04) // OP_PUSH4
-	buf.WriteByte(0xfa)
-	buf.WriteByte(0xbe)
-	buf.WriteByte(0x6d)
-	buf.WriteByte(0x6d)
+	// 2. AuxPoW commitment as a single PUSHDATA with payload:
+	//    magic(4) | auxMerkleRoot(32, LE) | merkleSize(4, LE) | merkleNonce(4, LE)
+	payload := make([]byte, 0, 44)
+	payload = append(payload, 0xfa, 0xbe, 0x6d, 0x6d)
+	payload = append(payload, auxMerkleRoot[:]...)
+	msBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(msBytes, merkleSize)
+	payload = append(payload, msBytes...)
+	mnBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(mnBytes, 0)
+	payload = append(payload, mnBytes...)
 
-	// 3. Seal hash (32 bytes)
-	// Use provided seal hash, or zeros if not provided
-	buf.WriteByte(0x20) // OP_PUSH32 (32 decimal = 0x20 hex)
-	buf.Write(auxMerkleRoot[:])
+	// Write single push for commitment
+	// Length is 44, fits in single-byte push opcode
+	buf.WriteByte(0x2c) // OP_PUSH44 (44 decimal = 0x2c hex)
+	buf.Write(payload)
 
-	// 4. Merkle size (4 bytes, little-endian) - always 1 for single coinbase
-	buf.WriteByte(0x04) // OP_PUSH4
-	binary.Write(&buf, binary.LittleEndian, merkleSize)
-
-	// 5. Merkle nonce (4 bytes, little-endian) - always 0
-	buf.WriteByte(0x04) // OP_PUSH4
-	binary.Write(&buf, binary.LittleEndian, uint32(0))
-
-	// 6. Combined extra nonces and extraData (42 bytes total, little-endian)
+	// 3. Combined extra nonces and extraData (42 bytes total, little-endian)
 	// Bitcoin standard: extraNonce1 (4 bytes) + extraNonce2 (8 bytes) + extraData (30 bytes) in a single push
+	en1 := make([]byte, 4)
+	binary.LittleEndian.PutUint32(en1, extraNonce1)
+	en2 := make([]byte, 8)
+	binary.LittleEndian.PutUint64(en2, extraNonce2)
+	extraData := make([]byte, 30)
 	buf.WriteByte(0x2a) // OP_PUSH42 (42 decimal = 0x2a hex)
-	binary.Write(&buf, binary.LittleEndian, extraNonce1)
-	binary.Write(&buf, binary.LittleEndian, extraNonce2)
+	buf.Write(en1)
+	buf.Write(en2)
 	// extraData: 30 bytes of zeros for now (can be used for additional miner data)
-	buf.Write(make([]byte, 30))
+	buf.Write(extraData)
 
-	// 7. Signature time (4 bytes, little-endian)
+	// 4. Signature time (4 bytes, little-endian)
+	st := make([]byte, 4)
+	binary.LittleEndian.PutUint32(st, signatureTime)
 	buf.WriteByte(0x04)
-	binary.Write(&buf, binary.LittleEndian, signatureTime)
+	buf.Write(st)
 
 	return buf.Bytes()
 }

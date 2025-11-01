@@ -2084,7 +2084,7 @@ func cleanupOldSessions() {
 	musig2SessionsLock.Lock()
 	defer musig2SessionsLock.Unlock()
 
-	cutoff := time.Now().Add(-5 * time.Minute)
+	cutoff := time.Now().Add(-120 * time.Minute)
 	for id, session := range musig2Sessions {
 		if session.CreatedAt.Before(cutoff) {
 			delete(musig2Sessions, id)

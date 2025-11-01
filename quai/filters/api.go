@@ -295,6 +295,8 @@ func (api *PublicFilterAPI) NewWorkshares(ctx context.Context) (*rpc.Subscriptio
 				// A block meets the full difficulty, while a workshare only meets the lower threshold
 				header := w.WorkObjectHeader()
 
+				log.Global.Info("SealHash", header.SealHash())
+
 				if header.AuxPow() != nil {
 					switch header.AuxPow().PowID() {
 					case types.SHA_BCH, types.SHA_BTC:

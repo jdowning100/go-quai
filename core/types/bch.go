@@ -185,7 +185,7 @@ func NewBitcoinCashCoinbaseTxWrapper(height uint32, coinbaseOut []byte, sealHash
 	coinbaseTx := &BitcoinCashTxWrapper{MsgTx: bchdwire.NewMsgTx(2)}
 
 	// Create the coinbase input with seal hash in scriptSig
-	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash, signatureTime)
+	scriptSig := BuildCoinbaseScriptSigWithNonce(height, 0, 0, sealHash, 1, signatureTime)
 	coinbaseTx.AddTxIn(&bchdwire.TxIn{
 		PreviousOutPoint: bchdwire.OutPoint{
 			Hash:  bchhash.Hash{}, // Coinbase has no previous output

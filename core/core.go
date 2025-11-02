@@ -32,6 +32,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/state/snapshot"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
+	"github.com/dominant-strategies/go-quai/crypto"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
 	"github.com/dominant-strategies/go-quai/internal/telemetry"
@@ -584,8 +585,6 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes, powId types.PowID) (*types.WorkObj
 		minPayloadSize      = bitcoinHeaderSize
 	)
 
-	log.Global.Info("SubmitBlock called", "bytes", len(raw))
-
 	if len(raw) < minPayloadSize {
 		return nil, fmt.Errorf("submitBlock payload too short: %d bytes (minimum %d)", len(raw), minPayloadSize)
 	}
@@ -821,19 +820,30 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes, powId types.PowID) (*types.WorkObj
 		return nil, fmt.Errorf("failed to extract seal hash: %w", err)
 	}
 
-	// Get the pending block body using the seal hash
-	workObject := c.sl.GetPendingBlockBody(powType, sealHash)
+	// Extract ntimeMask from the submitted coinbase transaction
+	scriptSig := types.ExtractScriptSigFromCoinbaseTx(coinbaseTx)
+	if len(scriptSig) == 0 {
+		c.logger.Error("Failed to extract scriptSig from Scrypt coinbase transaction")
+		return nil, errors.New("failed to extract scriptSig from Scrypt coinbase transaction")
+	}
+
+	signatureTime, err := types.ExtractSignatureTimeFromCoinbase(scriptSig)
+	if err != nil {
+		c.logger.WithField("error", err.Error()).Error("Failed to extract signature time from Scrypt coinbase")
+		return nil, fmt.Errorf("failed to extract signature time from Scrypt coinbase: %w", err)
+	}
+
+	// Create composite key: hash(auxMerkleRoot || ntimeMask)
+	// sealHash for Scrypt is actually the auxMerkleRoot
+	cacheKey := crypto.Keccak256Hash(sealHash.Bytes(), common.BigToHash(big.NewInt(int64(signatureTime))).Bytes())
+
+	// Get the pending block body using the cache key
+	workObject := c.sl.GetPendingBlockBody(powType, cacheKey)
 	if workObject == nil {
-		return nil, fmt.Errorf("could not get the pending block body for seal hash %s", sealHash.Hex())
+		return nil, fmt.Errorf("could not get the pending block body for cache key %s", cacheKey.Hex())
 	}
 
 	workObjectCopy := types.CopyWorkObject(workObject)
-
-	scriptSig := types.ExtractScriptSigFromCoinbaseTx(workObjectCopy.AuxPow().Transaction())
-	if len(scriptSig) == 0 {
-		c.logger.Error("Failed to extract scriptSig from coinbase transaction in work object")
-		return nil, errors.New("failed to extract scriptSig from coinbase transaction in work object")
-	}
 
 	heightFromWorkObject, err := types.ExtractHeightFromCoinbase(scriptSig)
 	if err != nil {
@@ -863,6 +873,51 @@ func (c *Core) SubmitBlock(raw hexutil.Bytes, powId types.PowID) (*types.WorkObj
 	// Note: PowID and MerkleBranch are already correct from the cached pending block body
 	workObjectCopy.AuxPow().SetHeader(auxHeader)
 	workObjectCopy.AuxPow().SetTransaction(coinbaseTx)
+	reconTemplate := workObjectCopy.AuxPow().ConvertToTemplate()
+	messageHash := reconTemplate.Hash()
+	prevHash := workObjectCopy.AuxPow().Header().PrevBlock()
+	templatePrevHash := reconTemplate.PrevHash()
+	merkleBranch := make([]string, len(workObjectCopy.AuxPow().MerkleBranch()))
+	for i, hash := range workObjectCopy.AuxPow().MerkleBranch() {
+		merkleBranch[i] = hex.EncodeToString(hash)
+	}
+	c.logger.WithFields(log.Fields{
+		"powID":                   workObjectCopy.AuxPow().PowID(),
+		"height":                  heightFromCoinbase,
+		"prevHash":                hex.EncodeToString(prevHash[:]),
+		"transaction":             hex.EncodeToString(workObjectCopy.AuxPow().Transaction()),
+		"merkleBranch":            merkleBranch,
+		"signature":               hex.EncodeToString(workObjectCopy.AuxPow().Signature()),
+		"messageHash":             hex.EncodeToString(messageHash[:]),
+		"auxPow2":                 hex.EncodeToString(workObjectCopy.AuxPow().AuxPow2()),
+		"template_chainId":        reconTemplate.PowID(),
+		"template_prevHash":       hex.EncodeToString(templatePrevHash[:]),
+		"template_auxPow2":        hex.EncodeToString(reconTemplate.AuxPow2()),
+		"template_version":        reconTemplate.Version(),
+		"template_nbits":          reconTemplate.NBits(),
+		"template_ntimeMask":      reconTemplate.NTimeMask(),
+		"template_height":         reconTemplate.Height(),
+		"template_coinbaseOutLen": len(reconTemplate.CoinbaseOut()),
+		"template_coinbaseOut":    hex.EncodeToString(reconTemplate.CoinbaseOut()),
+	}).Info("Received work object with auxpow2")
+
+	expectedAuxMerkleRoot := types.CreateAuxMerkleRoot(common.Hash(workObjectCopy.AuxPow().AuxPow2()), workObjectCopy.SealHash())
+	if expectedAuxMerkleRoot != sealHash {
+		c.logger.WithFields(log.Fields{
+			"expected": expectedAuxMerkleRoot.Hex(),
+			"received": sealHash.Hex(),
+			"auxPow2":  hex.EncodeToString(workObjectCopy.AuxPow().AuxPow2()),
+			"sealHash": workObjectCopy.SealHash().Hex(),
+		}).Error("AuxMerkleRoot mismatch between work object and decoded auxMerkleRoot")
+		return nil, fmt.Errorf("auxMerkleRoot mismatch between work object and decoded auxMerkleRoot")
+	} else {
+		c.logger.WithFields(log.Fields{
+			"expected": expectedAuxMerkleRoot.Hex(),
+			"received": sealHash.Hex(),
+			"auxPow2":  hex.EncodeToString(workObjectCopy.AuxPow().AuxPow2()),
+			"sealHash": workObjectCopy.SealHash().Hex(),
+		}).Info("AuxMerkleRoot matches between work object and decoded auxMerkleRoot")
+	}
 
 	return workObjectCopy, nil
 }

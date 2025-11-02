@@ -933,7 +933,7 @@ func (api *PublicFilterAPI) PendingHeader(ctx context.Context, powId types.PowID
 								auxHeader := types.NewBlockHeader(powId, int32(auxTemplate.Version()), auxTemplate.PrevHash(), merkleRoot, uint32(auxTemplate.NTimeMask()), auxTemplate.NBits(), 0, auxTemplate.Height())
 
 								// Dont have the actual hash of the block yet
-								auxPow := types.NewAuxPow(powId, auxHeader, auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
+								auxPow := types.NewAuxPow(powId, auxHeader, auxTemplate.AuxPow2(), auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
 
 								// Update the auxpow in the best pending header
 								pendingHeaderForMining.WorkObjectHeader().SetAuxPow(auxPow)

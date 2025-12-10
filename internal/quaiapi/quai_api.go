@@ -660,6 +660,58 @@ func (s *PublicBlockChainQuaiAPI) GetBlockOrCandidateByHash(ctx context.Context,
 	return nil, nil
 }
 
+// GetBlockBySealHash searches backwards from the current header up to 10,000 blocks
+// to find a block whose auxpow coinbase scriptSig contains the given seal hash.
+// Returns the block in full detail when found, or an error if not found within the search range.
+func (s *PublicBlockChainQuaiAPI) GetBlockBySealHash(ctx context.Context, sealHash common.Hash, fullTx bool) (map[string]interface{}, error) {
+	const maxSearchDepth = 10000
+
+	// Start from the current header
+	currentBlock := s.b.CurrentBlock()
+	if currentBlock == nil {
+		return nil, errors.New("current block not found")
+	}
+
+	// Search backwards up to maxSearchDepth blocks
+	for i := 0; i < maxSearchDepth; i++ {
+		// Check if this block has auxpow
+		if currentBlock.AuxPow() != nil {
+			// Extract the coinbase transaction
+			transaction := currentBlock.AuxPow().Transaction()
+			if transaction != nil {
+				// Extract scriptSig from coinbase transaction
+				scriptSig := types.ExtractScriptSigFromCoinbaseTx(transaction)
+				if scriptSig != nil {
+					// Extract seal hash from the scriptSig
+					extractedSealHash, err := types.ExtractSealHashFromCoinbase(scriptSig)
+					if err == nil && extractedSealHash == sealHash {
+						// Found the block with matching seal hash
+						return s.rpcMarshalBlock(ctx, currentBlock, true, fullTx)
+					}
+				}
+			}
+		}
+
+		// Get the parent block hash
+		parentHash := currentBlock.ParentHash(s.b.NodeCtx())
+		if parentHash == (common.Hash{}) {
+			// Reached genesis block
+			break
+		}
+
+		// Get the parent block
+		parentBlock := s.b.GetBlockByHash(parentHash)
+		if parentBlock == nil {
+			// Parent block not found, stop searching
+			break
+		}
+
+		currentBlock = parentBlock
+	}
+
+	return nil, fmt.Errorf("block with seal hash %s not found within %d blocks", sealHash.Hex(), maxSearchDepth)
+}
+
 // GetUncleByBlockNumberAndIndex returns the uncle block for the given block hash and index. When fullTx is true
 // all transactions in the block are returned in full detail, otherwise only the transaction hash is returned.
 func (s *PublicBlockChainQuaiAPI) GetUncleByBlockNumberAndIndex(ctx context.Context, blockNr rpc.BlockNumber, index hexutil.Uint) (map[string]interface{}, error) {

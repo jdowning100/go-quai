@@ -239,7 +239,7 @@ func (s *Server) handleConn(c net.Conn) {
 				}
 			}
 			if sess.chain == "" {
-				sess.chain = "btc"
+				sess.chain = "sha"
 			}
 			sess.authorized = true
 			_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
@@ -714,13 +714,11 @@ func fullReverse(b []byte) []byte {
 
 func powIDFromChain(chain string) types.PowID {
 	switch strings.ToLower(chain) {
-	case "btc":
-		return types.SHA_BTC
-	case "bch":
+	case "sha":
 		return types.SHA_BCH
-	case "ltc", "scrypt":
+	case "scrypt":
 		return types.Scrypt
-	case "rvn", "kawpow":
+	case "kawpow":
 		return types.Kawpow
 	default:
 		return types.SHA_BTC

@@ -13,9 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dominant-strategies/go-quai/cmd/utils"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/internal/quaiapi"
+	"github.com/dominant-strategies/go-quai/log"
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 // randReader uses time-based fallback if crypto/rand isn't imported; here we just read from net.Conn deadlines which is not desirable.
@@ -36,6 +40,7 @@ type Server struct {
 	addr    string
 	backend quaiapi.Backend
 	ln      net.Listener
+	logger  *logrus.Logger
 	// simple counters for debugging submission quality
 	submits      uint64
 	passPowCount uint64
@@ -43,7 +48,8 @@ type Server struct {
 }
 
 func NewServer(addr string, backend quaiapi.Backend) *Server {
-	return &Server{addr: addr, backend: backend}
+	logger := log.NewLogger("stratum.log", viper.GetString(utils.LogLevelFlag.Name), viper.GetInt(utils.LogSizeFlag.Name))
+	return &Server{addr: addr, backend: backend, logger: logger}
 }
 
 func (s *Server) Start() error {
@@ -204,9 +210,9 @@ func (s *Server) handleConn(c net.Conn) {
 				if v, err := strconv.ParseUint(maskHex, 16, 32); err == nil {
 					sess.versionRolling = true
 					sess.versionMask = uint32(v)
-					fmt.Printf("[stratum] VERSION-ROLLING enabled mask=0x%08x\n", sess.versionMask)
+					s.logger.WithField("mask", fmt.Sprintf("0x%08x", sess.versionMask)).Info("VERSION-ROLLING enabled")
 				} else {
-					fmt.Printf("[stratum] VERSION-ROLLING mask parse error for %q: %v\n", maskHex, err)
+					s.logger.WithFields(log.Fields{"mask": maskHex, "error": err}).Warn("VERSION-ROLLING mask parse error")
 				}
 			}
 			// Build configure response object per Stratum v1 (map of accepted features)
@@ -239,7 +245,7 @@ func (s *Server) handleConn(c net.Conn) {
 			_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
 			// Send a fresh job with miner difficulty based on SHA workshare diff
 			if err := s.sendJobAndNotify(sess); err != nil {
-				fmt.Printf("[stratum] makeJob error: %v\n", err)
+				s.logger.WithField("error", err).Error("makeJob error")
 				// Keep trying to send a job every few seconds if it fails
 				go func() {
 					for i := 0; i < 10; i++ {
@@ -250,9 +256,9 @@ func (s *Server) handleConn(c net.Conn) {
 							if sess.job != nil {
 								break // job was created successfully
 							}
-							fmt.Printf("[stratum] retrying makeJob (attempt %d)...\n", i+1)
+							s.logger.WithField("attempt", i+1).Info("retrying makeJob")
 							if err := s.sendJobAndNotify(sess); err == nil {
-								fmt.Printf("[stratum] makeJob retry successful\n")
+								s.logger.Info("makeJob retry successful")
 								break
 							}
 						}
@@ -270,9 +276,9 @@ func (s *Server) handleConn(c net.Conn) {
 					case <-sess.jobTicker.C:
 						if sess.authorized {
 							if err := s.sendJobAndNotify(sess); err != nil {
-								fmt.Printf("[stratum] periodic job refresh failed: %v\n", err)
+								s.logger.WithField("error", err).Error("periodic job refresh failed")
 							} else {
-								fmt.Printf("[stratum] sent periodic job refresh to %s\n", sess.user)
+								s.logger.WithField("user", sess.user).Debug("sent periodic job refresh")
 							}
 						}
 					}
@@ -324,7 +330,7 @@ func (s *Server) handleConn(c net.Conn) {
 			} else {
 				known := len(sess.jobs)
 				sess.mu.Unlock()
-				fmt.Printf("[stratum] ERROR: unknown or stale jobID=%s (known=%d)\n", jobID, known)
+				s.logger.WithFields(log.Fields{"jobID": jobID, "known": known}).Error("unknown or stale jobID")
 				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: "nojob"})
 				continue
 			}
@@ -332,7 +338,7 @@ func (s *Server) handleConn(c net.Conn) {
 			if err := s.submitAsWorkShare(sess, ex2hex, ntimeHex, nonceHex, versionBits); err != nil {
 				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
 			} else {
-				fmt.Printf("[stratum] submit accepted addr=%s chain=%s nonce=%s\n", sess.user, sess.chain, nonceHex)
+				s.logger.WithFields(log.Fields{"addr": sess.user, "chain": sess.chain, "nonce": nonceHex}).Info("submit accepted")
 				// Mark this job ID as consumed to prevent duplicate submissions
 				sess.mu.Lock()
 				delete(sess.jobs, jobID)
@@ -345,7 +351,7 @@ func (s *Server) handleConn(c net.Conn) {
 						return
 					default:
 						if err := s.sendJobAndNotify(sess); err != nil {
-							fmt.Printf("[stratum] failed to send new job after workshare: %v\n", err)
+							s.logger.WithField("error", err).Error("failed to send new job after workshare")
 						}
 					}
 				}()
@@ -379,7 +385,7 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 		delete(sess.jobs, old)
 	}
 	sess.mu.Unlock()
-	fmt.Printf("[stratum] notify job id=%s chain=%s\n", j.id, sess.chain)
+	s.logger.WithFields(log.Fields{"jobID": j.id, "chain": sess.chain}).Info("notify job")
 
 	// Compute stratum difficulty. Two mappings are common:
 	// 1) Exact mapping against Bitcoin diff1 target: D = diff1 * ShaDiff / maxHash (minerTarget == workShareTarget)
@@ -401,9 +407,9 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 			sess.difficulty = diffF
 			sess.mu.Unlock()
 
-			fmt.Printf("[stratum] DEBUG sendJobAndNotify: ShaDiff=%s minerDiff(mapped)=%.6f \n", sd.String(), diffF)
+			s.logger.WithFields(log.Fields{"ShaDiff": sd.String(), "minerDiff": diffF}).Debug("sendJobAndNotify SHA diff")
 		} else {
-			fmt.Printf("[stratum] DEBUG sendJobAndNotify: No SHA diff available, using fallback %f\n", d)
+			s.logger.WithField("fallback", d).Debug("sendJobAndNotify: No SHA diff available, using fallback")
 		}
 	case types.Scrypt:
 		if j.pending != nil && j.pending.WorkObjectHeader() != nil && j.pending.WorkObjectHeader().ScryptDiffAndCount() != nil && j.pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty() != nil {
@@ -416,9 +422,9 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 			sess.mu.Lock()
 			sess.difficulty = diffF
 			sess.mu.Unlock()
-			fmt.Printf("[stratum] DEBUG sendJobAndNotify: ScryptDiff=%s minerDiff(mapped)=%.6f \n", sd.String(), diffF)
+			s.logger.WithFields(log.Fields{"ScryptDiff": sd.String(), "minerDiff": diffF}).Debug("sendJobAndNotify Scrypt diff")
 		} else {
-			fmt.Printf("[stratum] DEBUG sendJobAndNotify: No Scrypt diff available, using fallback %f\n", d)
+			s.logger.WithField("fallback", d).Debug("sendJobAndNotify: No Scrypt diff available, using fallback")
 		}
 	case types.Kawpow:
 		if j.pending != nil && j.pending.WorkObjectHeader() != nil && j.pending.WorkObjectHeader().KawpowDifficulty() != nil {
@@ -431,20 +437,20 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 			sess.mu.Lock()
 			sess.difficulty = diffF
 			sess.mu.Unlock()
-			fmt.Printf("[stratum] DEBUG sendJobAndNotify: KawpowDiff=%s minerDiff(mapped)=%.6f \n", kd.String(), diffF)
+			s.logger.WithFields(log.Fields{"KawpowDiff": kd.String(), "minerDiff": diffF}).Debug("sendJobAndNotify Kawpow diff")
 		} else {
-			fmt.Printf("[stratum] DEBUG sendJobAndNotify: No Kawpow diff available, using fallback %f\n", d)
+			s.logger.WithField("fallback", d).Debug("sendJobAndNotify: No Kawpow diff available, using fallback")
 		}
 	default:
 		// keep fallback for non-SHA donor algos
-		fmt.Printf("[stratum] DEBUG sendJobAndNotify: Non-SHA/Scrypt chain %s, using fallback %f\n", sess.chain, d)
+		s.logger.WithFields(log.Fields{"chain": sess.chain, "fallback": d}).Debug("sendJobAndNotify: Non-SHA/Scrypt chain, using fallback")
 	}
 
 	// Send set_difficulty (and set_target for miners that honor it) then the job notify
 	sess.mu.Lock()
 	minerDiff := sess.difficulty
 	sess.mu.Unlock()
-	fmt.Printf("[stratum] DEBUG: Sending mining.set_difficulty with value %.6f to miner\n", minerDiff)
+	s.logger.WithField("difficulty", minerDiff).Debug("Sending mining.set_difficulty to miner")
 	diffNote := map[string]interface{}{"id": nil, "method": "mining.set_difficulty", "params": []interface{}{minerDiff}}
 	_ = sess.enc.Encode(diffNote)
 
@@ -464,7 +470,7 @@ func (s *Server) makeJob(sess *session) (*job, error) {
 		if err == nil {
 			err = fmt.Errorf("no pending header")
 		}
-		fmt.Printf("[stratum] makeJob error: %v\n", err)
+		s.logger.WithField("error", err).Error("makeJob error")
 		return nil, err
 	}
 	pending.WorkObjectHeader().SetPrimaryCoinbase(address)
@@ -475,13 +481,13 @@ func (s *Server) makeJob(sess *session) (*job, error) {
 	// The workshare system uses its own difficulty separate from the BCH block difficulty
 	if pending.WorkObjectHeader().ShaDiffAndCount() != nil {
 		currentDiff := pending.WorkObjectHeader().ShaDiffAndCount().Difficulty()
-		fmt.Printf("[stratum] DEBUG: Using existing workshare ShaDiff: %s\n", currentDiff.String())
+		s.logger.WithField("ShaDiff", currentDiff.String()).Debug("Using existing workshare ShaDiff")
 	}
 
 	// Also log existing Scrypt workshare difficulty if present
 	if pending.WorkObjectHeader().ScryptDiffAndCount() != nil {
 		currentDiff := pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty()
-		fmt.Printf("[stratum] DEBUG: Using existing workshare ScryptDiff: %s\n", currentDiff.String())
+		s.logger.WithField("ScryptDiff", currentDiff.String()).Debug("Using existing workshare ScryptDiff")
 	}
 
 	// Merkle branch
@@ -680,7 +686,7 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	}
 	sess.mu.Unlock()
 
-	fmt.Printf("[stratum] workshare received powID=%d achievedDiff=%s hashBytes=%x\n", pending.AuxPow().PowID(), achievedDiff.String(), hashBytes)
+	s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes)}).Info("workshare received")
 
 	return s.backend.ReceiveMinedHeader(pending)
 }

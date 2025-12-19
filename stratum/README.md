@@ -171,12 +171,35 @@ Verify your Quai address format is correct.
 ### Connection timeout
 The server sets a 60-second deadline on connections. Ensure your miner sends regular requests or the connection may be closed.
 
+## Web Dashboard
+
+A web dashboard is available for monitoring your node and stratum server.
+
+### Enabling the Dashboard
+
+```bash
+go-quai start \
+  --node.stratum-enabled \
+  --node.dashboard-enabled \
+  --node.dashboard-addr "0.0.0.0:8080"
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--node.dashboard-enabled` | `false` | Enable the web dashboard |
+| `--node.dashboard-addr` | `0.0.0.0:8080` | Listen address for dashboard |
+
+Once enabled, open `http://localhost:8080` in your browser to view:
+- Connected workers and their hashrates
+- Share submission statistics
+- Blocks found
+- Network peer visualization (globe)
+- Sync status
+
 ## Future Work
 
 This stratum server is currently minimal and designed for solo mining. Planned improvements include:
 
-- **Web UI**: Dashboard for monitoring mining activity and statistics
-- **Worker tracking**: Track individual workers, hashrates, and share submissions
 - **Pool mode**: Optional pooled mining with configurable payout schemes
-- **Statistics API**: Endpoints for querying miner performance and history
 - **Vardiff**: Dynamic difficulty adjustment based on miner hashrate
+- **Desktop app**: Native application using Wails for easier deployment

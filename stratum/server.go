@@ -41,6 +41,7 @@ type Server struct {
 	backend quaiapi.Backend
 	ln      net.Listener
 	logger  *logrus.Logger
+	stats   *PoolStats
 	// simple counters for debugging submission quality
 	submits      uint64
 	passPowCount uint64
@@ -49,7 +50,12 @@ type Server struct {
 
 func NewServer(addr string, backend quaiapi.Backend) *Server {
 	logger := log.NewLogger("stratum.log", viper.GetString(utils.LogLevelFlag.Name), viper.GetInt(utils.LogSizeFlag.Name))
-	return &Server{addr: addr, backend: backend, logger: logger}
+	return &Server{addr: addr, backend: backend, logger: logger, stats: NewPoolStats()}
+}
+
+// Stats returns the pool statistics tracker
+func (s *Server) Stats() *PoolStats {
+	return s.stats
 }
 
 func (s *Server) Start() error {
@@ -98,7 +104,8 @@ type session struct {
 	dec        *json.Decoder
 	authorized bool
 	user       string // payout address
-	chain      string // btc|bch|ltc
+	workerName string // worker name (from user.workerName format)
+	chain      string // sha|scrypt
 	job        *job
 	kawJob     *kawpowJob // kawpow-specific job data
 	xnonce1    []byte
@@ -154,6 +161,9 @@ func (s *Server) handleConn(c net.Conn) {
 
 	// Cleanup function for goroutines
 	defer func() {
+		if sess.authorized && sess.user != "" {
+			s.stats.WorkerDisconnected(sess.user, sess.workerName)
+		}
 		close(sess.done)
 		if sess.jobTicker != nil {
 			sess.jobTicker.Stop()
@@ -233,7 +243,14 @@ func (s *Server) handleConn(c net.Conn) {
 		case "mining.authorize":
 			if len(req.Params) >= 1 {
 				if u, ok := req.Params[0].(string); ok {
-					sess.user = u
+					// Parse user.workerName format
+					if parts := strings.SplitN(u, ".", 2); len(parts) == 2 {
+						sess.user = parts[0]
+						sess.workerName = parts[1]
+					} else {
+						sess.user = u
+						sess.workerName = "default"
+					}
 				}
 			}
 			if len(req.Params) >= 2 {
@@ -245,6 +262,7 @@ func (s *Server) handleConn(c net.Conn) {
 				sess.chain = "sha"
 			}
 			sess.authorized = true
+			s.logger.WithFields(log.Fields{"user": sess.user, "chain": sess.chain, "powID": powIDFromChain(sess.chain)}).Info("miner authorized")
 			_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
 			// Send a fresh job with miner difficulty based on SHA workshare diff
 			if err := s.sendJobAndNotify(sess); err != nil {
@@ -371,13 +389,16 @@ func (s *Server) handleConn(c net.Conn) {
 				known := len(sess.jobs)
 				sess.mu.Unlock()
 				s.logger.WithFields(log.Fields{"jobID": jobID, "known": known}).Error("unknown or stale jobID")
+				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, true) // stale share
 				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: "nojob"})
 				continue
 			}
 			// apply nonce into AuxPow header and submit as workshare
 			if err := s.submitAsWorkShare(sess, ex2hex, ntimeHex, nonceHex, versionBits); err != nil {
+				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, false) // invalid share
 				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
 			} else {
+				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, true, false) // valid share
 				s.logger.WithFields(log.Fields{"addr": sess.user, "chain": sess.chain, "nonce": nonceHex}).Info("submit accepted")
 				// Mark this job ID as consumed to prevent duplicate submissions
 				sess.mu.Lock()
@@ -407,8 +428,10 @@ func (s *Server) handleConn(c net.Conn) {
 func (s *Server) sendJobAndNotify(sess *session) error {
 	// Kawpow uses a different stratum format
 	if powIDFromChain(sess.chain) == types.Kawpow {
+		s.logger.WithField("chain", sess.chain).Debug("routing to kawpow stratum")
 		return s.sendKawpowJob(sess)
 	}
+	s.logger.WithField("chain", sess.chain).Debug("routing to SHA/Scrypt stratum")
 
 	j, err := s.makeJob(sess)
 	if err != nil {
@@ -916,9 +939,9 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, h
 
 	achievedDiff := new(big.Int).Div(common.Big2e256, mixHashInt)
 	s.logger.WithFields(log.Fields{
-		"powID":       types.Kawpow,
-		"height":      kawJob.height,
-		"nonce":       nonceHex,
+		"powID":        types.Kawpow,
+		"height":       kawJob.height,
+		"nonce":        nonceHex,
 		"achievedDiff": achievedDiff.String(),
 	}).Info("kawpow workshare received")
 

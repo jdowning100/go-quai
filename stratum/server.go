@@ -255,10 +255,18 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 	}
 
 	header := pending.WorkObjectHeader()
+	auxPow := header.AuxPow()
+	if auxPow == nil || auxPow.Header() == nil {
+		return false, false
+	}
+
+	// Use AuxPow header's PrevBlock (donor chain parent) for change detection,
+	// not Quai's ParentHash. Miners need new work when the donor chain advances.
+	auxParentHash := auxPow.Header().PrevBlock()
 	newState := &templateState{
 		sealHash:   header.SealHash(),
-		parentHash: header.ParentHash(),
-		height:     header.NumberU64(),
+		parentHash: common.BytesToHash(auxParentHash[:]),
+		height:     uint64(auxPow.Header().Height()), // AuxPow height (donor chain block number)
 		quaiHeight: int64(pending.NumberU64(common.ZONE_CTX)),
 	}
 
@@ -329,7 +337,7 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 			s.logger.WithFields(log.Fields{
 				"algo":   algorithm,
 				"height": newState.height,
-			}).Debug("Template updated (same block)")
+			}).Trace("Template updated (sealhash changed)")
 			return true, true // Kawpow: clean=false for same-block updates
 		}
 	}
@@ -532,6 +540,11 @@ type session struct {
 	// jobSendMu serializes sendJobAndNotify calls to prevent concurrent job sends
 	// This avoids race conditions between post-submit job refresh, forceBroadcastStale, and broadcastJob
 	jobSendMu sync.Mutex
+	// minerDifficulty is the custom difficulty set by the miner via password field (d=<difficulty>)
+	// If set, shares meeting this difficulty are accepted for liveness tracking, but only
+	// shares meeting the workshare difficulty are submitted to the node.
+	// nil means use workshare difficulty as the minimum.
+	minerDifficulty *float64
 }
 
 // sendJSON safely encodes and sends JSON to the miner (thread-safe).
@@ -690,6 +703,17 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 					sess.user, sess.workerName, sess.jobFrequency = parseUsername(u)
 				}
 			}
+			// Parse password for optional difficulty and frequency settings
+			// Format: d=<difficulty>,frequency=<seconds> or just one of them
+			if len(req.Params) >= 2 {
+				if p, ok := req.Params[1].(string); ok {
+					var pwFreq time.Duration
+					sess.minerDifficulty, pwFreq = parsePassword(p)
+					if pwFreq > 0 {
+						sess.jobFrequency = pwFreq // Password frequency overrides username frequency
+					}
+				}
+			}
 			// Validate that the address is internal (belongs to this zone)
 			address := common.HexToAddress(sess.user, s.backend.NodeLocation())
 			if _, err := address.InternalAddress(); err != nil {
@@ -701,17 +725,20 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 				continue
 			}
 			// Algorithm is determined by which port the miner connected to (set in handleConn)
-			// Password field is ignored for algorithm selection
 			sess.authorized = true
 			s.registerSession(sess)                                         // Register for broadcasts
 			s.stats.WorkerConnected(sess.user, sess.workerName, sess.chain) // Track worker in stats
-			s.logger.WithFields(log.Fields{
+			logFields := log.Fields{
 				"user":         sess.user,
 				"worker":       sess.workerName,
 				"chain":        sess.chain,
 				"powID":        powIDFromChain(sess.chain),
 				"jobFrequency": sess.jobFrequency.Seconds(),
-			}).Info("miner authorized")
+			}
+			if sess.minerDifficulty != nil {
+				logFields["minerDifficulty"] = *sess.minerDifficulty
+			}
+			s.logger.WithFields(logFields).Info("miner authorized")
 			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
 			// Send a fresh job with miner difficulty based on workshare diff
 			if err := s.sendJobAndNotify(sess, true); err != nil {
@@ -829,7 +856,8 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 				continue
 			}
 			// apply nonce into AuxPow header and submit as workshare
-			if err := s.submitAsWorkShare(sess, ex2hex, ntimeHex, nonceHex, versionBits); err != nil {
+			refreshJob, err := s.submitAsWorkShare(sess, ex2hex, ntimeHex, nonceHex, versionBits)
+			if err != nil {
 				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, false) // invalid share
 				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
 			} else {
@@ -841,16 +869,19 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 				sess.mu.Unlock()
 				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
 				// Send a fresh job after successful workshare to keep miner on latest work
-				go func() {
-					select {
-					case <-sess.done:
-						return
-					default:
-						if err := s.sendJobAndNotify(sess, true); err != nil {
-							s.logger.WithField("error", err).Error("failed to send new job after workshare")
+				// Skip for sub-shares (met miner difficulty but not workshare difficulty)
+				if refreshJob {
+					go func() {
+						select {
+						case <-sess.done:
+							return
+						default:
+							if err := s.sendJobAndNotify(sess, true); err != nil {
+								s.logger.WithField("error", err).Error("failed to send new job after workshare")
+							}
 						}
-					}
-				}()
+					}()
+				}
 			}
 		default:
 			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: nil, Error: nil})
@@ -944,10 +975,16 @@ func (s *Server) sendJobAndNotify(sess *session, clean bool) error {
 	}
 
 	// Send set_difficulty (and set_target for miners that honor it) then the job notify
+	// If miner specified custom difficulty via password (d=<difficulty>), use that instead
 	sess.mu.Lock()
 	minerDiff := sess.difficulty
 	sess.mu.Unlock()
-	s.logger.WithField("difficulty", minerDiff).Debug("Sending mining.set_difficulty to miner")
+	if sess.minerDifficulty != nil && *sess.minerDifficulty > 0 {
+		minerDiff = *sess.minerDifficulty
+		s.logger.WithFields(log.Fields{"minerDifficulty": minerDiff, "workshareDiff": sess.difficulty}).Debug("Using miner-specified difficulty for set_difficulty")
+	} else {
+		s.logger.WithField("difficulty", minerDiff).Debug("Sending mining.set_difficulty to miner")
+	}
 	diffNote := map[string]interface{}{"id": nil, "method": "mining.set_difficulty", "params": []interface{}{minerDiff}}
 	_ = sess.sendJSON(diffNote)
 
@@ -978,8 +1015,15 @@ func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 	}
 	pending.WorkObjectHeader().SetPrimaryCoinbase(address)
 
-	// Get block height from pending header
-	height := pending.NumberU64(common.ZONE_CTX)
+	// Get block height from Ravencoin header for epoch calculation
+	// IMPORTANT: Must use the kawpow height from the AuxPow header, NOT the Quai block height!
+	// ComputePowLight uses ravencoinHeader.Height() to calculate the epoch and DAG,
+	// so the stratum must use the same value for VerifyKawpowShare to produce matching results.
+	auxPow := pending.WorkObjectHeader().AuxPow()
+	if auxPow == nil || auxPow.Header() == nil {
+		return fmt.Errorf("no AuxPow header for kawpow")
+	}
+	height := uint64(auxPow.Header().Height())
 
 	// Calculate epoch and seed hash from height
 	epoch := calculateEpoch(height)
@@ -987,7 +1031,20 @@ func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 
 	// Get kawpow difficulty and convert to target
 	var targetHex string
-	if pending.WorkObjectHeader().KawpowDifficulty() != nil {
+	if sess.minerDifficulty != nil && *sess.minerDifficulty > 0 {
+		// Use miner-specified difficulty from password (d=<difficulty>)
+		// target = KawpowDiff1 / minerDifficulty
+		minerDiffBig := new(big.Float).SetFloat64(*sess.minerDifficulty)
+		diff1Float := new(big.Float).SetInt(KawpowDiff1)
+		targetFloat := new(big.Float).Quo(diff1Float, minerDiffBig)
+		targetInt, _ := targetFloat.Int(nil)
+		// Convert to 32-byte hex string, zero-padded
+		targetBytes := targetInt.Bytes()
+		result := make([]byte, 32)
+		copy(result[32-len(targetBytes):], targetBytes)
+		targetHex = hex.EncodeToString(result)
+		s.logger.WithFields(log.Fields{"minerDifficulty": *sess.minerDifficulty, "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job with miner difficulty")
+	} else if pending.WorkObjectHeader().KawpowDifficulty() != nil {
 		kawpowDiff := core.CalculateKawpowShareDiff(pending.WorkObjectHeader())
 		targetHex = common.GetTargetInHex(kawpowDiff)
 		s.logger.WithFields(log.Fields{"KawpowDiff": kawpowDiff.String(), "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job params")
@@ -1142,12 +1199,14 @@ func (s *Server) makeJob(sess *session) (*job, error) {
 func (s *Server) newJobID(sess *session) string {
 	// Caller should hold sess.mu
 	sess.jobSeq++
-	// Use time and a small counter to ensure uniqueness; keep compact
-	ts := uint64(time.Now().UnixNano())
-	return fmt.Sprintf("%x%04x", ts, sess.jobSeq&0xffff)
+	// 4-byte hex ID (8 chars) - just a counter, unique per session
+	return fmt.Sprintf("%08x", sess.jobSeq)
 }
 
-func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, versionBits string) error {
+// submitAsWorkShare validates and submits a SHA/Scrypt share.
+// Returns (refreshJob, error) where refreshJob indicates whether to send a new job after acceptance.
+// refreshJob is false for sub-shares (met miner difficulty but not workshare difficulty).
+func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, versionBits string) (bool, error) {
 	powID := powIDFromChain(sess.chain)
 	// fmt.Printf("[stratum] DEBUG submitAsWorkShare: chain=%s powID=%d ex2=%s ntime=%s nonce=%s versionBits=%s\n",
 	// 	sess.chain, powID, ex2hex, ntimeHex, nonceHex, versionBits)
@@ -1157,11 +1216,11 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	curJob := sess.job
 	sess.mu.Unlock()
 	if curJob == nil {
-		return fmt.Errorf("no current job")
+		return false, fmt.Errorf("no current job")
 	}
 	pending := curJob.pending
 	if pending == nil || pending.WorkObjectHeader() == nil || pending.WorkObjectHeader().AuxPow() == nil {
-		return fmt.Errorf("no pending header for job")
+		return false, fmt.Errorf("no pending header for job")
 	}
 
 	// Rebuild donor header for SHA chains with updated merkle root and nTime
@@ -1170,7 +1229,7 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	// Reconstruct coinbase from coinb1 + ex2 + coinb2
 	ex2, _ := hex.DecodeString(ex2hex)
 	if len(ex2) != 8 {
-		return fmt.Errorf("bad extranonce2 length")
+		return false, fmt.Errorf("bad extranonce2 length")
 	}
 
 	// Reconstruct full coinbase: coinb1 + [0x04][ex1] + [0x04][ex2] + coinb2
@@ -1187,13 +1246,13 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 
 	ntime, err := strconv.ParseUint(ntimeHex, 16, 32)
 	if err != nil {
-		return fmt.Errorf("invalid ntime: %v", err)
+		return false, fmt.Errorf("invalid ntime: %v", err)
 	}
 
 	// Parse nonce from hex string
 	nonce, err := strconv.ParseUint(nonceHex, 16, 32)
 	if err != nil {
-		return fmt.Errorf("invalid nonce: %v", err)
+		return false, fmt.Errorf("invalid nonce: %v", err)
 	}
 
 	// Parse version bits (if provided)
@@ -1223,26 +1282,17 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 
 	powHashBigInt := new(big.Int).SetBytes(hashBytes)
 	var workShareTarget *big.Int
+	// Note: Kawpow shares use submitKawpowShare(), not this function
 	switch pending.AuxPow().PowID() {
 	case types.Scrypt:
-		// fmt.Printf("[stratum] pow=Scrypt, powHashBigInt=%s, difficulty=%s, count=%s\n", powHashBigInt.String(),
-		// 	pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty(),
-		// 	pending.WorkObjectHeader().ScryptDiffAndCount().Count())
 		workShareTarget = new(big.Int).Div(common.Big2e256, pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty())
-	case types.Kawpow:
-		// fmt.Printf("[stratum] pow=Kawpow, powHashBigInt=%s, difficulty=%s\n", powHashBigInt.String(),
-		kawpowShareTarget := core.CalculateKawpowShareDiff(pending.WorkObjectHeader())
-		workShareTarget = new(big.Int).Div(common.Big2e256, kawpowShareTarget)
 	default:
 		// SHA_BTC, SHA_BCH
-		// fmt.Printf("[stratum] pow=SHA, powHashBigInt=%s, difficulty=%s, count=%s\n", powHashBigInt.String(),
-		// 	pending.WorkObjectHeader().ShaDiffAndCount().Difficulty(),
-		// 	pending.WorkObjectHeader().ShaDiffAndCount().Count())
 		workShareTarget = new(big.Int).Div(common.Big2e256, pending.WorkObjectHeader().ShaDiffAndCount().Difficulty())
 	}
 
 	if workShareTarget == nil {
-		return fmt.Errorf("missing workshare difficulty")
+		return false, fmt.Errorf("missing workshare difficulty")
 	}
 
 	// Log how close the hash is to the target (target/hash as a percentage)
@@ -1265,20 +1315,59 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	}
 
 	if pending.WorkObjectHeader().AuxPow() == nil {
-		return fmt.Errorf("work object missing auxpow")
+		return false, fmt.Errorf("work object missing auxpow")
 	}
 
 	pending.WorkObjectHeader().AuxPow().SetHeader(templateHeader)
 	pending.WorkObjectHeader().AuxPow().SetTransaction(fullCoinb)
 
-	//bytes := pending.Hash().Bytes()
-	// fmt.Printf("[stratum] header %x\n", templateHeader.Bytes())
-	// fmt.Printf("[stratum] pow hash %x\n", hashBytes)
-	// fmt.Printf("[stratum] workshare hash %x\n", bytes)
+	// Check if share meets workshare target (hash must be <= target)
+	meetsWorkshareTarget := powHashBigInt.Cmp(workShareTarget) <= 0
 
-	// Check if satisfies workShareTarget
-	if powHashBigInt.Cmp(workShareTarget) > 0 {
-		return fmt.Errorf("did not meet thresold")
+	// Handle miner-specified difficulty (from password field d=<difficulty>)
+	// For SHA/Scrypt, difficulty is in stratum units (not raw difficulty)
+	// SHA256: stratumDiff 1 = 2^32 hashes, Scrypt: stratumDiff 1 = 2^16 hashes
+	if sess.minerDifficulty != nil && achievedDiff != nil {
+		// Convert achieved difficulty to stratum units for comparison
+		var diff1 float64
+		switch powID {
+		case types.Scrypt:
+			diff1 = 65536.0 // 2^16
+		default:
+			diff1 = 4294967296.0 // 2^32 for SHA
+		}
+		achievedStratumDiff := float64(achievedDiff.Uint64()) / diff1
+		if achievedDiff.BitLen() > 63 {
+			achievedStratumDiff, _ = new(big.Float).Quo(
+				new(big.Float).SetInt(achievedDiff),
+				new(big.Float).SetFloat64(diff1),
+			).Float64()
+		}
+
+		// Check if share meets miner's custom difficulty
+		if achievedStratumDiff < *sess.minerDifficulty {
+			s.logger.WithFields(log.Fields{
+				"achievedDiff":    achievedStratumDiff,
+				"minerDifficulty": *sess.minerDifficulty,
+			}).Debug("share did not meet miner difficulty")
+			return false, fmt.Errorf("share difficulty %.4f below miner difficulty %.4f", achievedStratumDiff, *sess.minerDifficulty)
+		}
+
+		// Share meets miner difficulty - if it doesn't meet workshare target,
+		// accept for liveness tracking but don't submit to node
+		if !meetsWorkshareTarget {
+			s.logger.WithFields(log.Fields{
+				"powID":           powID,
+				"achievedDiff":    achievedStratumDiff,
+				"minerDifficulty": *sess.minerDifficulty,
+			}).Debug("share accepted for liveness (below workshare difficulty)")
+			return false, nil // Accept share but don't submit to node, don't refresh job
+		}
+	} else {
+		// No custom difficulty - use workshare target directly
+		if !meetsWorkshareTarget {
+			return false, fmt.Errorf("did not meet threshold")
+		}
 	}
 
 	// LRU de-dup: reject identical shares (same pow hash) for this session
@@ -1286,7 +1375,7 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	sess.mu.Lock()
 	if _, seen := sess.seenShares[shareKey]; seen {
 		sess.mu.Unlock()
-		return fmt.Errorf("duplicate share")
+		return false, fmt.Errorf("duplicate share")
 	}
 	// Insert and evict oldest if capacity exceeded
 	const lruCap = 1024
@@ -1299,9 +1388,15 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	}
 	sess.mu.Unlock()
 
-	s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes)}).Info("workshare received")
+	s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes)}).Info("submitting workshare to node")
 
-	return s.backend.ReceiveMinedHeader(pending)
+	err = s.backend.ReceiveMinedHeader(pending)
+	if err != nil {
+		s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "user": sess.user, "worker": sess.workerName, "error": err}).Error("workshare rejected by node")
+	} else {
+		s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "user": sess.user, "worker": sess.workerName, "hash": pending.Hash().Hex()}).Info("workshare accepted by node")
+	}
+	return true, err // Workshare submitted - refresh job
 }
 
 // submitKawpowShare handles kawpow share submissions
@@ -1373,13 +1468,49 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, _
 	// Convert pow hash to big.Int for comparison
 	powHashInt := new(big.Int).SetBytes(powHash.Bytes())
 
-	// Check if pow hash meets workshare target (hash must be <= target)
-	if powHashInt.Cmp(workShareTarget) > 0 {
-		s.logger.WithFields(log.Fields{
-			"powHash": hex.EncodeToString(powHash.Bytes()),
-			"target":  workShareTarget.String(),
-		}).Debug("share did not meet workshare target")
-		return fmt.Errorf("share did not meet target")
+	// Check if share meets workshare target (hash must be <= target)
+	meetsWorkshareTarget := powHashInt.Cmp(workShareTarget) <= 0
+
+	// Handle miner-specified difficulty (from password field d=<difficulty>)
+	if sess.minerDifficulty != nil {
+		// Calculate achieved stratum difficulty: stratumDiff = diff1 / hash
+		// Kawpow diff1 = 0x00000000ff000000... (standard Ravencoin stratum, ~2^32 hashes per diff 1)
+		// This is different from go-quai's internal difficulty which uses 2^256 as max target.
+		achievedStratumDiff, _ := new(big.Float).Quo(
+			new(big.Float).SetInt(KawpowDiff1),
+			new(big.Float).SetInt(powHashInt),
+		).Float64()
+
+		// Check if share meets miner's custom difficulty
+		if achievedStratumDiff < *sess.minerDifficulty {
+			s.logger.WithFields(log.Fields{
+				"achievedDiff":    achievedStratumDiff,
+				"minerDifficulty": *sess.minerDifficulty,
+			}).Debug("share did not meet miner difficulty")
+			return fmt.Errorf("share difficulty %.4f below miner difficulty %.4f", achievedStratumDiff, *sess.minerDifficulty)
+		}
+
+		// Share meets miner difficulty - if it doesn't meet workshare target,
+		// accept for liveness tracking but don't submit to node
+		if !meetsWorkshareTarget {
+			s.logger.WithFields(log.Fields{
+				"powID":           types.Kawpow,
+				"height":          kawJob.height,
+				"achievedDiff":    achievedStratumDiff,
+				"minerDifficulty": *sess.minerDifficulty,
+				"workshareDiff":   kawpowShareDiff.String(),
+			}).Debug("share accepted for liveness (below workshare difficulty)")
+			return nil // Accept share but don't submit to node
+		}
+	} else {
+		// No custom difficulty - use workshare target directly
+		if !meetsWorkshareTarget {
+			s.logger.WithFields(log.Fields{
+				"powHash": hex.EncodeToString(powHash.Bytes()),
+				"target":  workShareTarget.String(),
+			}).Debug("share did not meet workshare target")
+			return fmt.Errorf("share did not meet target")
+		}
 	}
 
 	// LRU de-dup using pow hash
@@ -1427,9 +1558,15 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, _
 		"powHash":      hex.EncodeToString(powHash.Bytes()[:8]),
 		"achievedDiff": achievedDiff.String(),
 		"targetDiff":   kawpowShareDiff.String(),
-	}).Info("kawpow workshare verified and accepted")
+	}).Info("submitting kawpow workshare to node")
 
-	return s.backend.ReceiveMinedHeader(pending)
+	err = s.backend.ReceiveMinedHeader(pending)
+	if err != nil {
+		s.logger.WithFields(log.Fields{"powID": types.Kawpow, "height": kawJob.height, "user": sess.user, "worker": sess.workerName, "error": err}).Error("kawpow workshare rejected by node")
+	} else {
+		s.logger.WithFields(log.Fields{"powID": types.Kawpow, "height": kawJob.height, "user": sess.user, "worker": sess.workerName, "hash": pending.Hash().Hex()}).Info("kawpow workshare accepted by node")
+	}
+	return err
 }
 
 // swapWords32x32 swaps byte order within each 4-byte word of a 32-byte array.
@@ -1512,4 +1649,42 @@ func parseUsername(u string) (address string, workerName string, jobFreq time.Du
 	}
 
 	return address, workerName, jobFreq
+}
+
+// parsePassword parses the stratum password field for optional parameters.
+// Supports: d=<difficulty> and/or frequency=<seconds>
+// Parts are separated by ',' character (to allow decimal values).
+// Examples:
+//   - "x" or "" -> nil, 0 (use defaults)
+//   - "d=0.1" -> difficulty=0.1, frequency=0
+//   - "frequency=2.5" -> difficulty=nil, frequency=2.5s
+//   - "d=0.1,frequency=2" -> difficulty=0.1, frequency=2s
+func parsePassword(password string) (*float64, time.Duration) {
+	if password == "" || password == "x" {
+		return nil, 0
+	}
+
+	var difficulty *float64
+	var frequency time.Duration
+
+	// Split by ',' to allow decimal values in parameters
+	parts := strings.Split(password, ",")
+	for _, part := range parts {
+		// Check for d=<difficulty> format
+		if diffStr, ok := strings.CutPrefix(part, "d="); ok {
+			if diff, err := strconv.ParseFloat(diffStr, 64); err == nil && diff > 0 {
+				difficulty = &diff
+			}
+			continue
+		}
+		// Check for frequency=<seconds> format
+		if freqStr, ok := strings.CutPrefix(part, "frequency="); ok {
+			if freq, err := strconv.ParseFloat(freqStr, 64); err == nil && freq >= 1 && freq <= 10 {
+				frequency = time.Duration(freq * float64(time.Second))
+			}
+			continue
+		}
+	}
+
+	return difficulty, frequency
 }

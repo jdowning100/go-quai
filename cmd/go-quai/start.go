@@ -124,18 +124,20 @@ func runStart(cmd *cobra.Command, args []string) error {
 			log.Global.Warn("Stratum endpoint enabled but no processing zone backend found; skipping start")
 		} else {
 			stratumConfig := stratum.StratumConfig{
-				SHAAddr:    viper.GetString(utils.StratumSHAAddrFlag.Name),
-				ScryptAddr: viper.GetString(utils.StratumScryptAddrFlag.Name),
-				KawpowAddr: viper.GetString(utils.StratumKawpowAddrFlag.Name),
+				SHAAddr:        viper.GetString(utils.StratumSHAAddrFlag.Name),
+				ScryptAddr:     viper.GetString(utils.StratumScryptAddrFlag.Name),
+				KawpowAddr:     viper.GetString(utils.StratumKawpowAddrFlag.Name),
+				VarDiffEnabled: viper.GetBool(utils.StratumVarDiffFlag.Name),
 			}
 			stratumServer = stratum.NewServerWithConfig(stratumConfig, zoneBackend)
 			if err := stratumServer.Start(); err != nil {
 				log.Global.WithField("error", err).Error("failed to start stratum endpoints")
 			} else {
 				log.Global.WithFields(log.Fields{
-					"sha":    stratumConfig.SHAAddr,
-					"scrypt": stratumConfig.ScryptAddr,
-					"kawpow": stratumConfig.KawpowAddr,
+					"sha":     stratumConfig.SHAAddr,
+					"scrypt":  stratumConfig.ScryptAddr,
+					"kawpow":  stratumConfig.KawpowAddr,
+					"vardiff": stratumConfig.VarDiffEnabled,
 				}).Info("Stratum TCP endpoints started")
 			}
 		}

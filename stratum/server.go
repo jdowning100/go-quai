@@ -41,9 +41,10 @@ func (randReader) Read(p []byte) (int, error) {
 
 // StratumConfig holds configuration for the stratum server
 type StratumConfig struct {
-	SHAAddr    string // Address for SHA miners (e.g., ":3333")
-	ScryptAddr string // Address for Scrypt miners (e.g., ":4444")
-	KawpowAddr string // Address for Kawpow miners (e.g., ":5555")
+	SHAAddr        string // Address for SHA miners (e.g., ":3333")
+	ScryptAddr     string // Address for Scrypt miners (e.g., ":4444")
+	KawpowAddr     string // Address for Kawpow miners (e.g., ":5555")
+	VarDiffEnabled bool   // Enable automatic variable difficulty for liveness (default true)
 }
 
 // templateState tracks the last template sent for change detection
@@ -393,6 +394,7 @@ func (s *Server) broadcastJob(algorithm string, clean bool) {
 // the latest template to any session that hasn't received a job within its configured
 // jobFrequency. Each miner can configure their own frequency via username format:
 // address.workername.frequency=X (1-10 seconds, supports decimals, default 5s)
+// Also handles vardiff timeout: decreases difficulty if no share within 60 seconds.
 func (s *Server) forceBroadcastStale(algorithm string) {
 	s.sessionsMu.RLock()
 	var sessions map[*session]struct{}
@@ -406,6 +408,8 @@ func (s *Server) forceBroadcastStale(algorithm string) {
 	}
 	// Copy stale sessions to avoid holding lock during broadcast
 	staleSessions := make([]*session, 0)
+	// Sessions that need vardiff decrease due to timeout
+	varDiffTimeoutSessions := make([]*session, 0)
 	now := time.Now()
 	for sess := range sessions {
 		if !sess.authorized {
@@ -414,13 +418,47 @@ func (s *Server) forceBroadcastStale(algorithm string) {
 		sess.mu.Lock()
 		timeSinceLastJob := now.Sub(sess.lastJobSent)
 		threshold := sess.jobFrequency
+		// Check for vardiff timeout
+		varDiffTimeout := sess.varDiffEnabled && now.Sub(sess.lastShareTime) >= varDiffRetargetAfter
 		sess.mu.Unlock()
 		// Use per-session threshold (configured via username)
 		if timeSinceLastJob >= threshold {
 			staleSessions = append(staleSessions, sess)
 		}
+		if varDiffTimeout {
+			varDiffTimeoutSessions = append(varDiffTimeoutSessions, sess)
+		}
 	}
 	s.sessionsMu.RUnlock()
+
+	// Handle vardiff timeout adjustments (decrease difficulty)
+	for _, sess := range varDiffTimeoutSessions {
+		sess.mu.Lock()
+		// Only decrease if still past the timeout (double-check after lock)
+		if now.Sub(sess.lastShareTime) >= varDiffRetargetAfter {
+			oldDiff := sess.varDiff
+			sess.varDiff *= varDiffAdjustDown
+			// Enforce algorithm-specific minimum
+			_, minDiff := getVarDiffDefaults(sess.chain)
+			if sess.varDiff < minDiff {
+				sess.varDiff = minDiff
+			}
+			// Reset lastShareTime to prevent repeated decreases every second
+			// Also set flag so next share doesn't immediately increase difficulty
+			sess.lastShareTime = now
+			sess.varDiffTimeoutReset = true
+			if sess.varDiff != oldDiff {
+				s.logger.WithFields(log.Fields{
+					"user":    sess.user,
+					"worker":  sess.workerName,
+					"oldDiff": oldDiff,
+					"newDiff": sess.varDiff,
+					"reason":  "timeout",
+				}).Info("vardiff decreased (no share within 60s)")
+			}
+		}
+		sess.mu.Unlock()
+	}
 
 	if len(staleSessions) == 0 {
 		return
@@ -501,6 +539,110 @@ const (
 	maxJobFrequency     = 10 * time.Second
 )
 
+// Vardiff constants for automatic difficulty adjustment
+// When miner doesn't specify d=X, we use vardiff to target ~30s per share for liveness
+// Algorithm-specific defaults based on expected hashrates:
+// - Kawpow: ~4.3 billion hashes per stratum diff 1
+// - SHA256: ~4.3 billion hashes per stratum diff 1 (miners typically at 1+ petahash = 230k diff)
+// - Scrypt: ~65k hashes per stratum diff 1 (ASIC miners at high hashrate)
+const (
+	// Kawpow vardiff (diff1 = ~2^32 hashes)
+	varDiffDefaultKawpow = 0.1  // Starting difficulty
+	varDiffMinKawpow     = 0.01 // Minimum difficulty
+
+	// SHA256 vardiff (diff1 = 2^32 hashes)
+	// default=230,000 (one petahash), min=2300 (ten terahash)
+	varDiffDefaultSHA = 230000.0 // Starting difficulty
+	varDiffMinSHA     = 2300.0   // Minimum difficulty
+
+	// Scrypt vardiff (diff1 = 2^16 hashes)
+	varDiffDefaultScrypt = 15000.0 // Starting difficulty
+	varDiffMinScrypt     = 1500.0  // Minimum difficulty
+
+	// Common vardiff timing constants
+	varDiffTargetTime    = 30 * time.Second // Target time between shares
+	varDiffRetargetAfter = 60 * time.Second // Decrease diff if no share within this time
+	varDiffAdjustUp      = 2.0              // Multiply difficulty by this when shares come too fast
+	varDiffAdjustDown    = 0.5              // Multiply difficulty by this when shares come too slow
+)
+
+// getVarDiffDefaults returns (default, min) vardiff values for an algorithm.
+// Max vardiff is dynamically capped at workshare difficulty (never set vardiff > workshare diff).
+func getVarDiffDefaults(chain string) (defaultDiff, minDiff float64) {
+	switch strings.ToLower(chain) {
+	case "kawpow":
+		return varDiffDefaultKawpow, varDiffMinKawpow
+	case "scrypt":
+		return varDiffDefaultScrypt, varDiffMinScrypt
+	default: // sha
+		return varDiffDefaultSHA, varDiffMinSHA
+	}
+}
+
+// adjustVarDiff adjusts vardiff based on share timing and returns true if difficulty changed.
+// Called after receiving a valid share. Adjusts up if shares come faster than target.
+// workshareStratumDiff is the workshare difficulty in stratum units - vardiff will never exceed this.
+func (s *Server) adjustVarDiff(sess *session, workshareStratumDiff float64) bool {
+	if !sess.varDiffEnabled {
+		return false
+	}
+
+	sess.mu.Lock()
+	now := time.Now()
+	timeSinceLastShare := now.Sub(sess.lastShareTime)
+	oldDiff := sess.varDiff
+
+	// If this is the first share after a timeout reset, don't increase difficulty.
+	// The timeout decreased difficulty and reset lastShareTime, so the next share
+	// would appear to come "too fast" - but it's actually the first real share
+	// at the new lower difficulty. Just reset the baseline.
+	if sess.varDiffTimeoutReset {
+		sess.varDiffTimeoutReset = false
+		sess.lastShareTime = now
+		sess.mu.Unlock()
+		s.logger.WithFields(log.Fields{
+			"user":     sess.user,
+			"worker":   sess.workerName,
+			"varDiff":  sess.varDiff,
+			"shareGap": timeSinceLastShare.Seconds(),
+		}).Debug("first share after timeout reset, resetting baseline")
+		return false
+	}
+
+	// If share came faster than target, increase difficulty
+	if timeSinceLastShare < varDiffTargetTime {
+		// Calculate how much faster (e.g., 15s vs 30s target = 2x faster)
+		ratio := float64(varDiffTargetTime) / float64(timeSinceLastShare)
+		// Adjust difficulty proportionally, capped at 2x per adjustment
+		if ratio > varDiffAdjustUp {
+			ratio = varDiffAdjustUp
+		}
+		sess.varDiff *= ratio
+		// Cap vardiff at workshare difficulty - never set vardiff > workshare diff
+		if workshareStratumDiff > 0 && sess.varDiff > workshareStratumDiff {
+			sess.varDiff = workshareStratumDiff
+		}
+	}
+	// Note: We don't decrease here - that's handled by the timeout in forceBroadcastStale
+
+	sess.lastShareTime = now
+	newDiff := sess.varDiff
+	sess.mu.Unlock()
+
+	if newDiff != oldDiff {
+		s.logger.WithFields(log.Fields{
+			"user":          sess.user,
+			"worker":        sess.workerName,
+			"oldDiff":       oldDiff,
+			"newDiff":       newDiff,
+			"workshareDiff": workshareStratumDiff,
+			"shareGap":      timeSinceLastShare.Seconds(),
+		}).Info("vardiff adjusted")
+		return true
+	}
+	return false
+}
+
 type session struct {
 	conn       net.Conn
 	enc        *json.Encoder
@@ -545,6 +687,11 @@ type session struct {
 	// shares meeting the workshare difficulty are submitted to the node.
 	// nil means use workshare difficulty as the minimum.
 	minerDifficulty *float64
+	// Vardiff state for automatic difficulty adjustment (when minerDifficulty is nil)
+	varDiffEnabled      bool      // true if using automatic vardiff (no d=X specified)
+	varDiff             float64   // current vardiff value
+	lastShareTime       time.Time // when last valid share was received (for vardiff timing)
+	varDiffTimeoutReset bool      // true if lastShareTime was reset due to timeout (not a real share)
 }
 
 // sendJSON safely encodes and sends JSON to the miner (thread-safe).
@@ -714,6 +861,14 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 					}
 				}
 			}
+			// Initialize vardiff if enabled and miner didn't specify a static difficulty
+			// If vardiff is disabled and no d=X, workshare difficulty will be used (handled in sendJobAndNotify)
+			if sess.minerDifficulty == nil && s.config.VarDiffEnabled {
+				sess.varDiffEnabled = true
+				defaultDiff, _ := getVarDiffDefaults(sess.chain)
+				sess.varDiff = defaultDiff
+				sess.lastShareTime = time.Now()
+			}
 			// Validate that the address is internal (belongs to this zone)
 			address := common.HexToAddress(sess.user, s.backend.NodeLocation())
 			if _, err := address.InternalAddress(); err != nil {
@@ -737,6 +892,9 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 			}
 			if sess.minerDifficulty != nil {
 				logFields["minerDifficulty"] = *sess.minerDifficulty
+			} else if sess.varDiffEnabled {
+				logFields["varDiff"] = sess.varDiff
+				logFields["varDiffEnabled"] = true
 			}
 			s.logger.WithFields(logFields).Info("miner authorized")
 			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
@@ -975,15 +1133,20 @@ func (s *Server) sendJobAndNotify(sess *session, clean bool) error {
 	}
 
 	// Send set_difficulty (and set_target for miners that honor it) then the job notify
-	// If miner specified custom difficulty via password (d=<difficulty>), use that instead
+	// Priority: 1) miner-specified d=X, 2) vardiff, 3) workshare difficulty
 	sess.mu.Lock()
-	minerDiff := sess.difficulty
-	sess.mu.Unlock()
+	minerDiff := sess.difficulty // workshare difficulty (fallback)
 	if sess.minerDifficulty != nil && *sess.minerDifficulty > 0 {
 		minerDiff = *sess.minerDifficulty
+		sess.mu.Unlock()
 		s.logger.WithFields(log.Fields{"minerDifficulty": minerDiff, "workshareDiff": sess.difficulty}).Debug("Using miner-specified difficulty for set_difficulty")
+	} else if sess.varDiffEnabled {
+		minerDiff = sess.varDiff
+		sess.mu.Unlock()
+		s.logger.WithFields(log.Fields{"varDiff": minerDiff, "workshareDiff": sess.difficulty}).Debug("Using vardiff for set_difficulty")
 	} else {
-		s.logger.WithField("difficulty", minerDiff).Debug("Sending mining.set_difficulty to miner")
+		sess.mu.Unlock()
+		s.logger.WithField("difficulty", minerDiff).Debug("Sending workshare difficulty to miner")
 	}
 	diffNote := map[string]interface{}{"id": nil, "method": "mining.set_difficulty", "params": []interface{}{minerDiff}}
 	_ = sess.sendJSON(diffNote)
@@ -1030,11 +1193,22 @@ func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 	seedHash := calculateSeedHash(epoch)
 
 	// Get kawpow difficulty and convert to target
+	// Priority: 1) miner-specified d=X, 2) vardiff, 3) workshare difficulty
 	var targetHex string
+	var usedDiff float64
 	if sess.minerDifficulty != nil && *sess.minerDifficulty > 0 {
 		// Use miner-specified difficulty from password (d=<difficulty>)
-		// target = KawpowDiff1 / minerDifficulty
-		minerDiffBig := new(big.Float).SetFloat64(*sess.minerDifficulty)
+		usedDiff = *sess.minerDifficulty
+	} else if sess.varDiffEnabled {
+		// Use automatic vardiff
+		sess.mu.Lock()
+		usedDiff = sess.varDiff
+		sess.mu.Unlock()
+	}
+
+	if usedDiff > 0 {
+		// target = KawpowDiff1 / difficulty
+		minerDiffBig := new(big.Float).SetFloat64(usedDiff)
 		diff1Float := new(big.Float).SetInt(KawpowDiff1)
 		targetFloat := new(big.Float).Quo(diff1Float, minerDiffBig)
 		targetInt, _ := targetFloat.Int(nil)
@@ -1043,7 +1217,11 @@ func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 		result := make([]byte, 32)
 		copy(result[32-len(targetBytes):], targetBytes)
 		targetHex = hex.EncodeToString(result)
-		s.logger.WithFields(log.Fields{"minerDifficulty": *sess.minerDifficulty, "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job with miner difficulty")
+		if sess.varDiffEnabled && sess.minerDifficulty == nil {
+			s.logger.WithFields(log.Fields{"varDiff": usedDiff, "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job with vardiff")
+		} else {
+			s.logger.WithFields(log.Fields{"minerDifficulty": usedDiff, "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job with miner difficulty")
+		}
 	} else if pending.WorkObjectHeader().KawpowDifficulty() != nil {
 		kawpowDiff := core.CalculateKawpowShareDiff(pending.WorkObjectHeader())
 		targetHex = common.GetTargetInHex(kawpowDiff)
@@ -1324,47 +1502,92 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 	// Check if share meets workshare target (hash must be <= target)
 	meetsWorkshareTarget := powHashBigInt.Cmp(workShareTarget) <= 0
 
-	// Handle miner-specified difficulty (from password field d=<difficulty>)
+	// Handle miner-specified difficulty, vardiff, or workshare difficulty
 	// For SHA/Scrypt, difficulty is in stratum units (not raw difficulty)
 	// SHA256: stratumDiff 1 = 2^32 hashes, Scrypt: stratumDiff 1 = 2^16 hashes
-	if sess.minerDifficulty != nil && achievedDiff != nil {
-		// Convert achieved difficulty to stratum units for comparison
-		var diff1 float64
-		switch powID {
-		case types.Scrypt:
-			diff1 = 65536.0 // 2^16
-		default:
-			diff1 = 4294967296.0 // 2^32 for SHA
+	var diff1 float64
+	var workshareRawDiff *big.Int
+	switch powID {
+	case types.Scrypt:
+		diff1 = 65536.0 // 2^16
+		if pending.WorkObjectHeader().ScryptDiffAndCount() != nil {
+			workshareRawDiff = pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty()
 		}
-		achievedStratumDiff := float64(achievedDiff.Uint64()) / diff1
+	default:
+		diff1 = 4294967296.0 // 2^32 for SHA
+		if pending.WorkObjectHeader().ShaDiffAndCount() != nil {
+			workshareRawDiff = pending.WorkObjectHeader().ShaDiffAndCount().Difficulty()
+		}
+	}
+
+	// Calculate workshare stratum difficulty (for vardiff max cap)
+	var workshareStratumDiff float64
+	if workshareRawDiff != nil {
+		workshareStratumDiff, _ = new(big.Float).Quo(
+			new(big.Float).SetInt(workshareRawDiff),
+			new(big.Float).SetFloat64(diff1),
+		).Float64()
+	}
+
+	// Calculate achieved stratum difficulty
+	var achievedStratumDiff float64
+	if achievedDiff != nil {
 		if achievedDiff.BitLen() > 63 {
 			achievedStratumDiff, _ = new(big.Float).Quo(
 				new(big.Float).SetInt(achievedDiff),
 				new(big.Float).SetFloat64(diff1),
 			).Float64()
+		} else {
+			achievedStratumDiff = float64(achievedDiff.Uint64()) / diff1
 		}
+	}
 
-		// Check if share meets miner's custom difficulty
-		if achievedStratumDiff < *sess.minerDifficulty {
+	// Determine which difficulty threshold to use for liveness
+	// Priority: 1) miner-specified d=X, 2) vardiff, 3) workshare only
+	var livenessTarget float64
+	var usingVarDiff bool
+	if sess.minerDifficulty != nil {
+		livenessTarget = *sess.minerDifficulty
+	} else if sess.varDiffEnabled {
+		sess.mu.Lock()
+		livenessTarget = sess.varDiff
+		sess.mu.Unlock()
+		usingVarDiff = true
+	}
+
+	if livenessTarget > 0 && achievedDiff != nil {
+		// Check if share meets liveness difficulty
+		if achievedStratumDiff < livenessTarget {
 			s.logger.WithFields(log.Fields{
-				"achievedDiff":    achievedStratumDiff,
-				"minerDifficulty": *sess.minerDifficulty,
-			}).Debug("share did not meet miner difficulty")
-			return false, fmt.Errorf("share difficulty %.4f below miner difficulty %.4f", achievedStratumDiff, *sess.minerDifficulty)
+				"achievedDiff": achievedStratumDiff,
+				"targetDiff":   livenessTarget,
+				"vardiff":      usingVarDiff,
+			}).Debug("share did not meet liveness difficulty")
+			return false, fmt.Errorf("share difficulty %.4f below target %.4f", achievedStratumDiff, livenessTarget)
 		}
 
-		// Share meets miner difficulty - if it doesn't meet workshare target,
-		// accept for liveness tracking but don't submit to node
+		// Share meets liveness difficulty - adjust vardiff if enabled
+		if usingVarDiff && s.adjustVarDiff(sess, workshareStratumDiff) {
+			// Vardiff was adjusted - send new difficulty to miner immediately
+			sess.mu.Lock()
+			newDiff := sess.varDiff
+			sess.mu.Unlock()
+			diffNote := map[string]interface{}{"id": nil, "method": "mining.set_difficulty", "params": []interface{}{newDiff}}
+			_ = sess.sendJSON(diffNote)
+		}
+
+		// If it doesn't meet workshare target, accept for liveness but don't submit
 		if !meetsWorkshareTarget {
 			s.logger.WithFields(log.Fields{
-				"powID":           powID,
-				"achievedDiff":    achievedStratumDiff,
-				"minerDifficulty": *sess.minerDifficulty,
+				"powID":        powID,
+				"achievedDiff": achievedStratumDiff,
+				"targetDiff":   livenessTarget,
+				"vardiff":      usingVarDiff,
 			}).Debug("share accepted for liveness (below workshare difficulty)")
 			return false, nil // Accept share but don't submit to node, don't refresh job
 		}
 	} else {
-		// No custom difficulty - use workshare target directly
+		// No liveness difficulty set - use workshare target directly
 		if !meetsWorkshareTarget {
 			return false, fmt.Errorf("did not meet threshold")
 		}
@@ -1471,39 +1694,77 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, _
 	// Check if share meets workshare target (hash must be <= target)
 	meetsWorkshareTarget := powHashInt.Cmp(workShareTarget) <= 0
 
-	// Handle miner-specified difficulty (from password field d=<difficulty>)
-	if sess.minerDifficulty != nil {
-		// Calculate achieved stratum difficulty: stratumDiff = diff1 / hash
-		// Kawpow diff1 = 0x00000000ff000000... (standard Ravencoin stratum, ~2^32 hashes per diff 1)
-		// This is different from go-quai's internal difficulty which uses 2^256 as max target.
-		achievedStratumDiff, _ := new(big.Float).Quo(
-			new(big.Float).SetInt(KawpowDiff1),
-			new(big.Float).SetInt(powHashInt),
-		).Float64()
+	// Calculate achieved stratum difficulty: stratumDiff = diff1 / hash
+	// Kawpow diff1 = 0x00000000ff000000... (standard Ravencoin stratum, ~2^32 hashes per diff 1)
+	achievedStratumDiff, _ := new(big.Float).Quo(
+		new(big.Float).SetInt(KawpowDiff1),
+		new(big.Float).SetInt(powHashInt),
+	).Float64()
 
-		// Check if share meets miner's custom difficulty
-		if achievedStratumDiff < *sess.minerDifficulty {
+	// Calculate workshare stratum difficulty (for vardiff max cap)
+	// workshareStratumDiff = KawpowDiff1 / workShareTarget
+	workshareStratumDiff, _ := new(big.Float).Quo(
+		new(big.Float).SetInt(KawpowDiff1),
+		new(big.Float).SetInt(workShareTarget),
+	).Float64()
+
+	// Determine which difficulty threshold to use for liveness
+	// Priority: 1) miner-specified d=X, 2) vardiff, 3) workshare only
+	var livenessTarget float64
+	var usingVarDiff bool
+	if sess.minerDifficulty != nil {
+		livenessTarget = *sess.minerDifficulty
+	} else if sess.varDiffEnabled {
+		sess.mu.Lock()
+		livenessTarget = sess.varDiff
+		sess.mu.Unlock()
+		usingVarDiff = true
+	}
+
+	if livenessTarget > 0 {
+		// Check if share meets liveness difficulty
+		if achievedStratumDiff < livenessTarget {
 			s.logger.WithFields(log.Fields{
-				"achievedDiff":    achievedStratumDiff,
-				"minerDifficulty": *sess.minerDifficulty,
-			}).Debug("share did not meet miner difficulty")
-			return fmt.Errorf("share difficulty %.4f below miner difficulty %.4f", achievedStratumDiff, *sess.minerDifficulty)
+				"achievedDiff": achievedStratumDiff,
+				"targetDiff":   livenessTarget,
+				"vardiff":      usingVarDiff,
+			}).Debug("share did not meet liveness difficulty")
+			return fmt.Errorf("share difficulty %.4f below target %.4f", achievedStratumDiff, livenessTarget)
 		}
 
-		// Share meets miner difficulty - if it doesn't meet workshare target,
-		// accept for liveness tracking but don't submit to node
+		// Share meets liveness difficulty - adjust vardiff if enabled
+		if usingVarDiff && s.adjustVarDiff(sess, workshareStratumDiff) {
+			// Vardiff was adjusted - send new target to miner immediately
+			sess.mu.Lock()
+			newDiff := sess.varDiff
+			sess.mu.Unlock()
+			// For kawpow, convert difficulty to target: target = KawpowDiff1 / difficulty
+			minerDiffBig := new(big.Float).SetFloat64(newDiff)
+			diff1Float := new(big.Float).SetInt(KawpowDiff1)
+			targetFloat := new(big.Float).Quo(diff1Float, minerDiffBig)
+			targetInt, _ := targetFloat.Int(nil)
+			targetBytes := targetInt.Bytes()
+			result := make([]byte, 32)
+			copy(result[32-len(targetBytes):], targetBytes)
+			targetHex := hex.EncodeToString(result)
+			targetNote := map[string]interface{}{"id": nil, "method": "mining.set_target", "params": []interface{}{targetHex}}
+			_ = sess.sendJSON(targetNote)
+		}
+
+		// If it doesn't meet workshare target, accept for liveness but don't submit
 		if !meetsWorkshareTarget {
 			s.logger.WithFields(log.Fields{
-				"powID":           types.Kawpow,
-				"height":          kawJob.height,
-				"achievedDiff":    achievedStratumDiff,
-				"minerDifficulty": *sess.minerDifficulty,
-				"workshareDiff":   kawpowShareDiff.String(),
+				"powID":         types.Kawpow,
+				"height":        kawJob.height,
+				"achievedDiff":  achievedStratumDiff,
+				"targetDiff":    livenessTarget,
+				"workshareDiff": kawpowShareDiff.String(),
+				"vardiff":       usingVarDiff,
 			}).Debug("share accepted for liveness (below workshare difficulty)")
 			return nil // Accept share but don't submit to node
 		}
 	} else {
-		// No custom difficulty - use workshare target directly
+		// No liveness difficulty set - use workshare target directly
 		if !meetsWorkshareTarget {
 			s.logger.WithFields(log.Fields{
 				"powHash": hex.EncodeToString(powHash.Bytes()),

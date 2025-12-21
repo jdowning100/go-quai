@@ -712,6 +712,112 @@ func (s *PublicBlockChainQuaiAPI) GetBlockBySealHash(ctx context.Context, sealHa
 	return nil, fmt.Errorf("block with seal hash %s not found within %d blocks", sealHash.Hex(), maxSearchDepth)
 }
 
+// GetWorkshareByHash searches the last 10k blocks to find a workshare by its hash.
+// Returns the workshare details and the associated coinbase ETX from outboundEtxs.
+// Note: Coinbase ETXs for workshares are generated ~3-4 blocks AFTER the workshare is included.
+func (s *PublicBlockChainQuaiAPI) GetWorkshareByHash(ctx context.Context, workshareHash common.Hash) (map[string]interface{}, error) {
+	const maxSearchDepth = 10000
+	const coinbaseSearchDepth = 10 // Search forward this many blocks for coinbase ETX
+
+	// Build a map of recent blocks by number for forward searching
+	blocksByNumber := make(map[uint64]*types.WorkObject)
+
+	// Start from the current block
+	currentBlock := s.b.CurrentBlock()
+	if currentBlock == nil {
+		return nil, errors.New("current block not found")
+	}
+
+	latestBlockNum := currentBlock.NumberU64(s.b.NodeCtx())
+
+	// Search backwards up to maxSearchDepth blocks
+	for i := 0; i < maxSearchDepth; i++ {
+		blockNum := currentBlock.NumberU64(s.b.NodeCtx())
+		blocksByNumber[blockNum] = currentBlock
+
+		uncles := currentBlock.Uncles()
+
+		// Check each uncle/workshare for matching hash
+		for uncleIdx, uncle := range uncles {
+			if uncle.Hash() == workshareHash {
+				// Found the workshare
+				result := make(map[string]interface{})
+				result["workshare"] = uncle.RPCMarshalWorkObjectHeader(s.b.RpcVersion())
+				result["blockHash"] = currentBlock.Hash()
+				result["blockNumber"] = hexutil.Uint64(blockNum)
+				result["workshareIndex"] = hexutil.Uint(uncleIdx)
+
+				// Search FORWARD for the coinbase ETX (it's generated ~3-4 blocks later)
+				// The workshare hash is stored in the last 32 bytes of the ETX's Data field
+				for searchNum := blockNum + 1; searchNum <= blockNum+coinbaseSearchDepth && searchNum <= latestBlockNum; searchNum++ {
+					searchBlock, exists := blocksByNumber[searchNum]
+					if !exists {
+						// Need to fetch this block - it's ahead of where we found the workshare
+						searchBlock, _ = s.b.BlockByNumber(ctx, rpc.BlockNumber(searchNum))
+						if searchBlock == nil {
+							continue
+						}
+					}
+
+					for etxIdx, etx := range searchBlock.OutboundEtxs() {
+						if types.IsCoinBaseTx(etx) {
+							data := etx.Data()
+							// Check if the last 32 bytes match the workshare hash
+							if len(data) >= 32 {
+								etxWorkshareHash := common.BytesToHash(data[len(data)-32:])
+								if etxWorkshareHash == workshareHash {
+									result["coinbaseEtx"] = newRPCTransaction(etx, searchBlock.Hash(), searchBlock.NumberU64(s.b.NodeCtx()), uint64(etxIdx), searchBlock.BaseFee(), s.b.NodeLocation())
+									result["coinbaseEtxIndex"] = hexutil.Uint(etxIdx)
+									result["coinbaseBlockHash"] = searchBlock.Hash()
+									result["coinbaseBlockNumber"] = hexutil.Uint64(searchBlock.NumberU64(s.b.NodeCtx()))
+									result["coinbaseAddress"] = etx.To().Hex()
+									result["coinbaseValue"] = (*hexutil.Big)(etx.Value())
+									// Convert to decimal string with 18 decimal places
+									value := etx.Value()
+									if value != nil {
+										// Convert wei to decimal string (18 decimals)
+										divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+										wholePart := new(big.Int).Div(value, divisor)
+										remainder := new(big.Int).Mod(value, divisor)
+										// Format remainder with leading zeros (18 digits)
+										remainderStr := fmt.Sprintf("%018s", remainder.String())
+										// Trim trailing zeros for cleaner output
+										remainderStr = strings.TrimRight(remainderStr, "0")
+										if remainderStr == "" {
+											result["coinbaseValueDecimal"] = wholePart.String()
+										} else {
+											result["coinbaseValueDecimal"] = fmt.Sprintf("%s.%s", wholePart.String(), remainderStr)
+										}
+									}
+									return result, nil
+								}
+							}
+						}
+					}
+				}
+
+				// Return result even if coinbase ETX not found (might be too recent)
+				return result, nil
+			}
+		}
+
+		// Get the parent block
+		parentHash := currentBlock.ParentHash(s.b.NodeCtx())
+		if parentHash == (common.Hash{}) {
+			break
+		}
+
+		parentBlock := s.b.GetBlockByHash(parentHash)
+		if parentBlock == nil {
+			break
+		}
+
+		currentBlock = parentBlock
+	}
+
+	return nil, fmt.Errorf("workshare with hash %s not found within %d blocks", workshareHash.Hex(), maxSearchDepth)
+}
+
 // GetUncleByBlockNumberAndIndex returns the uncle block for the given block hash and index. When fullTx is true
 // all transactions in the block are returned in full detail, otherwise only the transaction hash is returned.
 func (s *PublicBlockChainQuaiAPI) GetUncleByBlockNumberAndIndex(ctx context.Context, blockNr rpc.BlockNumber, index hexutil.Uint) (map[string]interface{}, error) {
@@ -1587,12 +1693,21 @@ func (s *PublicBlockChainQuaiAPI) ReceiveWorkShare(ctx context.Context, workShar
 	return s.b.ReceiveWorkShare(workShare)
 }
 
-func (s *PublicBlockChainQuaiAPI) GetPendingHeader(ctx context.Context, powId types.PowID) (hexutil.Bytes, error) {
+func (s *PublicBlockChainQuaiAPI) GetPendingHeader(ctx context.Context, powId *types.PowID) (hexutil.Bytes, error) {
 	if !s.b.ProcessingState() {
 		return nil, errors.New("getPendingHeader call can only be made on chain processing the state")
 	}
+	effectivePowId := types.Progpow
+	if powId != nil {
+		effectivePowId = *powId
+		switch effectivePowId {
+		case types.Progpow, types.Kawpow, types.SHA_BCH, types.SHA_BTC, types.Scrypt:
+		default:
+			return nil, errors.New("unsupported powId for getPendingHeader")
+		}
+	}
 
-	pendingHeader, err := s.b.GetPendingHeader(powId, common.Address{}) // 0 is default progpow
+	pendingHeader, err := s.b.GetPendingHeader(effectivePowId, common.Address{})
 	if err != nil {
 		return nil, err
 	} else if pendingHeader == nil {
@@ -1600,6 +1715,24 @@ func (s *PublicBlockChainQuaiAPI) GetPendingHeader(ctx context.Context, powId ty
 	}
 	// Only keep the Header in the body
 	pendingHeaderForMining := pendingHeader.WithBody(pendingHeader.Header(), nil, nil, nil, nil, nil)
+	pendingHeaderForMining.WorkObjectHeader().SetAuxPow(nil)
+	if effectivePowId != types.Progpow {
+		auxTemplate := s.b.GetBestAuxTemplate(effectivePowId)
+		if s.b.NodeCtx() == common.ZONE_CTX && auxTemplate != nil {
+			coinbaseTransaction := types.NewAuxPowCoinbaseTx(effectivePowId, auxTemplate.Height(), auxTemplate.CoinbaseOut(), pendingHeaderForMining.SealHash(), auxTemplate.SignatureTime())
+			merkleRoot := types.CalculateMerkleRoot(effectivePowId, coinbaseTransaction, auxTemplate.MerkleBranch())
+
+			// Create a properly configured Ravencoin header for KAWPOW mining
+			auxHeader := types.NewBlockHeader(effectivePowId, int32(auxTemplate.Version()), auxTemplate.PrevHash(), merkleRoot, auxTemplate.SignatureTime(), auxTemplate.Bits(), 0, auxTemplate.Height())
+			// Dont have the actual hash of the block yet
+			auxPow := types.NewAuxPow(effectivePowId, auxHeader, auxTemplate.AuxPow2(), auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
+
+			// Update the auxpow in the best pending header
+			pendingHeaderForMining.WorkObjectHeader().SetAuxPow(auxPow)
+
+			s.b.AddPendingAuxPow(effectivePowId, pendingHeaderForMining.SealHash(), auxPow)
+		}
+	}
 	// Marshal the response.
 	protoWo, err := pendingHeaderForMining.ProtoEncode(types.PEtxObject)
 	if err != nil {

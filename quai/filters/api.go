@@ -1010,19 +1010,26 @@ func decodeTopic(s string) (common.Hash, error) {
 }
 
 // PendingHeader sends a notification each time a new pending header is created.
-func (api *PublicFilterAPI) PendingHeader(ctx context.Context, powId types.PowID) (*rpc.Subscription, error) {
+// If powId is not provided, defaults to Progpow.
+func (api *PublicFilterAPI) PendingHeader(ctx context.Context, powId *types.PowID) (*rpc.Subscription, error) {
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
 	}
 
-	rpcSub := notifier.CreateSubscription()
+	// Default to Progpow if not specified
+	effectivePowId := types.Progpow
+	if powId != nil {
+		effectivePowId = *powId
+	}
 
-	switch powId {
+	switch effectivePowId {
 	case types.Progpow, types.Kawpow, types.SHA_BCH, types.SHA_BTC, types.Scrypt:
 	default:
-		return &rpc.Subscription{}, fmt.Errorf("unsupported powId %d for pending header subscription", powId)
+		return &rpc.Subscription{}, fmt.Errorf("unsupported powId %d for pending header subscription", effectivePowId)
 	}
+
+	rpcSub := notifier.CreateSubscription()
 
 	go func() {
 		defer func() {
@@ -1053,29 +1060,28 @@ func (api *PublicFilterAPI) PendingHeader(ctx context.Context, powId types.PowID
 					// Marshal the header data
 					// Only keep the Header in the body
 					pendingHeaderForMining := b.WithBody(b.Header(), nil, nil, nil, nil, nil)
-
-					if powId == types.Progpow {
+					if effectivePowId == types.Progpow {
 						pendingHeaderForMining.WorkObjectHeader().SetAuxPow(nil)
 					} else {
-						auxTemplate := api.backend.GetBestAuxTemplate(powId)
+						auxTemplate := api.backend.GetBestAuxTemplate(effectivePowId)
 						// If we have a KAWPOW template, we need to create a proper Ravencoin header
-						switch powId {
+						switch effectivePowId {
 						case types.Kawpow, types.SHA_BTC, types.SHA_BCH, types.Scrypt:
 							// If we have an auxpow template, we need to create a proper Ravencoin header
 							if api.backend.NodeCtx() == common.ZONE_CTX && auxTemplate != nil {
 
-								coinbaseTransaction := types.NewAuxPowCoinbaseTx(powId, auxTemplate.Height(), auxTemplate.CoinbaseOut(), pendingHeaderForMining.SealHash(), auxTemplate.SignatureTime())
-								merkleRoot := types.CalculateMerkleRoot(powId, coinbaseTransaction, auxTemplate.MerkleBranch())
+								coinbaseTransaction := types.NewAuxPowCoinbaseTx(effectivePowId, auxTemplate.Height(), auxTemplate.CoinbaseOut(), pendingHeaderForMining.SealHash(), auxTemplate.SignatureTime())
+								merkleRoot := types.CalculateMerkleRoot(effectivePowId, coinbaseTransaction, auxTemplate.MerkleBranch())
 
 								// Create a properly configured Ravencoin header for KAWPOW mining
-								auxHeader := types.NewBlockHeader(powId, int32(auxTemplate.Version()), auxTemplate.PrevHash(), merkleRoot, auxTemplate.SignatureTime(), auxTemplate.Bits(), 0, auxTemplate.Height())
+								auxHeader := types.NewBlockHeader(effectivePowId, int32(auxTemplate.Version()), auxTemplate.PrevHash(), merkleRoot, auxTemplate.SignatureTime(), auxTemplate.Bits(), 0, auxTemplate.Height())
 								// Dont have the actual hash of the block yet
-								auxPow := types.NewAuxPow(powId, auxHeader, auxTemplate.AuxPow2(), auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
+								auxPow := types.NewAuxPow(effectivePowId, auxHeader, auxTemplate.AuxPow2(), auxTemplate.Sigs(), auxTemplate.MerkleBranch(), coinbaseTransaction)
 
 								// Update the auxpow in the best pending header
 								pendingHeaderForMining.WorkObjectHeader().SetAuxPow(auxPow)
 
-								api.backend.AddPendingAuxPow(powId, pendingHeaderForMining.SealHash(), auxPow)
+								api.backend.AddPendingAuxPow(effectivePowId, pendingHeaderForMining.SealHash(), auxPow)
 							} else {
 								return
 							}
@@ -1083,6 +1089,7 @@ func (api *PublicFilterAPI) PendingHeader(ctx context.Context, powId types.PowID
 							return
 						}
 					}
+
 					// Marshal the response.
 					protoWo, err := pendingHeaderForMining.ProtoEncode(types.PEtxObject)
 					if err != nil {

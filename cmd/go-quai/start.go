@@ -117,18 +117,26 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Optionally start stratum-like TCP server when enabled and a zone backend is available
+	// Optionally start stratum TCP servers when enabled and a zone backend is available
 	var stratumServer *stratum.Server
 	if viper.GetBool(utils.StratumEnabledFlag.Name) {
-		addr := viper.GetString(utils.StratumAddrFlag.Name)
 		if zoneBackend == nil {
 			log.Global.Warn("Stratum endpoint enabled but no processing zone backend found; skipping start")
 		} else {
-			stratumServer = stratum.NewServer(addr, zoneBackend)
+			stratumConfig := stratum.StratumConfig{
+				SHAAddr:    viper.GetString(utils.StratumSHAAddrFlag.Name),
+				ScryptAddr: viper.GetString(utils.StratumScryptAddrFlag.Name),
+				KawpowAddr: viper.GetString(utils.StratumKawpowAddrFlag.Name),
+			}
+			stratumServer = stratum.NewServerWithConfig(stratumConfig, zoneBackend)
 			if err := stratumServer.Start(); err != nil {
-				log.Global.WithField("error", err).Error("failed to start stratum endpoint")
+				log.Global.WithField("error", err).Error("failed to start stratum endpoints")
 			} else {
-				log.Global.WithField("addr", addr).Info("Stratum-like TCP endpoint started")
+				log.Global.WithFields(log.Fields{
+					"sha":    stratumConfig.SHAAddr,
+					"scrypt": stratumConfig.ScryptAddr,
+					"kawpow": stratumConfig.KawpowAddr,
+				}).Info("Stratum TCP endpoints started")
 			}
 		}
 	}
@@ -143,11 +151,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 		httpPort := viper.GetInt(utils.HTTPPortStartFlag.Name)
 		wsHost := viper.GetString(utils.WSListenAddrFlag.Name)
 		wsPort := viper.GetInt(utils.WSPortStartFlag.Name)
-		stratumAddr := viper.GetString(utils.StratumAddrFlag.Name)
+		stratumSHAAddr := viper.GetString(utils.StratumSHAAddrFlag.Name)
+		stratumScryptAddr := viper.GetString(utils.StratumScryptAddrFlag.Name)
+		stratumKawpowAddr := viper.GetString(utils.StratumKawpowAddrFlag.Name)
 
 		rpcURL := "http://" + httpHost + ":" + strconv.Itoa(httpPort)
 		wsURL := "ws://" + wsHost + ":" + strconv.Itoa(wsPort)
-		stratumURL := "stratum+tcp://" + stratumAddr
+		stratumSHAURL := "stratum+tcp://" + stratumSHAAddr
+		stratumScryptURL := "stratum+tcp://" + stratumScryptAddr
+		stratumKawpowURL := "stratum+tcp://" + stratumKawpowAddr
 
 		// Get location string
 		locationStr := "-"
@@ -157,16 +169,18 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 
 		dashboardServer = dashboard.New(dashboard.Config{
-			Addr:        dashboardAddr,
-			Stratum:     stratumServer,
-			Blockchain:  zoneBackend,
-			RPCAddr:     rpcURL,
-			WSAddr:      wsURL,
-			StratumAddr: stratumURL,
-			Version:     params.Version.Full(),
-			Network:     network,
-			Location:    locationStr,
-			ChainID:     9000, // TODO: get from chain config
+			Addr:              dashboardAddr,
+			Stratum:           stratumServer,
+			Blockchain:        zoneBackend,
+			RPCAddr:           rpcURL,
+			WSAddr:            wsURL,
+			StratumSHAAddr:    stratumSHAURL,
+			StratumScryptAddr: stratumScryptURL,
+			StratumKawpowAddr: stratumKawpowURL,
+			Version:           params.Version.Full(),
+			Network:           network,
+			Location:          locationStr,
+			ChainID:           9000, // TODO: get from chain config
 			// P2P and Node stats can be added here when interfaces are implemented
 		})
 		if err := dashboardServer.Start(); err != nil {

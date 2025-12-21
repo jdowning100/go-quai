@@ -2,6 +2,7 @@ package stratum
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,9 +16,12 @@ import (
 
 	"github.com/dominant-strategies/go-quai/cmd/utils"
 	"github.com/dominant-strategies/go-quai/common"
+	"github.com/dominant-strategies/go-quai/consensus/kawpow"
+	"github.com/dominant-strategies/go-quai/core"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/internal/quaiapi"
 	"github.com/dominant-strategies/go-quai/log"
+	"github.com/dominant-strategies/go-quai/params"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -35,22 +39,78 @@ func (randReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// StratumConfig holds configuration for the stratum server
+type StratumConfig struct {
+	SHAAddr    string // Address for SHA miners (e.g., ":3333")
+	ScryptAddr string // Address for Scrypt miners (e.g., ":4444")
+	KawpowAddr string // Address for Kawpow miners (e.g., ":5555")
+}
+
+// templateState tracks the last template sent for change detection
+type templateState struct {
+	sealHash   common.Hash // For SHA/Scrypt: header seal hash
+	parentHash common.Hash // For change detection (new block)
+	height     uint64      // Block height
+	quaiHeight int64       // Quai chain height (for kawpow stale detection)
+}
+
 // Stratum v1 server implementing subscribe/authorize/notify/submit using AuxPow from getPendingHeader.
 type Server struct {
-	addr    string
+	config  StratumConfig
 	backend quaiapi.Backend
-	ln      net.Listener
-	logger  *logrus.Logger
-	stats   *PoolStats
+	// Per-algorithm listeners
+	lnSHA    net.Listener
+	lnScrypt net.Listener
+	lnKawpow net.Listener
+	logger   *logrus.Logger
+	stats    *PoolStats
+	// kawpow engine for share verification
+	kawpowEngine *kawpow.Kawpow
+	// Template tracking for change detection (per algorithm)
+	templateMu         sync.RWMutex
+	lastTemplateSHA    *templateState
+	lastTemplateScrypt *templateState
+	lastTemplateKawpow *templateState
+	// Connected sessions for broadcasting (per algorithm)
+	sessionsMu     sync.RWMutex
+	sessionsSHA    map[*session]struct{}
+	sessionsScrypt map[*session]struct{}
+	sessionsKawpow map[*session]struct{}
 	// simple counters for debugging submission quality
 	submits      uint64
 	passPowCount uint64
 	passRelCount uint64
 }
 
+// NewServer creates a new stratum server with the given configuration.
+// For backward compatibility, if config has empty addresses, it uses the legacy single-port mode.
 func NewServer(addr string, backend quaiapi.Backend) *Server {
+	// Legacy single-port mode - default to SHA
+	return NewServerWithConfig(StratumConfig{SHAAddr: addr}, backend)
+}
+
+// NewServerWithConfig creates a new stratum server with per-algorithm ports
+func NewServerWithConfig(config StratumConfig, backend quaiapi.Backend) *Server {
 	logger := log.NewLogger("stratum.log", viper.GetString(utils.LogLevelFlag.Name), viper.GetInt(utils.LogSizeFlag.Name))
-	return &Server{addr: addr, backend: backend, logger: logger, stats: NewPoolStats()}
+	// Initialize kawpow engine for share verification
+	kawpowLogger := log.NewLogger("stratum-kawpow.log", viper.GetString(utils.LogLevelFlag.Name), viper.GetInt(utils.LogSizeFlag.Name))
+	kawpowConfig := params.PowConfig{
+		PowMode:        params.ModeNormal,
+		CachesInMem:    3,
+		CachesOnDisk:   0,
+		CachesLockMmap: false,
+	}
+	kawpowEngine := kawpow.New(kawpowConfig, nil, false, kawpowLogger)
+	return &Server{
+		config:         config,
+		backend:        backend,
+		logger:         logger,
+		stats:          NewPoolStats(),
+		kawpowEngine:   kawpowEngine,
+		sessionsSHA:    make(map[*session]struct{}),
+		sessionsScrypt: make(map[*session]struct{}),
+		sessionsKawpow: make(map[*session]struct{}),
+	}
 }
 
 // Stats returns the pool statistics tracker
@@ -58,32 +118,360 @@ func (s *Server) Stats() *PoolStats {
 	return s.stats
 }
 
+// registerSession adds a session to the appropriate algorithm's session map
+func (s *Server) registerSession(sess *session) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	switch sess.chain {
+	case "sha":
+		s.sessionsSHA[sess] = struct{}{}
+	case "scrypt":
+		s.sessionsScrypt[sess] = struct{}{}
+	case "kawpow":
+		s.sessionsKawpow[sess] = struct{}{}
+	}
+}
+
+// unregisterSession removes a session from the appropriate algorithm's session map
+func (s *Server) unregisterSession(sess *session) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	switch sess.chain {
+	case "sha":
+		delete(s.sessionsSHA, sess)
+	case "scrypt":
+		delete(s.sessionsScrypt, sess)
+	case "kawpow":
+		delete(s.sessionsKawpow, sess)
+	}
+}
+
 func (s *Server) Start() error {
 	if s.backend == nil {
 		return fmt.Errorf("nil backend")
 	}
-	ln, err := net.Listen("tcp", s.addr)
-	if err != nil {
-		return err
+
+	// Start SHA listener if configured
+	if s.config.SHAAddr != "" {
+		ln, err := net.Listen("tcp", s.config.SHAAddr)
+		if err != nil {
+			return fmt.Errorf("failed to start SHA listener on %s: %v", s.config.SHAAddr, err)
+		}
+		s.lnSHA = ln
+		s.logger.WithField("addr", s.config.SHAAddr).Info("SHA stratum listener started")
+		go s.acceptLoop(ln, "sha")
 	}
-	s.ln = ln
-	go s.acceptLoop()
+
+	// Start Scrypt listener if configured
+	if s.config.ScryptAddr != "" {
+		ln, err := net.Listen("tcp", s.config.ScryptAddr)
+		if err != nil {
+			return fmt.Errorf("failed to start Scrypt listener on %s: %v", s.config.ScryptAddr, err)
+		}
+		s.lnScrypt = ln
+		s.logger.WithField("addr", s.config.ScryptAddr).Info("Scrypt stratum listener started")
+		go s.acceptLoop(ln, "scrypt")
+	}
+
+	// Start Kawpow listener if configured
+	if s.config.KawpowAddr != "" {
+		ln, err := net.Listen("tcp", s.config.KawpowAddr)
+		if err != nil {
+			return fmt.Errorf("failed to start Kawpow listener on %s: %v", s.config.KawpowAddr, err)
+		}
+		s.lnKawpow = ln
+		s.logger.WithField("addr", s.config.KawpowAddr).Info("Kawpow stratum listener started")
+		go s.acceptLoop(ln, "kawpow")
+	}
+
+	// Start template polling loops for each algorithm (check every second)
+	if s.config.SHAAddr != "" {
+		go s.templatePollingLoop("sha")
+	}
+	if s.config.ScryptAddr != "" {
+		go s.templatePollingLoop("scrypt")
+	}
+	if s.config.KawpowAddr != "" {
+		go s.templatePollingLoop("kawpow")
+	}
+
+	// Start force broadcast loops to ensure miners always have work.
+	// Runs every 1 second (minimum frequency granularity) and checks each session's
+	// individual jobFrequency setting. Miners can configure their frequency via username:
+	// address.workername.frequency=X (1-10 seconds, supports decimals, default 5s)
+	if s.config.SHAAddr != "" {
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				s.forceBroadcastStale("sha")
+			}
+		}()
+	}
+	if s.config.ScryptAddr != "" {
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				s.forceBroadcastStale("scrypt")
+			}
+		}()
+	}
+	if s.config.KawpowAddr != "" {
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				s.forceBroadcastStale("kawpow")
+			}
+		}()
+	}
+
 	return nil
 }
+
+// templatePollingLoop polls for new templates and broadcasts to connected miners
+func (s *Server) templatePollingLoop(algorithm string) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		changed, clean := s.checkTemplateChanged(algorithm)
+		if changed {
+			s.broadcastJob(algorithm, clean)
+		}
+	}
+}
+
+// checkTemplateChanged checks if the template has changed for the given algorithm.
+// Returns (changed bool, clean bool) - clean is true if miners should abandon current work.
+func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
+	powID := powIDFromChain(algorithm)
+
+	// Get pending header (using a dummy address since we just need to check for changes)
+	pending, err := s.backend.GetPendingHeader(types.PowID(powID), common.Address{})
+	if err != nil || pending == nil || pending.WorkObjectHeader() == nil {
+		return false, false
+	}
+
+	header := pending.WorkObjectHeader()
+	newState := &templateState{
+		sealHash:   header.SealHash(),
+		parentHash: header.ParentHash(),
+		height:     header.NumberU64(),
+		quaiHeight: int64(pending.NumberU64(common.ZONE_CTX)),
+	}
+
+	s.templateMu.Lock()
+	defer s.templateMu.Unlock()
+
+	var lastState *templateState
+	switch algorithm {
+	case "sha":
+		lastState = s.lastTemplateSHA
+		s.lastTemplateSHA = newState
+	case "scrypt":
+		lastState = s.lastTemplateScrypt
+		s.lastTemplateScrypt = newState
+	case "kawpow":
+		lastState = s.lastTemplateKawpow
+		s.lastTemplateKawpow = newState
+	}
+
+	// First template - no change to broadcast (miners get job on authorize)
+	if lastState == nil {
+		return false, false
+	}
+
+	// Check for changes based on algorithm
+	switch algorithm {
+	case "sha", "scrypt":
+		// For SHA/Scrypt: check if parent hash or height changed
+		// Always use clean=true for SHA/Scrypt (simpler, matches pool behavior)
+		if lastState.parentHash != newState.parentHash {
+			s.logger.WithFields(log.Fields{
+				"algo":      algorithm,
+				"oldHeight": lastState.height,
+				"newHeight": newState.height,
+			}).Info("New block detected")
+			return true, true
+		}
+
+		if lastState.quaiHeight != newState.quaiHeight {
+			s.logger.WithFields(log.Fields{
+				"algo":          algorithm,
+				"oldQuaiHeight": lastState.quaiHeight,
+				"newQuaiHeight": newState.quaiHeight,
+			}).Info("QuaiHeight changed")
+			return true, true
+		}
+
+	case "kawpow":
+		// For Kawpow: check parent hash and quai height
+		if lastState.parentHash != newState.parentHash {
+			s.logger.WithFields(log.Fields{
+				"algo":      algorithm,
+				"oldHeight": lastState.height,
+				"newHeight": newState.height,
+			}).Info("New block detected")
+			return true, true
+		}
+		if lastState.quaiHeight != newState.quaiHeight {
+			s.logger.WithFields(log.Fields{
+				"algo":          algorithm,
+				"oldQuaiHeight": lastState.quaiHeight,
+				"newQuaiHeight": newState.quaiHeight,
+			}).Info("QuaiHeight changed")
+			return true, true
+		}
+		// Seal hash change without parent/quaiHeight change - template update, clean=false
+		if lastState.sealHash != newState.sealHash {
+			s.logger.WithFields(log.Fields{
+				"algo":   algorithm,
+				"height": newState.height,
+			}).Debug("Template updated (same block)")
+			return true, true // Kawpow: clean=false for same-block updates
+		}
+	}
+
+	return false, false
+}
+
+// broadcastJob sends a new job to all connected miners for the given algorithm
+func (s *Server) broadcastJob(algorithm string, clean bool) {
+	s.sessionsMu.RLock()
+	var sessions map[*session]struct{}
+	switch algorithm {
+	case "sha":
+		sessions = s.sessionsSHA
+	case "scrypt":
+		sessions = s.sessionsScrypt
+	case "kawpow":
+		sessions = s.sessionsKawpow
+	}
+	// Copy session list to avoid holding lock during broadcast
+	sessionList := make([]*session, 0, len(sessions))
+	for sess := range sessions {
+		if sess.authorized {
+			sessionList = append(sessionList, sess)
+		}
+	}
+	s.sessionsMu.RUnlock()
+
+	if len(sessionList) == 0 {
+		return
+	}
+
+	s.logger.WithFields(log.Fields{
+		"algo":   algorithm,
+		"miners": len(sessionList),
+		"clean":  clean,
+	}).Info("Broadcasting new job")
+
+	// Broadcast to all sessions
+	for _, sess := range sessionList {
+		go func(sess *session) {
+			if err := s.sendJobAndNotify(sess, clean); err != nil {
+				s.logger.WithFields(log.Fields{
+					"user":  sess.user,
+					"error": err,
+				}).Debug("Failed to broadcast job")
+			}
+		}(sess)
+	}
+}
+
+// forceBroadcastStale checks all sessions for an algorithm and force-broadcasts
+// the latest template to any session that hasn't received a job within its configured
+// jobFrequency. Each miner can configure their own frequency via username format:
+// address.workername.frequency=X (1-10 seconds, supports decimals, default 5s)
+func (s *Server) forceBroadcastStale(algorithm string) {
+	s.sessionsMu.RLock()
+	var sessions map[*session]struct{}
+	switch algorithm {
+	case "sha":
+		sessions = s.sessionsSHA
+	case "scrypt":
+		sessions = s.sessionsScrypt
+	case "kawpow":
+		sessions = s.sessionsKawpow
+	}
+	// Copy stale sessions to avoid holding lock during broadcast
+	staleSessions := make([]*session, 0)
+	now := time.Now()
+	for sess := range sessions {
+		if !sess.authorized {
+			continue
+		}
+		sess.mu.Lock()
+		timeSinceLastJob := now.Sub(sess.lastJobSent)
+		threshold := sess.jobFrequency
+		sess.mu.Unlock()
+		// Use per-session threshold (configured via username)
+		if timeSinceLastJob >= threshold {
+			staleSessions = append(staleSessions, sess)
+		}
+	}
+	s.sessionsMu.RUnlock()
+
+	if len(staleSessions) == 0 {
+		return
+	}
+
+	s.logger.WithFields(log.Fields{
+		"algo":   algorithm,
+		"miners": len(staleSessions),
+	}).Debug("Force broadcasting to stale sessions")
+
+	// Broadcast with clean=true to stale sessions
+	for _, sess := range staleSessions {
+		go func(sess *session) {
+			if err := s.sendJobAndNotify(sess, true); err != nil {
+				s.logger.WithFields(log.Fields{
+					"user":  sess.user,
+					"error": err,
+				}).Debug("Failed to force broadcast job")
+			}
+		}(sess)
+	}
+}
+
 func (s *Server) Stop() error {
-	if s.ln != nil {
-		return s.ln.Close()
+	var errs []error
+	if s.lnSHA != nil {
+		if err := s.lnSHA.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if s.lnScrypt != nil {
+		if err := s.lnScrypt.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if s.lnKawpow != nil {
+		if err := s.lnKawpow.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("errors stopping listeners: %v", errs)
 	}
 	return nil
 }
 
-func (s *Server) acceptLoop() {
+// acceptLoop accepts connections on a listener and assigns them the specified algorithm
+func (s *Server) acceptLoop(ln net.Listener, algorithm string) {
 	for {
-		conn, err := s.ln.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go s.handleConn(conn)
+		// Enable TCP keepalive to detect dead connections faster than OS default (2hrs)
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			_ = tcpConn.SetKeepAlive(true)
+			_ = tcpConn.SetKeepAlivePeriod(30 * time.Minute) // Probe every 30 min after idle
+		}
+		go s.handleConn(conn, algorithm)
 	}
 }
 
@@ -98,10 +486,18 @@ type stratumResp struct {
 	Error  interface{} `json:"error"`
 }
 
+// Default and bounds for job frequency (force broadcast interval)
+const (
+	defaultJobFrequency = 5 * time.Second
+	minJobFrequency     = 1 * time.Second
+	maxJobFrequency     = 10 * time.Second
+)
+
 type session struct {
 	conn       net.Conn
 	enc        *json.Encoder
 	dec        *json.Decoder
+	encMu      sync.Mutex // protects enc writes (broadcasts + responses can race)
 	authorized bool
 	user       string // payout address
 	workerName string // worker name (from user.workerName format)
@@ -128,6 +524,25 @@ type session struct {
 	// cleanup
 	done      chan struct{}
 	jobTicker *time.Ticker
+	// last job sent time for stale broadcast detection
+	lastJobSent time.Time
+	// jobFrequency controls how often force broadcasts are sent to this miner
+	// Configured via username: address.workername.frequency=X (1-10 seconds, supports decimals)
+	jobFrequency time.Duration
+	// jobSendMu serializes sendJobAndNotify calls to prevent concurrent job sends
+	// This avoids race conditions between post-submit job refresh, forceBroadcastStale, and broadcastJob
+	jobSendMu sync.Mutex
+}
+
+// sendJSON safely encodes and sends JSON to the miner (thread-safe).
+// Uses a 10-second write deadline to prevent goroutine buildup from slow/stalled clients.
+func (s *session) sendJSON(v interface{}) error {
+	s.encMu.Lock()
+	defer s.encMu.Unlock()
+	s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err := s.enc.Encode(v)
+	s.conn.SetWriteDeadline(time.Time{}) // clear deadline
+	return err
 }
 
 type job struct {
@@ -143,24 +558,28 @@ type job struct {
 	pending *types.WorkObject
 }
 
-func (s *Server) handleConn(c net.Conn) {
+// handleConn handles a stratum connection for a specific algorithm.
+// The algorithm is determined by which port the miner connected to.
+func (s *Server) handleConn(c net.Conn, algorithm string) {
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(60 * time.Second))
 	dec := json.NewDecoder(bufio.NewReader(c))
 	enc := json.NewEncoder(c)
 	sess := &session{
-		conn:       c,
-		enc:        enc,
-		dec:        dec,
-		jobs:       make(map[string]*job),
-		kawJobs:    make(map[string]*kawpowJob),
-		seenShares: make(map[string]struct{}),
-		seenOrder:  make([]string, 0, 1024),
-		done:       make(chan struct{}),
+		conn:         c,
+		enc:          enc,
+		dec:          dec,
+		chain:        algorithm, // Set algorithm from the port they connected to
+		jobs:         make(map[string]*job),
+		kawJobs:      make(map[string]*kawpowJob),
+		seenShares:   make(map[string]struct{}),
+		seenOrder:    make([]string, 0, 1024),
+		done:         make(chan struct{}),
+		jobFrequency: defaultJobFrequency, // Default 5 seconds, can be overridden via username
 	}
 
 	// Cleanup function for goroutines
 	defer func() {
+		s.unregisterSession(sess)
 		if sess.authorized && sess.user != "" {
 			s.stats.WorkerDisconnected(sess.user, sess.workerName)
 		}
@@ -170,7 +589,12 @@ func (s *Server) handleConn(c net.Conn) {
 		}
 	}()
 
+	// No read deadline - miners may go hours/days between shares with high workshare difficulty.
+	// Dead connections are detected via TCP keepalive or when writes fail.
+	// If explicit timeout is needed later, consider 24+ hours or implement ping/pong.
+
 	for {
+
 		var req stratumReq
 		if err := dec.Decode(&req); err != nil {
 			if err == io.EOF {
@@ -180,92 +604,117 @@ func (s *Server) handleConn(c net.Conn) {
 		}
 		switch req.Method {
 		case "mining.subscribe":
-			// result: [[subscriptions], extranonce1, extranonce2_size]
-			x1 := []byte{0x01, 0x01, 0x01, 0x01} // All 1s instead of random
-			sess.xnonce1 = append([]byte{}, x1...)
-			result := []interface{}{
-				[]interface{}{[]interface{}{"mining.notify", "1"}},
-				hex.EncodeToString(x1), // Will send "01010101"
-				8,                      // extranonce2_size (set to 8 per nerdqaxe++ expectations)
-			}
-			_ = enc.Encode(stratumResp{ID: req.ID, Result: result, Error: nil})
-		case "mining.extranonce.subscribe":
-			_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
-		case "mining.configure":
-			// Parse capabilities and options. Expect params: [capabilities(map), options(map)]
-			accepted := map[string]bool{}
-			maskHex := ""
-			if len(req.Params) >= 1 {
-				if caps, ok := req.Params[0].(map[string]interface{}); ok {
-					if vr, ok2 := caps["version-rolling"].(bool); ok2 && vr {
-						accepted["version-rolling"] = true
-					}
+			// Response differs by algorithm:
+			// - Kawpow: [nil, "00"] - extranonce not used (64-bit header nonce is sufficient)
+			// - SHA/Scrypt: [[subscriptions], extranonce1, extranonce2_size]
+			if sess.chain == "kawpow" {
+				// Kawpow doesn't use extranonce - the 64-bit header nonce provides enough search space
+				result := []interface{}{
+					nil,  // Session ID (not used for resuming)
+					"00", // extranonce1 - placeholder, not used
 				}
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: result, Error: nil})
+			} else {
+				// SHA/Scrypt use extranonce for coinbase modification
+				x1 := []byte{0x01, 0x01, 0x01, 0x01} // All 1s instead of random
+				sess.xnonce1 = append([]byte{}, x1...)
+				result := []interface{}{
+					[]interface{}{
+						[]interface{}{"mining.set_difficulty", "1"},
+						[]interface{}{"mining.notify", "1"},
+					},
+					hex.EncodeToString(x1), // Will send "01010101"
+					8,                      // extranonce2_size (set to 8 per nerdqaxe++ expectations)
+				}
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: result, Error: nil})
 			}
-			if len(req.Params) >= 2 {
-				if opts, ok := req.Params[1].(map[string]interface{}); ok {
-					if mv, ok2 := opts["version-rolling.mask"]; ok2 {
-						switch m := mv.(type) {
-						case string:
-							maskHex = strings.TrimPrefix(strings.ToLower(m), "0x")
-						case float64:
-							maskHex = fmt.Sprintf("%08x", uint32(m))
+		case "mining.extranonce.subscribe":
+			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
+		case "mining.configure":
+			// BIP 310: params = [extensions_array, params_map]
+			// extensions_array: ["version-rolling", "minimum-difficulty", ...]
+			// params_map: {"version-rolling.mask": "1fffe000", ...}
+			//
+			// Following alphapool's approach: always accept version-rolling with a fixed mask.
+			// This is simpler and compatible with all miners.
+			wantsVersionRolling := false
+
+			// Check if miner requested version-rolling
+			if len(req.Params) >= 1 {
+				// First param can be either:
+				// - array of strings (BIP 310 compliant): ["version-rolling", ...]
+				// - array of interfaces (some miners): [["version-rolling", {...}], ...]
+				switch extensions := req.Params[0].(type) {
+				case []interface{}:
+					for _, ext := range extensions {
+						if extStr, ok := ext.(string); ok && extStr == "version-rolling" {
+							wantsVersionRolling = true
+							break
+						}
+						// Some miners send nested arrays like [["version-rolling", params]]
+						if extArr, ok := ext.([]interface{}); ok && len(extArr) > 0 {
+							if extStr, ok := extArr[0].(string); ok && extStr == "version-rolling" {
+								wantsVersionRolling = true
+								break
+							}
 						}
 					}
 				}
 			}
-			// Default mask if not provided by miner
-			if maskHex == "" && accepted["version-rolling"] {
-				maskHex = "1fffe000" // High 8 bits only
-			}
 
-			if true {
-				if v, err := strconv.ParseUint(maskHex, 16, 32); err == nil {
-					sess.versionRolling = true
-					sess.versionMask = uint32(v)
-					s.logger.WithField("mask", fmt.Sprintf("0x%08x", sess.versionMask)).Info("VERSION-ROLLING enabled")
-				} else {
-					s.logger.WithFields(log.Fields{"mask": maskHex, "error": err}).Warn("VERSION-ROLLING mask parse error")
-				}
-			}
-			// Build configure response object per Stratum v1 (map of accepted features)
+			// Build response - always indicate support for version-rolling if requested
 			resp := map[string]interface{}{}
-			if accepted["version-rolling"] {
+			if wantsVersionRolling {
+				sess.versionRolling = true
+				sess.versionMask = 0x1fffe000 // Standard mask (bits 13-28)
 				resp["version-rolling"] = true
 				resp["version-rolling.mask"] = fmt.Sprintf("%08x", sess.versionMask)
+				resp["version-rolling.min-bit-count"] = 0
+				s.logger.WithField("mask", fmt.Sprintf("0x%08x", sess.versionMask)).Info("VERSION-ROLLING enabled")
 			}
-			_ = enc.Encode(stratumResp{ID: req.ID, Result: resp, Error: nil})
-			// Optionally send mining.set_version_mask for miners expecting it
+			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: resp, Error: nil})
+
+			// Send mining.set_version_mask for miners that expect it after configure
 			if sess.versionRolling {
 				note := map[string]interface{}{"id": nil, "method": "mining.set_version_mask", "params": []interface{}{fmt.Sprintf("%08x", sess.versionMask)}}
-				_ = sess.enc.Encode(note)
+				_ = sess.sendJSON(note)
 			}
 		case "mining.authorize":
 			if len(req.Params) >= 1 {
 				if u, ok := req.Params[0].(string); ok {
-					// Parse user.workerName format
-					if parts := strings.SplitN(u, ".", 2); len(parts) == 2 {
-						sess.user = parts[0]
-						sess.workerName = parts[1]
-					} else {
-						sess.user = u
-						sess.workerName = "default"
-					}
+					// Parse username format: address.workername.frequency=X
+					// Examples:
+					//   0x1234...          -> user=0x1234..., worker=default, freq=5s
+					//   0x1234....rig1     -> user=0x1234..., worker=rig1, freq=5s
+					//   0x1234....rig1.frequency=2.5 -> user=0x1234..., worker=rig1, freq=2.5s
+					sess.user, sess.workerName, sess.jobFrequency = parseUsername(u)
 				}
 			}
-			if len(req.Params) >= 2 {
-				if p, ok := req.Params[1].(string); ok {
-					sess.chain = strings.ToLower(p)
-				}
+			// Validate that the address is internal (belongs to this zone)
+			address := common.HexToAddress(sess.user, s.backend.NodeLocation())
+			if _, err := address.InternalAddress(); err != nil {
+				s.logger.WithFields(log.Fields{
+					"user":  sess.user,
+					"error": err,
+				}).Warn("miner address is not internal to this zone")
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: "address is not internal to this zone"})
+				continue
 			}
-			if sess.chain == "" {
-				sess.chain = "sha"
-			}
+			// Algorithm is determined by which port the miner connected to (set in handleConn)
+			// Password field is ignored for algorithm selection
 			sess.authorized = true
-			s.logger.WithFields(log.Fields{"user": sess.user, "chain": sess.chain, "powID": powIDFromChain(sess.chain)}).Info("miner authorized")
-			_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
-			// Send a fresh job with miner difficulty based on SHA workshare diff
-			if err := s.sendJobAndNotify(sess); err != nil {
+			s.registerSession(sess)                                         // Register for broadcasts
+			s.stats.WorkerConnected(sess.user, sess.workerName, sess.chain) // Track worker in stats
+			s.logger.WithFields(log.Fields{
+				"user":         sess.user,
+				"worker":       sess.workerName,
+				"chain":        sess.chain,
+				"powID":        powIDFromChain(sess.chain),
+				"jobFrequency": sess.jobFrequency.Seconds(),
+			}).Info("miner authorized")
+			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
+			// Send a fresh job with miner difficulty based on workshare diff
+			if err := s.sendJobAndNotify(sess, true); err != nil {
 				s.logger.WithField("error", err).Error("makeJob error")
 				// Keep trying to send a job every few seconds if it fails
 				go func() {
@@ -274,43 +723,26 @@ func (s *Server) handleConn(c net.Conn) {
 						case <-sess.done:
 							return
 						case <-time.After(2 * time.Second):
-							if sess.job != nil {
-								break // job was created successfully
+							if sess.job != nil || sess.kawJob != nil {
+								return // job was created successfully
 							}
 							s.logger.WithField("attempt", i+1).Info("retrying makeJob")
-							if err := s.sendJobAndNotify(sess); err == nil {
+							if err := s.sendJobAndNotify(sess, true); err == nil {
 								s.logger.Info("makeJob retry successful")
-								break
+								return
 							}
 						}
 					}
 				}()
 			}
-
-			// Start periodic job refresh (every second)
-			sess.jobTicker = time.NewTicker(1 * time.Second)
-			go func() {
-				for {
-					select {
-					case <-sess.done:
-						return
-					case <-sess.jobTicker.C:
-						if sess.authorized {
-							if err := s.sendJobAndNotify(sess); err != nil {
-								s.logger.WithField("error", err).Error("periodic job refresh failed")
-							} else {
-								s.logger.WithField("user", sess.user).Debug("sent periodic job refresh")
-							}
-						}
-					}
-				}
-			}()
+			// Note: Job updates are now handled by the central template polling loop
+			// started in Server.Start(), not per-session tickers
 		case "mining.submit":
 			// Kawpow uses different submit format: [worker, job_id, nonce, header_hash, mix_hash]
 			// SHA/Scrypt uses: [worker, job_id, ex2, ntime, nonce, version_bits?]
 			if powIDFromChain(sess.chain) == types.Kawpow {
 				if len(req.Params) < 5 {
-					_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: "bad kawpow params"})
+					_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: "bad kawpow params"})
 					continue
 				}
 				// Kawpow params: [worker, job_id, nonce, header_hash, mix_hash]
@@ -324,26 +756,29 @@ func (s *Server) handleConn(c net.Conn) {
 				sess.mu.Unlock()
 				if !ok {
 					s.logger.WithFields(log.Fields{"jobID": jobID, "known": len(sess.kawJobs)}).Error("unknown kawpow jobID")
-					_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: "nojob"})
+					s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, true) // stale share
+					_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: "nojob"})
 					continue
 				}
 
 				// Submit kawpow share
 				if err := s.submitKawpowShare(sess, kawJob, nonceHex, headerHashHex, mixHashHex); err != nil {
-					_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
+					s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, false) // invalid share
+					_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
 				} else {
+					s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, true, false) // valid share
 					s.logger.WithFields(log.Fields{"addr": sess.user, "nonce": nonceHex, "mixHash": mixHashHex}).Info("kawpow submit accepted")
 					sess.mu.Lock()
 					delete(sess.kawJobs, jobID)
 					sess.mu.Unlock()
-					_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
+					_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
 					// Send fresh job
 					go func() {
 						select {
 						case <-sess.done:
 							return
 						default:
-							if err := s.sendJobAndNotify(sess); err != nil {
+							if err := s.sendJobAndNotify(sess, true); err != nil {
 								s.logger.WithField("error", err).Error("failed to send new kawpow job")
 							}
 						}
@@ -354,7 +789,7 @@ func (s *Server) handleConn(c net.Conn) {
 
 			// SHA/Scrypt submit handling
 			if len(req.Params) < 5 {
-				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: "bad params"})
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: "bad params"})
 				continue
 			}
 			// params: [user, job_id, ex2, ntime, nonce, version_bits (optional)]
@@ -371,7 +806,7 @@ func (s *Server) handleConn(c net.Conn) {
 			j, ok := sess.jobs[jobID]
 			sess.mu.Unlock()
 			if !ok {
-				sess.enc.Encode(stratumResp{
+				sess.sendJSON(stratumResp{
 					ID:     req.ID,
 					Result: false,
 					Error:  fmt.Errorf("no such jobID %s", jobID).Error(),
@@ -390,13 +825,13 @@ func (s *Server) handleConn(c net.Conn) {
 				sess.mu.Unlock()
 				s.logger.WithFields(log.Fields{"jobID": jobID, "known": known}).Error("unknown or stale jobID")
 				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, true) // stale share
-				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: "nojob"})
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: "nojob"})
 				continue
 			}
 			// apply nonce into AuxPow header and submit as workshare
 			if err := s.submitAsWorkShare(sess, ex2hex, ntimeHex, nonceHex, versionBits); err != nil {
 				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, false, false) // invalid share
-				_ = enc.Encode(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: err.Error()})
 			} else {
 				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.difficulty, true, false) // valid share
 				s.logger.WithFields(log.Fields{"addr": sess.user, "chain": sess.chain, "nonce": nonceHex}).Info("submit accepted")
@@ -404,32 +839,39 @@ func (s *Server) handleConn(c net.Conn) {
 				sess.mu.Lock()
 				delete(sess.jobs, jobID)
 				sess.mu.Unlock()
-				_ = enc.Encode(stratumResp{ID: req.ID, Result: true, Error: nil})
+				_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
 				// Send a fresh job after successful workshare to keep miner on latest work
 				go func() {
 					select {
 					case <-sess.done:
 						return
 					default:
-						if err := s.sendJobAndNotify(sess); err != nil {
+						if err := s.sendJobAndNotify(sess, true); err != nil {
 							s.logger.WithField("error", err).Error("failed to send new job after workshare")
 						}
 					}
 				}()
 			}
 		default:
-			_ = enc.Encode(stratumResp{ID: req.ID, Result: nil, Error: nil})
+			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: nil, Error: nil})
 		}
 	}
 }
 
 // sendJobAndNotify creates a new job, sets miner difficulty using SHA workshare diff,
 // and sends set_difficulty followed by mining.notify.
-func (s *Server) sendJobAndNotify(sess *session) error {
+// The clean parameter indicates whether the miner should abandon current work (new block).
+// This function is serialized per-session via jobSendMu to prevent race conditions
+// between post-submit job refresh, forceBroadcastStale, and broadcastJob.
+func (s *Server) sendJobAndNotify(sess *session, clean bool) error {
+	// Serialize job sends per session to avoid concurrent job sends
+	sess.jobSendMu.Lock()
+	defer sess.jobSendMu.Unlock()
+
 	// Kawpow uses a different stratum format
 	if powIDFromChain(sess.chain) == types.Kawpow {
 		s.logger.WithField("chain", sess.chain).Debug("routing to kawpow stratum")
-		return s.sendKawpowJob(sess)
+		return s.sendKawpowJob(sess, clean)
 	}
 	s.logger.WithField("chain", sess.chain).Debug("routing to SHA/Scrypt stratum")
 
@@ -445,9 +887,9 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 		sess.jobs = make(map[string]*job)
 	}
 	sess.jobs[j.id] = j
-	// Maintain a small history to allow a few stale shares; drop oldest beyond 16
+	// Maintain job history to allow stale shares; keep 32 jobs for solo mining
 	sess.jobHistory = append(sess.jobHistory, j.id)
-	if len(sess.jobHistory) > 16 {
+	if len(sess.jobHistory) > 32 {
 		old := sess.jobHistory[0]
 		sess.jobHistory = sess.jobHistory[1:]
 		delete(sess.jobs, old)
@@ -455,22 +897,24 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 	sess.mu.Unlock()
 	s.logger.WithFields(log.Fields{"jobID": j.id, "chain": sess.chain}).Info("notify job")
 
-	// Compute stratum difficulty. Two mappings are common:
-	// 1) Exact mapping against Bitcoin diff1 target: D = diff1 * ShaDiff / maxHash (minerTarget == workShareTarget)
-	// 2) Pool/alt mapping used by some miners/pools: D = ShaDiff / 65536 (assumes diff1' := maxHash >> 32)
-	// For now we use (2) to keep miner share rates sane without needing explicit diff1 constants.
+	// Stratum difficulty mapping:
+	// - SHA256: stratumDiff = workshareDiff / 2^32 (diff1 = 4294967296 hashes)
+	// - Scrypt: stratumDiff = workshareDiff / 2^16 (diff1 = 65536 hashes)
+	// See alphapool stratum_v1.go:31-35 and miningcore BitcoinConstants.cs:61
+	const (
+		sha256Diff1 = 4294967296.0 // 2^32
+		scryptDiff1 = 65536.0      // 2^16
+	)
 	d := 1e-10 // fallback
 	switch powIDFromChain(sess.chain) {
 	case types.SHA_BTC, types.SHA_BCH:
 		if j.pending != nil && j.pending.WorkObjectHeader() != nil && j.pending.WorkObjectHeader().ShaDiffAndCount() != nil && j.pending.WorkObjectHeader().ShaDiffAndCount().Difficulty() != nil {
 			sd := j.pending.WorkObjectHeader().ShaDiffAndCount().Difficulty()
-			// Map Quai workshare difficulty to Stratum difficulty using alt mapping D = diff/65536
-			// Use big.Float to avoid overflow and convert to float64 for the Stratum call
-			diffF, _ := new(big.Float).Quo(new(big.Float).SetInt(sd), big.NewFloat(2e32)).Float64()
+			// stratumDiff = workshareDiff / 2^32
+			diffF, _ := new(big.Float).Quo(new(big.Float).SetInt(sd), big.NewFloat(sha256Diff1)).Float64()
 			if diffF <= 0 {
 				diffF = d
 			}
-			// Protect concurrent writes to session fields
 			sess.mu.Lock()
 			sess.difficulty = diffF
 			sess.mu.Unlock()
@@ -482,8 +926,8 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 	case types.Scrypt:
 		if j.pending != nil && j.pending.WorkObjectHeader() != nil && j.pending.WorkObjectHeader().ScryptDiffAndCount() != nil && j.pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty() != nil {
 			sd := j.pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty()
-			// Classic Scrypt pool behavior: Stratum difficulty D = sd / 65536
-			diffF, _ := new(big.Float).Quo(new(big.Float).SetInt(sd), big.NewFloat(65536)).Float64()
+			// stratumDiff = workshareDiff / 2^16
+			diffF, _ := new(big.Float).Quo(new(big.Float).SetInt(sd), big.NewFloat(scryptDiff1)).Float64()
 			if diffF <= 0 {
 				diffF = d
 			}
@@ -494,23 +938,8 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 		} else {
 			s.logger.WithField("fallback", d).Debug("sendJobAndNotify: No Scrypt diff available, using fallback")
 		}
-	case types.Kawpow:
-		if j.pending != nil && j.pending.WorkObjectHeader() != nil && j.pending.WorkObjectHeader().KawpowDifficulty() != nil {
-			kd := j.pending.WorkObjectHeader().KawpowDifficulty()
-			// Kawpow difficulty mapping similar to SHA
-			diffF, _ := new(big.Float).Quo(new(big.Float).SetInt(kd), big.NewFloat(2e32)).Float64()
-			if diffF <= 0 {
-				diffF = d
-			}
-			sess.mu.Lock()
-			sess.difficulty = diffF
-			sess.mu.Unlock()
-			s.logger.WithFields(log.Fields{"KawpowDiff": kd.String(), "minerDiff": diffF}).Debug("sendJobAndNotify Kawpow diff")
-		} else {
-			s.logger.WithField("fallback", d).Debug("sendJobAndNotify: No Kawpow diff available, using fallback")
-		}
 	default:
-		// keep fallback for non-SHA donor algos
+		// Kawpow uses sendKawpowJob() which doesn't use mining.set_difficulty
 		s.logger.WithFields(log.Fields{"chain": sess.chain, "fallback": d}).Debug("sendJobAndNotify: Non-SHA/Scrypt chain, using fallback")
 	}
 
@@ -520,19 +949,25 @@ func (s *Server) sendJobAndNotify(sess *session) error {
 	sess.mu.Unlock()
 	s.logger.WithField("difficulty", minerDiff).Debug("Sending mining.set_difficulty to miner")
 	diffNote := map[string]interface{}{"id": nil, "method": "mining.set_difficulty", "params": []interface{}{minerDiff}}
-	_ = sess.enc.Encode(diffNote)
+	_ = sess.sendJSON(diffNote)
 
-	params := []interface{}{j.id, j.prevHashLE, j.coinb1, j.coinb2, j.merkleBranch, fmt.Sprintf("%08x", j.version), fmt.Sprintf("%08x", j.nBits), fmt.Sprintf("%08x", j.nTime), true}
+	params := []interface{}{j.id, j.prevHashLE, j.coinb1, j.coinb2, j.merkleBranch, fmt.Sprintf("%08x", j.version), fmt.Sprintf("%08x", j.nBits), fmt.Sprintf("%08x", j.nTime), clean}
 
 	note := map[string]interface{}{"id": nil, "method": "mining.notify", "params": params}
 
-	return sess.enc.Encode(note)
+	err = sess.sendJSON(note)
+	if err == nil {
+		sess.mu.Lock()
+		sess.lastJobSent = time.Now()
+		sess.mu.Unlock()
+	}
+	return err
 }
 
 // sendKawpowJob creates and sends a kawpow-specific job to the miner.
 // Kawpow stratum notify format: [job_id, header_hash, seed_hash, target, clean, height, bits]
-func (s *Server) sendKawpowJob(sess *session) error {
-	address := common.HexToAddress(sess.user, common.Location{0, 0})
+func (s *Server) sendKawpowJob(sess *session, clean bool) error {
+	address := common.HexToAddress(sess.user, s.backend.NodeLocation())
 	pending, err := s.backend.GetPendingHeader(types.Kawpow, address)
 	if err != nil || pending == nil || pending.WorkObjectHeader() == nil {
 		if err == nil {
@@ -553,24 +988,37 @@ func (s *Server) sendKawpowJob(sess *session) error {
 	// Get kawpow difficulty and convert to target
 	var targetHex string
 	if pending.WorkObjectHeader().KawpowDifficulty() != nil {
-		kawDiff := pending.WorkObjectHeader().KawpowDifficulty()
-		targetHex = difficultyToTarget(kawDiff)
-		s.logger.WithFields(log.Fields{"KawpowDiff": kawDiff.String(), "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job params")
+		kawpowDiff := core.CalculateKawpowShareDiff(pending.WorkObjectHeader())
+		targetHex = common.GetTargetInHex(kawpowDiff)
+		s.logger.WithFields(log.Fields{"KawpowDiff": kawpowDiff.String(), "target": targetHex, "height": height, "epoch": epoch}).Debug("kawpow job params")
 	} else {
 		// Fallback to max target
 		targetHex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 		s.logger.Warn("No kawpow difficulty available, using max target")
 	}
 
-	// Get nBits from AuxPow header if available
+	// Get nBits and header hash from AuxPow header
+	// For kawpow, the header hash is the double SHA256 of the Ravencoin-style header
+	// (version, prevHash, merkleRoot, time, bits, height) - excludes nonce and mixhash
 	var nBits uint32
-	if pending.WorkObjectHeader().AuxPow() != nil && pending.WorkObjectHeader().AuxPow().Header() != nil {
-		nBits = pending.WorkObjectHeader().AuxPow().Header().Bits()
+	var headerHash string
+	auxPowHeader := pending.WorkObjectHeader().AuxPow().Header()
+	if auxPowHeader != nil {
+		nBits = auxPowHeader.Bits()
+		// SealHash() returns GetKAWPOWHeaderHash() for RavencoinBlockHeader
+		// which is the double SHA256 of the 80-byte header input fields
+		sealHash := auxPowHeader.SealHash()
+		// Reverse bytes for stratum (miners expect little-endian)
+		// See alphapool blocks.go:504-507
+		reversed := make([]byte, 32)
+		for i := 0; i < 32; i++ {
+			reversed[i] = sealHash[31-i]
+		}
+		headerHash = hex.EncodeToString(reversed)
+	} else {
+		s.logger.Error("AuxPow header is nil for kawpow job")
+		return fmt.Errorf("AuxPow header is nil")
 	}
-
-	// Calculate header hash for kawpow (keccak256 of header without nonce/mixhash)
-	// For kawpow, we need to create the header hash that miners will work on
-	headerHash := calculateKawpowHeaderHash(pending.SealHash().Bytes())
 
 	// Create kawpow job
 	sess.mu.Lock()
@@ -589,9 +1037,9 @@ func (s *Server) sendKawpowJob(sess *session) error {
 	sess.kawJob = kawJob
 	sess.kawJobs[jobID] = kawJob
 
-	// Maintain job history (drop oldest beyond 16)
+	// Maintain job history to allow stale shares; keep 32 jobs for solo mining
 	sess.jobHistory = append(sess.jobHistory, jobID)
-	if len(sess.jobHistory) > 16 {
+	if len(sess.jobHistory) > 32 {
 		old := sess.jobHistory[0]
 		sess.jobHistory = sess.jobHistory[1:]
 		delete(sess.kawJobs, old)
@@ -602,27 +1050,33 @@ func (s *Server) sendKawpowJob(sess *session) error {
 
 	// Send set_target for kawpow miners (some expect this)
 	targetNote := map[string]interface{}{"id": nil, "method": "mining.set_target", "params": []interface{}{targetHex}}
-	_ = sess.enc.Encode(targetNote)
+	_ = sess.sendJSON(targetNote)
 
 	// Kawpow mining.notify format: [job_id, header_hash, seed_hash, target, clean, height, bits]
-	// Note: height is sent as hex string, bits as hex string
+	// Note: height is sent as integer (not hex), bits as hex string
 	params := []interface{}{
 		jobID,
 		headerHash,
 		seedHash,
 		targetHex,
-		true, // clean_jobs
-		fmt.Sprintf("%x", height),
+		clean,  // clean_jobs - true when new block, false for same-block updates
+		height, // Block height as integer (miner uses .asInt64())
 		fmt.Sprintf("%08x", nBits),
 	}
 
 	note := map[string]interface{}{"id": nil, "method": "mining.notify", "params": params}
-	return sess.enc.Encode(note)
+	err = sess.sendJSON(note)
+	if err == nil {
+		sess.mu.Lock()
+		sess.lastJobSent = time.Now()
+		sess.mu.Unlock()
+	}
+	return err
 }
 
 func (s *Server) makeJob(sess *session) (*job, error) {
 	powID := powIDFromChain(sess.chain)
-	address := common.HexToAddress(sess.user, common.Location{0, 0})
+	address := common.HexToAddress(sess.user, s.backend.NodeLocation())
 	pending, err := s.backend.GetPendingHeader(types.PowID(powID), address)
 
 	if err != nil || pending == nil || pending.WorkObjectHeader() == nil || pending.WorkObjectHeader().AuxPow() == nil {
@@ -777,8 +1231,8 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 		workShareTarget = new(big.Int).Div(common.Big2e256, pending.WorkObjectHeader().ScryptDiffAndCount().Difficulty())
 	case types.Kawpow:
 		// fmt.Printf("[stratum] pow=Kawpow, powHashBigInt=%s, difficulty=%s\n", powHashBigInt.String(),
-		// 	pending.WorkObjectHeader().KawpowDifficulty())
-		workShareTarget = new(big.Int).Div(common.Big2e256, pending.WorkObjectHeader().KawpowDifficulty())
+		kawpowShareTarget := core.CalculateKawpowShareDiff(pending.WorkObjectHeader())
+		workShareTarget = new(big.Int).Div(common.Big2e256, kawpowShareTarget)
 	default:
 		// SHA_BTC, SHA_BCH
 		// fmt.Printf("[stratum] pow=SHA, powHashBigInt=%s, difficulty=%s, count=%s\n", powHashBigInt.String(),
@@ -852,7 +1306,8 @@ func (s *Server) submitAsWorkShare(sess *session, ex2hex, ntimeHex, nonceHex, ve
 
 // submitKawpowShare handles kawpow share submissions
 // Kawpow submit params: [worker, job_id, nonce, header_hash, mix_hash]
-func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, headerHashHex, mixHashHex string) error {
+// Note: headerHashHex from miner is validated against kawJob.headerHash but the job's hash is used for computation
+func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, _ /* headerHashHex */, mixHashHex string) error {
 	if kawJob == nil || kawJob.pending == nil {
 		return fmt.Errorf("no kawpow job")
 	}
@@ -863,58 +1318,72 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, h
 	}
 
 	// Parse nonce (8 bytes for kawpow)
+	nonceHex = strings.TrimPrefix(nonceHex, "0x")
 	nonce, err := strconv.ParseUint(nonceHex, 16, 64)
 	if err != nil {
 		return fmt.Errorf("invalid nonce: %v", err)
 	}
 
 	// Parse mix hash (32 bytes)
-	mixHash, err := hex.DecodeString(mixHashHex)
-	if err != nil || len(mixHash) != 32 {
-		return fmt.Errorf("invalid mix hash")
+	mixHashHex = strings.TrimPrefix(mixHashHex, "0x")
+	mixHashBytes, err := hex.DecodeString(mixHashHex)
+	if err != nil || len(mixHashBytes) != 32 {
+		return fmt.Errorf("invalid mix hash: length=%d", len(mixHashBytes))
 	}
 
-	// Get the target from the job
-	targetHex := kawJob.target
-	if targetHex == "" {
-		return fmt.Errorf("no target in job")
+	// Parse header hash from job (this is the seal hash used for kawpow input)
+	headerHashBytes, err := hex.DecodeString(kawJob.headerHash)
+	if err != nil || len(headerHashBytes) != 32 {
+		return fmt.Errorf("invalid header hash in job: %v", err)
+	}
+	kawpowHeaderHash := common.BytesToHash(headerHashBytes)
+
+	// Get block height for epoch calculation
+	blockNumber := kawJob.height
+
+	// Compute Kawpow hash using the engine's VerifyKawpowShare
+	// This properly uses the DAG to compute the real mixHash and powHash
+	calculatedMixHash, powHash, err := s.kawpowEngine.VerifyKawpowShare(kawpowHeaderHash, nonce, blockNumber)
+	if err != nil {
+		return fmt.Errorf("failed to compute kawpow hash: %v", err)
 	}
 
-	// For kawpow verification, we need to check if the submitted hash meets the target
-	// The miner sends the header_hash which should match what we sent in the job
-	if headerHashHex != kawJob.headerHash {
+	// Miner submits mixhash in big-endian, but VerifyKawpowShare returns little-endian
+	// Reverse the miner's mixhash to little-endian for comparison
+	mixHashLE := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		mixHashLE[i] = mixHashBytes[31-i]
+	}
+	submittedMixHash := common.BytesToHash(mixHashLE)
+
+	// Verify the mix hash matches what the miner submitted
+	if !bytes.Equal(calculatedMixHash.Bytes(), submittedMixHash.Bytes()) {
 		s.logger.WithFields(log.Fields{
-			"expected": kawJob.headerHash,
-			"got":      headerHashHex,
-		}).Warn("header hash mismatch")
-		// Allow mismatched header hash for now - some miners may compute it differently
+			"calculated": hex.EncodeToString(calculatedMixHash.Bytes()),
+			"submitted":  hex.EncodeToString(submittedMixHash.Bytes()),
+		}).Error("kawpow mixhash mismatch")
+		return fmt.Errorf("mixhash mismatch: calculated %x, submitted %x",
+			calculatedMixHash.Bytes(), submittedMixHash.Bytes())
 	}
 
-	// Get workshare target from difficulty
-	var workShareTarget *big.Int
-	if pending.WorkObjectHeader().KawpowDifficulty() != nil {
-		workShareTarget = new(big.Int).Div(common.Big2e256, pending.WorkObjectHeader().KawpowDifficulty())
-	} else {
-		return fmt.Errorf("no kawpow difficulty")
-	}
+	// Get workshare target from the pending header
+	kawpowShareDiff := core.CalculateKawpowShareDiff(pending.WorkObjectHeader())
+	workShareTarget := new(big.Int).Div(common.Big2e256, kawpowShareDiff)
 
-	// For kawpow, the final hash is computed from the header hash, nonce, and DAG
-	// The miner provides the mix_hash which is used to verify the computation
-	// We need to verify the share meets the target
+	// Convert pow hash to big.Int for comparison
+	powHashInt := new(big.Int).SetBytes(powHash.Bytes())
 
-	// Create a pseudo-hash from the mix hash for verification
-	// In a full implementation, we would run kawpow verification here
-	// For now, we trust the miner's mix_hash and check it against target
-	mixHashInt := new(big.Int).SetBytes(mixHash)
-
-	// Check if mix hash meets target (simplified verification)
-	// Real kawpow verification would re-compute the hash using the DAG
-	if mixHashInt.Cmp(workShareTarget) > 0 {
+	// Check if pow hash meets workshare target (hash must be <= target)
+	if powHashInt.Cmp(workShareTarget) > 0 {
+		s.logger.WithFields(log.Fields{
+			"powHash": hex.EncodeToString(powHash.Bytes()),
+			"target":  workShareTarget.String(),
+		}).Debug("share did not meet workshare target")
 		return fmt.Errorf("share did not meet target")
 	}
 
-	// LRU de-dup
-	shareKey := fmt.Sprintf("%s:%s:%s", kawJob.id, nonceHex, mixHashHex)
+	// LRU de-dup using pow hash
+	shareKey := hex.EncodeToString(powHash.Bytes())
 	sess.mu.Lock()
 	if _, seen := sess.seenShares[shareKey]; seen {
 		sess.mu.Unlock()
@@ -930,20 +1399,35 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, h
 	}
 	sess.mu.Unlock()
 
-	// Set the nonce and mix hash on the pending header
-	// Note: This requires the WorkObject to support kawpow nonce/mixhash
-	pending.WorkObjectHeader().SetNonce(types.EncodeNonce(nonce))
-	var mixHashArray [32]byte
-	copy(mixHashArray[:], mixHash)
-	pending.WorkObjectHeader().SetMixHash(common.Hash(mixHashArray))
+	// Set the nonce and mix hash on the AuxPow's Ravencoin header for submission.
+	// The kawpow validation path (ComputePowLight/ComputePowHash) reads from:
+	// - header.AuxPow().Header().Nonce64()
+	// - header.AuxPow().Header().MixHash()
+	// See consensus/kawpow/kawpow.go:549-557 and :491
+	auxPowHeader := pending.WorkObjectHeader().AuxPow().Header()
+	if auxPowHeader == nil {
+		return fmt.Errorf("AuxPow header is nil")
+	}
 
-	achievedDiff := new(big.Int).Div(common.Big2e256, mixHashInt)
+	// Set nonce on Ravencoin header
+	auxPowHeader.SetNonce64(nonce)
+
+	// Set mixHash on Ravencoin header
+	// Miner submits mixhash in big-endian, but RavencoinBlockHeader stores it in little-endian
+	// (same as what kawpowLight returns). Reverse the bytes per alphapool blocks.go:361-364
+	// Note: mixHashLE was already computed above for verification, reuse it here
+	auxPowHeader.SetMixHash(common.BytesToHash(mixHashLE))
+
+	// Calculate achieved difficulty for logging
+	achievedDiff := new(big.Int).Div(common.Big2e256, powHashInt)
 	s.logger.WithFields(log.Fields{
 		"powID":        types.Kawpow,
 		"height":       kawJob.height,
 		"nonce":        nonceHex,
+		"powHash":      hex.EncodeToString(powHash.Bytes()[:8]),
 		"achievedDiff": achievedDiff.String(),
-	}).Info("kawpow workshare received")
+		"targetDiff":   kawpowShareDiff.String(),
+	}).Info("kawpow workshare verified and accepted")
 
 	return s.backend.ReceiveMinedHeader(pending)
 }
@@ -980,4 +1464,52 @@ func powIDFromChain(chain string) types.PowID {
 	default:
 		return types.SHA_BTC
 	}
+}
+
+// parseUsername parses the stratum username format: address.workername.frequency=X
+// Returns the address, worker name, and job frequency.
+// Examples:
+//   - "0x1234..." -> ("0x1234...", "default", 5s)
+//   - "0x1234....rig1" -> ("0x1234...", "rig1", 5s)
+//   - "0x1234....rig1.frequency=2.5" -> ("0x1234...", "rig1", 2.5s)
+//   - "0x1234....frequency=3" -> ("0x1234...", "default", 3s)
+func parseUsername(u string) (address string, workerName string, jobFreq time.Duration) {
+	jobFreq = defaultJobFrequency
+	workerName = "default"
+
+	// Split by dots, but be careful with addresses that may contain dots
+	// Format: address.workername.frequency=X or address.frequency=X
+	parts := strings.Split(u, ".")
+
+	if len(parts) == 0 {
+		return u, workerName, jobFreq
+	}
+
+	// First part is always the address
+	address = parts[0]
+
+	// Process remaining parts
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+
+		// Check if this part is a frequency setting
+		if strings.HasPrefix(part, "frequency=") {
+			freqStr := strings.TrimPrefix(part, "frequency=")
+			if freq, err := strconv.ParseFloat(freqStr, 64); err == nil {
+				// Convert seconds to duration and clamp to bounds
+				freqDuration := time.Duration(freq * float64(time.Second))
+				if freqDuration < minJobFrequency {
+					freqDuration = defaultJobFrequency
+				} else if freqDuration > maxJobFrequency {
+					freqDuration = defaultJobFrequency
+				}
+				jobFreq = freqDuration
+			}
+		} else if workerName == "default" {
+			// First non-frequency part after address is the worker name
+			workerName = part
+		}
+	}
+
+	return address, workerName, jobFreq
 }

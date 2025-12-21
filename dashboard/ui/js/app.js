@@ -431,16 +431,55 @@ class Dashboard {
             const wsEl = document.querySelector('#ws-url code');
             if (wsEl) wsEl.textContent = urls.ws;
         }
-        if (urls.stratum) {
-            const stratumEl = document.querySelector('#stratum-url code');
-            if (stratumEl) stratumEl.textContent = urls.stratum;
 
-            // Update guide
+        // Update stratum URLs (multi-port support)
+        if (urls.stratumSha) {
+            const el = document.querySelector('#stratum-sha-url code');
+            if (el) el.textContent = urls.stratumSha;
+            document.getElementById('stratum-sha-card')?.classList.remove('hidden');
+        } else {
+            document.getElementById('stratum-sha-card')?.classList.add('hidden');
+        }
+
+        if (urls.stratumScrypt) {
+            const el = document.querySelector('#stratum-scrypt-url code');
+            if (el) el.textContent = urls.stratumScrypt;
+            document.getElementById('stratum-scrypt-card')?.classList.remove('hidden');
+        } else {
+            document.getElementById('stratum-scrypt-card')?.classList.add('hidden');
+        }
+
+        if (urls.stratumKawpow) {
+            const el = document.querySelector('#stratum-kawpow-url code');
+            if (el) el.textContent = urls.stratumKawpow;
+            document.getElementById('stratum-kawpow-card')?.classList.remove('hidden');
+
+            // Update guide with kawpow host
+            const host = urls.stratumKawpow.replace('stratum+tcp://', '');
             const guideHost = document.getElementById('guide-stratum-host');
-            if (guideHost) {
-                const host = urls.stratum.replace('stratum+tcp://', '');
-                guideHost.textContent = host;
-            }
+            if (guideHost) guideHost.textContent = host;
+            const guidePort = document.getElementById('guide-kawpow-port');
+            if (guidePort) guidePort.textContent = host.split(':')[1] || '3333';
+        } else {
+            document.getElementById('stratum-kawpow-card')?.classList.add('hidden');
+        }
+
+        // Update SHA guide
+        if (urls.stratumSha) {
+            const host = urls.stratumSha.replace('stratum+tcp://', '');
+            const guideHost = document.getElementById('guide-sha-host');
+            if (guideHost) guideHost.textContent = host;
+            const guidePort = document.getElementById('guide-sha-port');
+            if (guidePort) guidePort.textContent = host.split(':')[1] || '3334';
+        }
+
+        // Update Scrypt guide
+        if (urls.stratumScrypt) {
+            const host = urls.stratumScrypt.replace('stratum+tcp://', '');
+            const guideHost = document.getElementById('guide-scrypt-host');
+            if (guideHost) guideHost.textContent = host;
+            const guidePort = document.getElementById('guide-scrypt-port');
+            if (guidePort) guidePort.textContent = host.split(':')[1] || '3335';
         }
     }
 

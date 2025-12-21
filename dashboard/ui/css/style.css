@@ -44,6 +44,11 @@ html, body {
     height: 100%;
 }
 
+/* Utility Classes */
+.hidden {
+    display: none !important;
+}
+
 body {
     font-family: var(--font-sans);
     background: var(--bg-dark);
@@ -654,7 +659,7 @@ body {
 
 .algo-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 16px;
 }
 
@@ -688,6 +693,11 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
+    margin-bottom: 16px;
+}
+
+.code-block:last-child {
+    margin-bottom: 0;
 }
 
 .code-header {

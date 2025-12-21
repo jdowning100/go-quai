@@ -626,19 +626,31 @@ var (
 // ****************************************
 var StratumFlags = []Flag{
 	StratumEnabledFlag,
-	StratumAddrFlag,
+	StratumSHAAddrFlag,
+	StratumScryptAddrFlag,
+	StratumKawpowAddrFlag,
 }
 
 var (
 	StratumEnabledFlag = Flag{
 		Name:  c_NodeFlagPrefix + "stratum-enabled",
 		Value: false,
-		Usage: "enable TCP stratum-like endpoint to serve auxpow headers",
+		Usage: "enable TCP stratum endpoints for merged mining (one port per algorithm)",
 	}
-	StratumAddrFlag = Flag{
-		Name:  c_NodeFlagPrefix + "stratum-addr",
+	StratumSHAAddrFlag = Flag{
+		Name:  c_NodeFlagPrefix + "stratum-sha-addr",
 		Value: "0.0.0.0:3333",
-		Usage: "listen address for stratum-like TCP endpoint",
+		Usage: "listen address for SHA256 stratum endpoint",
+	}
+	StratumScryptAddrFlag = Flag{
+		Name:  c_NodeFlagPrefix + "stratum-scrypt-addr",
+		Value: "0.0.0.0:3334",
+		Usage: "listen address for Scrypt stratum endpoint",
+	}
+	StratumKawpowAddrFlag = Flag{
+		Name:  c_NodeFlagPrefix + "stratum-kawpow-addr",
+		Value: "0.0.0.0:3335",
+		Usage: "listen address for Kawpow stratum endpoint",
 	}
 )
 
@@ -1509,6 +1521,7 @@ func SetQuaiConfig(stack *node.Node, cfg *quaiconfig.Config, slicesRunning []com
 	if viper.GetString(WorkShareMinerEndpoints.Name) != "" {
 		cfg.Miner.Endpoints = []string{viper.GetString(WorkShareMinerEndpoints.Name)}
 	}
+	cfg.Miner.StratumEnabled = viper.GetBool(StratumEnabledFlag.Name)
 
 	cfg.WorkShareP2PThreshold = viper.GetInt(WorkShareP2PThreshold.Name)
 	// workshare p2p threshold cannot be less than the workshare threshold diff

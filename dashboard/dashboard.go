@@ -34,9 +34,11 @@ type Dashboard struct {
 	blockchain BlockchainProvider
 
 	// Connection URLs
-	rpcAddr     string
-	wsAddr      string
-	stratumAddr string
+	rpcAddr           string
+	wsAddr            string
+	stratumSHAAddr    string
+	stratumScryptAddr string
+	stratumKawpowAddr string
 
 	// Node info
 	version   string
@@ -119,25 +121,29 @@ type NodeInfo struct {
 
 // ConnectionURLs contains the various connection endpoints
 type ConnectionURLs struct {
-	RPC     string `json:"rpc"`
-	WS      string `json:"ws"`
-	Stratum string `json:"stratum"`
+	RPC           string `json:"rpc"`
+	WS            string `json:"ws"`
+	StratumSHA    string `json:"stratumSha,omitempty"`
+	StratumScrypt string `json:"stratumScrypt,omitempty"`
+	StratumKawpow string `json:"stratumKawpow,omitempty"`
 }
 
 // Config holds dashboard configuration
 type Config struct {
-	Addr        string
-	Stratum     *stratum.Server
-	P2P         P2PStatsProvider
-	Node        NodeStatsProvider
-	Blockchain  BlockchainProvider
-	RPCAddr     string
-	WSAddr      string
-	StratumAddr string
-	Version     string
-	Network     string
-	Location    string
-	ChainID     int64
+	Addr            string
+	Stratum         *stratum.Server
+	P2P             P2PStatsProvider
+	Node            NodeStatsProvider
+	Blockchain      BlockchainProvider
+	RPCAddr         string
+	WSAddr          string
+	StratumSHAAddr    string
+	StratumScryptAddr string
+	StratumKawpowAddr string
+	Version         string
+	Network         string
+	Location        string
+	ChainID         int64
 }
 
 // New creates a new dashboard server
@@ -145,22 +151,24 @@ func New(cfg Config) *Dashboard {
 	logger := log.NewLogger("dashboard.log", viper.GetString(utils.LogLevelFlag.Name), viper.GetInt(utils.LogSizeFlag.Name))
 
 	return &Dashboard{
-		addr:        cfg.Addr,
-		logger:      logger,
-		stratum:     cfg.Stratum,
-		p2pStats:    cfg.P2P,
-		nodeStats:   cfg.Node,
-		blockchain:  cfg.Blockchain,
-		rpcAddr:     cfg.RPCAddr,
-		wsAddr:      cfg.WSAddr,
-		stratumAddr: cfg.StratumAddr,
-		version:     cfg.Version,
-		network:     cfg.Network,
-		location:    cfg.Location,
-		chainID:     cfg.ChainID,
-		startTime:   time.Now(),
-		wsClients:   make(map[*websocket.Conn]bool),
-		quit:        make(chan struct{}),
+		addr:              cfg.Addr,
+		logger:            logger,
+		stratum:           cfg.Stratum,
+		p2pStats:          cfg.P2P,
+		nodeStats:         cfg.Node,
+		blockchain:        cfg.Blockchain,
+		rpcAddr:           cfg.RPCAddr,
+		wsAddr:            cfg.WSAddr,
+		stratumSHAAddr:    cfg.StratumSHAAddr,
+		stratumScryptAddr: cfg.StratumScryptAddr,
+		stratumKawpowAddr: cfg.StratumKawpowAddr,
+		version:           cfg.Version,
+		network:           cfg.Network,
+		location:          cfg.Location,
+		chainID:           cfg.ChainID,
+		startTime:         time.Now(),
+		wsClients:         make(map[*websocket.Conn]bool),
+		quit:              make(chan struct{}),
 	}
 }
 
@@ -435,9 +443,11 @@ func (d *Dashboard) getNodeInfo() NodeInfo {
 
 func (d *Dashboard) getConnectionURLs() ConnectionURLs {
 	return ConnectionURLs{
-		RPC:     d.rpcAddr,
-		WS:      d.wsAddr,
-		Stratum: d.stratumAddr,
+		RPC:           d.rpcAddr,
+		WS:            d.wsAddr,
+		StratumSHA:    d.stratumSHAAddr,
+		StratumScrypt: d.stratumScryptAddr,
+		StratumKawpow: d.stratumKawpowAddr,
 	}
 }
 

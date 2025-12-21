@@ -5,12 +5,7 @@ import (
 	"encoding/hex"
 	"math/big"
 
-	"golang.org/x/crypto/sha3"
-)
-
-const (
-	// KawpowEpochLength is the number of blocks per epoch for DAG calculation
-	KawpowEpochLength = 30000
+	"github.com/dominant-strategies/go-quai/consensus/kawpow"
 )
 
 // kawpowJob holds kawpow-specific job data
@@ -25,19 +20,20 @@ type kawpowJob struct {
 	pending interface{}
 }
 
-// calculateSeedHash computes the seed hash for a given epoch
-// Seed hash is keccak256 applied iteratively: seed_0 = keccak256(zeros), seed_n = keccak256(seed_{n-1})
+// calculateSeedHash computes the seed hash for a given block height
+// Uses go-quai's kawpow.SeedHash which uses the correct epoch length (7500)
 func calculateSeedHash(epoch uint64) string {
-	seed := make([]byte, 32)
-	for i := uint64(0); i < epoch; i++ {
-		seed = keccak256(seed)
-	}
+	// kawpow.SeedHash expects block number, not epoch
+	// epoch * epochLength gives us a block in that epoch
+	blockNum := epoch * kawpow.C_epochLength
+	seed := kawpow.SeedHash(blockNum)
 	return hex.EncodeToString(seed)
 }
 
 // calculateEpoch returns the epoch number for a given block height
+// Uses go-quai's kawpow epoch length (7500 blocks)
 func calculateEpoch(height uint64) uint64 {
-	return height / KawpowEpochLength
+	return height / kawpow.C_epochLength
 }
 
 // difficultyToTarget converts a big.Int difficulty to a 256-bit target hex string
@@ -74,21 +70,6 @@ func targetToDifficulty(targetHex string) *big.Int {
 
 	maxTarget := new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 	return new(big.Int).Div(maxTarget, target)
-}
-
-// keccak256 computes the Keccak-256 hash
-func keccak256(data []byte) []byte {
-	h := sha3.NewLegacyKeccak256()
-	h.Write(data)
-	return h.Sum(nil)
-}
-
-// calculateKawpowHeaderHash creates the header hash for kawpow
-// This is the hash of the block header without nonce and mixhash
-func calculateKawpowHeaderHash(headerBytes []byte) string {
-	// For kawpow, the header hash is typically keccak256 of the header without nonce/mixhash
-	hash := keccak256(headerBytes)
-	return hex.EncodeToString(hash)
 }
 
 // reverseBytes reverses a byte slice

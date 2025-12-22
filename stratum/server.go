@@ -39,8 +39,8 @@ type StratumConfig struct {
 
 // Connection limits and liveness timeout constants
 const (
-	defaultMaxConnections  = 10000            // Default max concurrent connections
-	livenessTimeout        = 5 * time.Minute  // Close connection if no share within this time
+	defaultMaxConnections = 10000           // Default max concurrent connections
+	livenessTimeout       = 5 * time.Minute // Close connection if no share within this time
 )
 
 // templateState tracks the last template sent for change detection
@@ -403,47 +403,27 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 		return false, false
 	}
 
+	if lastState.parentHash != newState.parentHash {
+		s.logger.WithFields(log.Fields{
+			"algo":      algorithm,
+			"oldHeight": lastState.height,
+			"newHeight": newState.height,
+		}).Info("New block detected")
+		return true, true
+	}
+
+	if lastState.quaiHeight != newState.quaiHeight {
+		s.logger.WithFields(log.Fields{
+			"algo":          algorithm,
+			"oldQuaiHeight": lastState.quaiHeight,
+			"newQuaiHeight": newState.quaiHeight,
+		}).Info("QuaiHeight changed")
+		return true, true
+	}
+
 	// Check for changes based on algorithm
 	switch algorithm {
-	case "sha", "scrypt":
-		// For SHA/Scrypt: check if parent hash or height changed
-		// Always use clean=true for SHA/Scrypt (simpler, matches pool behavior)
-		if lastState.parentHash != newState.parentHash {
-			s.logger.WithFields(log.Fields{
-				"algo":      algorithm,
-				"oldHeight": lastState.height,
-				"newHeight": newState.height,
-			}).Info("New block detected")
-			return true, true
-		}
-
-		if lastState.quaiHeight != newState.quaiHeight {
-			s.logger.WithFields(log.Fields{
-				"algo":          algorithm,
-				"oldQuaiHeight": lastState.quaiHeight,
-				"newQuaiHeight": newState.quaiHeight,
-			}).Info("QuaiHeight changed")
-			return true, true
-		}
-
 	case "kawpow":
-		// For Kawpow: check parent hash and quai height
-		if lastState.parentHash != newState.parentHash {
-			s.logger.WithFields(log.Fields{
-				"algo":      algorithm,
-				"oldHeight": lastState.height,
-				"newHeight": newState.height,
-			}).Info("New block detected")
-			return true, true
-		}
-		if lastState.quaiHeight != newState.quaiHeight {
-			s.logger.WithFields(log.Fields{
-				"algo":          algorithm,
-				"oldQuaiHeight": lastState.quaiHeight,
-				"newQuaiHeight": newState.quaiHeight,
-			}).Info("QuaiHeight changed")
-			return true, true
-		}
 		// Seal hash change without parent/quaiHeight change - template update, clean=false
 		if lastState.sealHash != newState.sealHash {
 			s.logger.WithFields(log.Fields{
@@ -1352,13 +1332,8 @@ func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 	nBits := auxPowHeader.Bits()
 	// SealHash() returns GetKAWPOWHeaderHash() for RavencoinBlockHeader
 	// which is the double SHA256 of the 80-byte header input fields
-	sealHash := auxPowHeader.SealHash()
-	// Reverse bytes for stratum (miners expect little-endian)
-	reversed := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		reversed[i] = sealHash[31-i]
-	}
-	headerHash := hex.EncodeToString(reversed)
+	sealHash := auxPowHeader.SealHash().Reverse()
+	headerHash := hex.EncodeToString(sealHash[:])
 
 	// Lock once for all session field access
 	sess.mu.Lock()

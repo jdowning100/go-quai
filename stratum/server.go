@@ -349,29 +349,32 @@ func (s *Server) templatePollingLoop(algorithm string) {
 		case <-s.stopped:
 			return
 		case <-ticker.C:
-			changed, clean := s.checkTemplateChanged(algorithm)
+			changed, clean, isNewBlock := s.checkTemplateChanged(algorithm)
 			if changed {
-				s.broadcastJob(algorithm, clean)
+				s.broadcastJob(algorithm, clean, isNewBlock)
 			}
 		}
 	}
 }
 
 // checkTemplateChanged checks if the template has changed for the given algorithm.
-// Returns (changed bool, clean bool) - clean is true if miners should abandon current work.
-func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
+// Returns (changed bool, clean bool, isNewBlock bool):
+//   - changed: true if template changed and broadcast is needed
+//   - clean: true if miners should abandon current work
+//   - isNewBlock: true if parentHash changed (new block on donor chain), false if only quaiHeight changed
+func (s *Server) checkTemplateChanged(algorithm string) (bool, bool, bool) {
 	powID := powIDFromChain(algorithm)
 
 	// Get pending header (using a dummy address since we just need to check for changes)
 	pending, err := s.backend.GetPendingHeader(types.PowID(powID), common.Address{})
 	if err != nil || pending == nil || pending.WorkObjectHeader() == nil {
-		return false, false
+		return false, false, false
 	}
 
 	header := pending.WorkObjectHeader()
 	auxPow := header.AuxPow()
 	if auxPow == nil || auxPow.Header() == nil {
-		return false, false
+		return false, false, false
 	}
 
 	// Use AuxPow header's PrevBlock (donor chain parent) for change detection,
@@ -402,7 +405,7 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 
 	// First template - no change to broadcast (miners get job on authorize)
 	if lastState == nil {
-		return false, false
+		return false, false, false
 	}
 
 	if lastState.parentHash != newState.parentHash {
@@ -411,7 +414,7 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 			"oldHeight": lastState.height,
 			"newHeight": newState.height,
 		}).Info("New block detected")
-		return true, true
+		return true, true, true // isNewBlock=true: parentHash changed
 	}
 
 	if lastState.quaiHeight != newState.quaiHeight {
@@ -420,7 +423,7 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 			"oldQuaiHeight": lastState.quaiHeight,
 			"newQuaiHeight": newState.quaiHeight,
 		}).Info("QuaiHeight changed")
-		return true, true
+		return true, true, false // isNewBlock=false: only quaiHeight changed
 	}
 
 	// Check for changes based on algorithm
@@ -432,15 +435,17 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool) {
 				"algo":   algorithm,
 				"height": newState.height,
 			}).Trace("Template updated (sealhash changed)")
-			return true, true // Kawpow: clean=false for same-block updates
+			return true, true, false // isNewBlock=false: same block, just template update
 		}
 	}
 
-	return false, false
+	return false, false, false
 }
 
-// broadcastJob sends a new job to all connected miners for the given algorithm
-func (s *Server) broadcastJob(algorithm string, clean bool) {
+// broadcastJob sends a new job to all connected miners for the given algorithm.
+// isNewBlock indicates if this is a new block (parentHash changed) vs just a quaiHeight change.
+// Miners with skip=true receive every other quaiHeight change, but always receive new blocks.
+func (s *Server) broadcastJob(algorithm string, clean bool, isNewBlock bool) {
 	s.sessionsMu.RLock()
 	var sessions map[*session]struct{}
 	switch algorithm {
@@ -465,13 +470,38 @@ func (s *Server) broadcastJob(algorithm string, clean bool) {
 	}
 
 	s.logger.WithFields(log.Fields{
-		"algo":   algorithm,
-		"miners": len(sessionList),
-		"clean":  clean,
+		"algo":       algorithm,
+		"miners":     len(sessionList),
+		"clean":      clean,
+		"isNewBlock": isNewBlock,
 	}).Info("Broadcasting new job")
 
 	// Broadcast to all sessions via worker pool
 	for _, sess := range sessionList {
+		// Handle skip blocks mode - skip every other quaiHeight change,
+		// but always send new blocks (parentHash changes)
+		if sess.skipBlocks && !isNewBlock {
+			sess.mu.Lock()
+			sess.skipBlockCounter++
+			counter := sess.skipBlockCounter
+			// Skip when counter is EVEN (2, 4, 6...) so first broadcast (counter=1) is SENT
+			// Pattern: SEND, SKIP, SEND, SKIP...
+			shouldSkip := counter%2 == 0
+			sess.mu.Unlock()
+			if shouldSkip {
+				s.logger.WithFields(log.Fields{
+					"user":    sess.user,
+					"worker":  sess.workerName,
+					"counter": counter,
+				}).Debug("Skipping quaiHeight change for miner (skip=true mode)")
+				continue
+			}
+			s.logger.WithFields(log.Fields{
+				"user":    sess.user,
+				"worker":  sess.workerName,
+				"counter": counter,
+			}).Debug("Sending quaiHeight change to miner (skip=true mode)")
+		}
 		s.jobPool.submit(sess, clean)
 	}
 }
@@ -838,6 +868,9 @@ type session struct {
 	varDiff             float64   // current vardiff value
 	lastShareTime       time.Time // when last valid share was received (for vardiff timing)
 	varDiffTimeoutReset bool      // true if lastShareTime was reset due to timeout (not a real share)
+	// Skip blocks mode - only send every other block (for debugging fast block times)
+	skipBlocks       bool // true if miner wants to skip every other block
+	skipBlockCounter int  // counter to track which blocks to skip
 }
 
 // sendJSON safely encodes and sends JSON to the miner (thread-safe).
@@ -869,8 +902,9 @@ type job struct {
 func (s *Server) handleConn(c net.Conn, algorithm string) {
 	defer c.Close()
 	defer s.activeConns.Add(-1) // Decrement connection counter on exit
-	// Set a longer initial deadline - will be extended on each message
-	_ = c.SetDeadline(time.Now().Add(5 * time.Minute))
+	// Set a longer initial read deadline - will be extended on each message
+	// Use SetReadDeadline (not SetDeadline) to avoid overriding the 10s write deadline in sendJSON
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Minute))
 	dec := json.NewDecoder(bufio.NewReader(c))
 	enc := json.NewEncoder(c)
 
@@ -902,21 +936,32 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 		}
 	}()
 
-	// No read deadline - miners may go hours/days between shares with high workshare difficulty.
-	// Dead connections are detected via TCP keepalive or when writes fail.
-	// If explicit timeout is needed later, consider 24+ hours or implement ping/pong.
-
 	for {
 
 		var req stratumReq
 		if err := dec.Decode(&req); err != nil {
 			if err == io.EOF {
+				if sess.authorized {
+					s.logger.WithFields(log.Fields{
+						"user":   sess.user,
+						"worker": sess.workerName,
+						"algo":   algorithm,
+					}).Debug("Miner disconnected (EOF)")
+				}
 				return
+			}
+			if sess.authorized {
+				s.logger.WithFields(log.Fields{
+					"user":   sess.user,
+					"worker": sess.workerName,
+					"algo":   algorithm,
+					"error":  err.Error(),
+				}).Debug("Miner disconnected (read error)")
 			}
 			return
 		}
-		// Extend deadline on each message received
-		_ = c.SetDeadline(time.Now().Add(5 * time.Minute))
+		// Extend read deadline on each message received
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 		switch req.Method {
 		case "mining.subscribe":
@@ -981,8 +1026,10 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 			// Build response - always indicate support for version-rolling if requested
 			resp := map[string]interface{}{}
 			if wantsVersionRolling {
+				sess.mu.Lock()
 				sess.versionRolling = true
 				sess.versionMask = 0x1fffe000 // Standard mask (bits 13-28)
+				sess.mu.Unlock()
 				resp["version-rolling"] = true
 				resp["version-rolling.mask"] = fmt.Sprintf("%08x", sess.versionMask)
 				resp["version-rolling.min-bit-count"] = 0
@@ -991,7 +1038,10 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: resp, Error: nil})
 
 			// Send mining.set_version_mask for miners that expect it after configure
-			if sess.versionRolling {
+			sess.mu.Lock()
+			vr := sess.versionRolling
+			sess.mu.Unlock()
+			if vr {
 				note := map[string]interface{}{"id": nil, "method": "mining.set_version_mask", "params": []interface{}{fmt.Sprintf("%08x", sess.versionMask)}}
 				_ = sess.sendJSON(note)
 			}
@@ -1006,12 +1056,12 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 					sess.user, sess.workerName, sess.jobFrequency = parseUsername(u)
 				}
 			}
-			// Parse password for optional difficulty and frequency settings
-			// Format: d=<difficulty>,frequency=<seconds> or just one of them
+			// Parse password for optional difficulty, frequency, and skip settings
+			// Format: d=<difficulty>,frequency=<seconds>,skip=<true|false>
 			if len(req.Params) >= 2 {
 				if p, ok := req.Params[1].(string); ok {
 					var pwFreq time.Duration
-					sess.minerDifficulty, pwFreq = parsePassword(p)
+					sess.minerDifficulty, pwFreq, sess.skipBlocks = parsePassword(p)
 					if pwFreq > 0 {
 						sess.jobFrequency = pwFreq // Password frequency overrides username frequency
 					}
@@ -1052,6 +1102,9 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 			} else if sess.varDiffEnabled {
 				logFields["varDiff"] = sess.varDiff
 				logFields["varDiffEnabled"] = true
+			}
+			if sess.skipBlocks {
+				logFields["skipBlocks"] = true
 			}
 			s.logger.WithFields(logFields).Info("miner authorized")
 			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil})
@@ -1188,6 +1241,11 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 				}
 			}
 		default:
+			s.logger.WithFields(log.Fields{
+				"user":   sess.user,
+				"worker": sess.workerName,
+				"method": req.Method,
+			}).Debug("Unknown stratum method")
 			_ = sess.sendJSON(stratumResp{ID: req.ID, Result: nil, Error: nil})
 		}
 	}
@@ -1733,11 +1791,11 @@ func (s *Server) submitAsWorkShare(sess *session, curJob *job, ex2hex, ntimeHex,
 	}
 
 	// LRU de-dup and submit workshare
+	// Note: seenShares LRU is thread-safe, no lock needed
 	shareKey := hex.EncodeToString(hashBytes)
 	if _, seen := sess.seenShares.Peek(shareKey); seen {
 		return false, fmt.Errorf("duplicate share")
 	}
-	const lruCap = 1024
 	sess.seenShares.Add(shareKey, struct{}{})
 
 	s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "achievedDiff": achievedStratumDiff, "workshareDiff": workshareStratumDiff}).Info("submitting workshare to node")
@@ -1779,7 +1837,7 @@ func (s *Server) submitAsWorkShare(sess *session, curJob *job, ex2hex, ntimeHex,
 
 	// Second check: does it also meet workshare target? If so, submit to network
 	if powHashBigInt.Cmp(workShareTarget) <= 0 {
-		s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes)}).Info("workshare received - submitting to network")
+		s.logger.WithFields(log.Fields{"powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes), "workshareHash": pending.Hash().Hex()}).Info("workshare received - submitting to network")
 		return true, s.backend.ReceiveMinedHeader(pending)
 	}
 
@@ -1939,6 +1997,7 @@ func (s *Server) submitKawpowShare(sess *session, kawJob *kawpowJob, nonceHex, _
 	}
 
 	// LRU de-dup and submit workshare
+	// Note: seenShares LRU is thread-safe, no lock needed
 	shareKey := hex.EncodeToString(powHash.Bytes())
 	if _, seen := sess.seenShares.Peek(shareKey); seen {
 		return fmt.Errorf("duplicate share")
@@ -2084,20 +2143,21 @@ func parseUsername(u string) (address string, workerName string, jobFreq time.Du
 }
 
 // parsePassword parses the stratum password field for optional parameters.
-// Supports: d=<difficulty> and/or frequency=<seconds> (or freq=<seconds>)
+// Supports: d=<difficulty>, frequency=<seconds> (or freq=<seconds>), skip=<true|false>
 // Parts are separated by ',' character (to allow decimal values).
 // Examples:
-//   - "x" or "" -> nil, 0 (use defaults)
-//   - "d=0.1" -> difficulty=0.1, frequency=0
-//   - "frequency=2.5" or "freq=2.5" -> difficulty=nil, frequency=2.5s
-//   - "d=0.1,freq=2" -> difficulty=0.1, frequency=2s
-func parsePassword(password string) (*float64, time.Duration) {
+//   - "x" or "" -> nil, 0, false (use defaults)
+//   - "d=0.1" -> difficulty=0.1, frequency=0, skip=false
+//   - "frequency=2.5" or "freq=2.5" -> difficulty=nil, frequency=2.5s, skip=false
+//   - "d=0.1,freq=2,skip=true" -> difficulty=0.1, frequency=2s, skip=true
+func parsePassword(password string) (*float64, time.Duration, bool) {
 	if password == "" || password == "x" {
-		return nil, 0
+		return nil, 0, false
 	}
 
 	var difficulty *float64
 	var frequency time.Duration
+	var skipBlocks bool
 
 	// Split by ',' to allow decimal values in parameters
 	parts := strings.Split(password, ",")
@@ -2120,7 +2180,12 @@ func parsePassword(password string) (*float64, time.Duration) {
 			}
 			continue
 		}
+		// Check for skip=<true|false> format
+		if skipStr, ok := strings.CutPrefix(part, "skip="); ok {
+			skipBlocks = skipStr == "true" || skipStr == "1"
+			continue
+		}
 	}
 
-	return difficulty, frequency
+	return difficulty, frequency, skipBlocks
 }

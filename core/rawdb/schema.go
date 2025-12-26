@@ -86,6 +86,7 @@ var (
 	inboundEtxsPrefix               = []byte("ie")    // inboundEtxsPrefix + hash -> types.Transactions
 	AddressUtxosPrefix              = []byte("au")    // addressUtxosPrefix + address -> []types.UtxoEntry
 	AddressUtxosWithoutHeightPrefix = []byte("auwh")  // addressUTxosWithoutHeightPrefix + address -> []types.UtxoEntry
+	AddressUtxoPerKeyPrefix         = []byte("aupk")  // addressUtxoPerKeyPrefix + address + txHash + index -> denomination + lock (for addresses with >100 UTXOs)
 	AddressLockupsPrefix            = []byte("al")    // addressLockupsPrefix + address -> []types.Lockup
 	utxoToBlockHeightPrefix         = []byte("ub")    // utxoToBlockHeightPrefix + hash -> uint64
 	processedStatePrefix            = []byte("ps")    // processedStatePrefix + hash -> boolean
@@ -328,6 +329,33 @@ func addressUtxosKey(address [20]byte) []byte {
 
 func addressUtxosWithoutHeightKey(address [20]byte) []byte {
 	return append(AddressUtxosWithoutHeightPrefix, address[:]...)
+}
+
+// AddressUtxoMigratedMarker is stored in the blob key to indicate
+// that this address has been migrated to per-UTXO key storage.
+var AddressUtxoMigratedMarker = []byte{0xFF}
+
+// AddressUtxoMigrationThreshold is the number of UTXOs at which an address
+// is migrated from blob storage to per-UTXO key storage.
+const AddressUtxoMigrationThreshold = 100
+
+// addressUtxoPerKey generates a key for storing a single UTXO for an address.
+// Key format: prefix (4) + address (20) + txHash (32) + index (2) = 58 bytes
+func addressUtxoPerKey(address [20]byte, txHash common.Hash, index uint16) []byte {
+	key := make([]byte, len(AddressUtxoPerKeyPrefix)+20+32+2)
+	copy(key, AddressUtxoPerKeyPrefix)
+	copy(key[len(AddressUtxoPerKeyPrefix):], address[:])
+	copy(key[len(AddressUtxoPerKeyPrefix)+20:], txHash.Bytes())
+	binary.BigEndian.PutUint16(key[len(AddressUtxoPerKeyPrefix)+20+32:], index)
+	return key
+}
+
+// addressUtxoPerKeyPrefix returns the prefix for iterating all UTXOs for an address.
+func addressUtxoPerKeyIteratorPrefix(address [20]byte) []byte {
+	prefix := make([]byte, len(AddressUtxoPerKeyPrefix)+20)
+	copy(prefix, AddressUtxoPerKeyPrefix)
+	copy(prefix[len(AddressUtxoPerKeyPrefix):], address[:])
+	return prefix
 }
 
 func addressLockupsKey(address [20]byte) []byte {

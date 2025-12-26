@@ -17,6 +17,7 @@
 package rawdb
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math/big"
@@ -1254,29 +1255,78 @@ func DeleteInboundEtxs(db ethdb.KeyValueWriter, hash common.Hash) {
 }
 
 func WriteAddressUTXOs(db ethdb.KeyValueWriter, readDb ethdb.Reader, newOutpointsMap map[[20]byte][]*types.OutpointAndDenomination) error {
-	for address, outpoints := range newOutpointsMap {
-		addressOutpointsProto := &types.ProtoAddressOutPoints{
-			OutPoints: make([]*types.ProtoOutPointAndDenomination, 0),
+	for address, newOutpoints := range newOutpointsMap {
+		data, _ := readDb.Get(addressUtxosWithoutHeightKey(address))
+
+		// Check if this address has been migrated to per-key storage
+		if bytes.Equal(data, AddressUtxoMigratedMarker) {
+			// Already in per-key mode - write directly to per-key storage
+			for _, outpoint := range newOutpoints {
+				if err := writeAddressUTXOPerKey(db, address, outpoint); err != nil {
+					return err
+				}
+			}
+			continue
 		}
 
-		data, _ := readDb.Get(addressUtxosWithoutHeightKey(address))
+		// Blob storage path - decode existing outpoints
+		var existingOutpoints []*types.OutpointAndDenomination
 		if len(data) != 0 {
+			addressOutpointsProto := &types.ProtoAddressOutPoints{
+				OutPoints: make([]*types.ProtoOutPointAndDenomination, 0),
+			}
 			if err := proto.Unmarshal(data, addressOutpointsProto); err != nil {
 				return fmt.Errorf("Failed to proto Unmarshal address outpoints: %v", err)
 			}
+			existingOutpoints = make([]*types.OutpointAndDenomination, 0, len(addressOutpointsProto.OutPoints))
+			for _, outpointProto := range addressOutpointsProto.OutPoints {
+				outpoint := new(types.OutpointAndDenomination)
+				if err := outpoint.ProtoDecode(outpointProto); err != nil {
+					return fmt.Errorf("Failed to decode outpoint: %v", err)
+				}
+				existingOutpoints = append(existingOutpoints, outpoint)
+			}
 		}
 
-		for _, outpoint := range outpoints {
+		totalCount := len(existingOutpoints) + len(newOutpoints)
+
+		// Check if we need to migrate to per-key storage
+		if totalCount > AddressUtxoMigrationThreshold {
+			// Migrate to per-key storage
+			if err := migrateAddressToPerKeyStorage(db, address, existingOutpoints, newOutpoints); err != nil {
+				return err
+			}
+			db.Logger().WithFields(log.Fields{
+				"address":    address,
+				"totalCount": totalCount,
+				"newCount":   len(newOutpoints),
+			}).Info("Migrated address to per-key storage")
+			continue
+		}
+
+		// Stay in blob mode - append new outpoints
+		addressOutpointsProto := &types.ProtoAddressOutPoints{
+			OutPoints: make([]*types.ProtoOutPointAndDenomination, 0, totalCount),
+		}
+		for _, outpoint := range existingOutpoints {
 			outpointProto, err := outpoint.ProtoEncode()
 			if err != nil {
 				return err
 			}
 			addressOutpointsProto.OutPoints = append(addressOutpointsProto.OutPoints, outpointProto)
 		}
-		// Now, marshal utxosProto to protobuf bytes
+		for _, outpoint := range newOutpoints {
+			outpointProto, err := outpoint.ProtoEncode()
+			if err != nil {
+				return err
+			}
+			addressOutpointsProto.OutPoints = append(addressOutpointsProto.OutPoints, outpointProto)
+		}
+
+		// Marshal and store
 		data, err := proto.Marshal(addressOutpointsProto)
 		if err != nil {
-			db.Logger().WithField("err", err).Fatal("Failed to rlp encode utxos")
+			db.Logger().WithField("err", err).Fatal("Failed to proto encode utxos")
 		}
 		if err := db.Put(addressUtxosWithoutHeightKey(address), data); err != nil {
 			db.Logger().WithField("err", err).Fatal("Failed to store utxos")
@@ -1296,6 +1346,18 @@ func DeleteAddressUTXOsWithBatch(batch ethdb.Batch, readDb ethdb.Reader, outpoin
 			}
 		}
 
+		// Check if this address has been migrated to per-key storage
+		if bytes.Equal(data, AddressUtxoMigratedMarker) {
+			// Per-key mode - delete directly from per-key storage
+			for _, outpoint := range outpoints {
+				if err := deleteAddressUTXOPerKey(batch, address, outpoint.TxHash, outpoint.Index); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		// Blob storage path
 		addressOutpointsProto := &types.ProtoAddressOutPoints{
 			OutPoints: make([]*types.ProtoOutPointAndDenomination, 0),
 		}
@@ -1339,12 +1401,20 @@ func DeleteAddressUTXOsWithBatch(batch ethdb.Batch, readDb ethdb.Reader, outpoin
 	return nil
 }
 
-func ReadAddressUTXOs(db ethdb.Reader, address [20]byte) ([]*types.OutpointAndDenomination, error) {
+func ReadAddressUTXOs(db ethdb.Database, address [20]byte) ([]*types.OutpointAndDenomination, error) {
 	// Try to look up the data in leveldb.
 	data, _ := db.Get(addressUtxosWithoutHeightKey(address))
 	if len(data) == 0 {
+		// No blob entry = no UTXOs for this address
 		return []*types.OutpointAndDenomination{}, nil
 	}
+
+	// Check if this address has been migrated to per-key storage
+	if bytes.Equal(data, AddressUtxoMigratedMarker) {
+		return readAddressUTXOsPerKey(db, address)
+	}
+
+	// Normal blob storage path
 	addressOutpointsProto := &types.ProtoAddressOutPoints{
 		OutPoints: make([]*types.ProtoOutPointAndDenomination, 0),
 	}
@@ -1367,6 +1437,98 @@ func ReadAddressUTXOs(db ethdb.Reader, address [20]byte) ([]*types.OutpointAndDe
 	}
 
 	return outpoints, nil
+}
+
+// readAddressUTXOsPerKey reads all UTXOs for an address from per-key storage using prefix iteration.
+func readAddressUTXOsPerKey(db ethdb.Iteratee, address [20]byte) ([]*types.OutpointAndDenomination, error) {
+	prefix := addressUtxoPerKeyIteratorPrefix(address)
+	it := db.NewIterator(prefix, nil)
+	defer it.Release()
+
+	outpoints := make([]*types.OutpointAndDenomination, 0)
+	for it.Next() {
+		key := it.Key()
+		value := it.Value()
+
+		// Parse txHash and index from key
+		// Key format: prefix (4) + address (20) + txHash (32) + index (2)
+		keyOffset := len(AddressUtxoPerKeyPrefix) + 20
+		txHash := common.BytesToHash(key[keyOffset : keyOffset+32])
+		index := binary.BigEndian.Uint16(key[keyOffset+32:])
+
+		// Parse denomination and lock from value
+		// Value format: denomination (1) + lock (variable, big.Int bytes)
+		if len(value) < 1 {
+			continue
+		}
+		denomination := value[0]
+		var lock *big.Int
+		if len(value) > 1 {
+			lock = new(big.Int).SetBytes(value[1:])
+		}
+
+		outpoints = append(outpoints, &types.OutpointAndDenomination{
+			TxHash:       txHash,
+			Index:        index,
+			Denomination: denomination,
+			Lock:         lock,
+		})
+	}
+
+	if err := it.Error(); err != nil {
+		return nil, err
+	}
+
+	return outpoints, nil
+}
+
+// writeAddressUTXOPerKey writes a single UTXO to per-key storage.
+func writeAddressUTXOPerKey(db ethdb.KeyValueWriter, address [20]byte, outpoint *types.OutpointAndDenomination) error {
+	key := addressUtxoPerKey(address, outpoint.TxHash, outpoint.Index)
+
+	// Value format: denomination (1) + lock bytes (variable)
+	var value []byte
+	if outpoint.Lock != nil && outpoint.Lock.Sign() > 0 {
+		lockBytes := outpoint.Lock.Bytes()
+		value = make([]byte, 1+len(lockBytes))
+		value[0] = outpoint.Denomination
+		copy(value[1:], lockBytes)
+	} else {
+		value = []byte{outpoint.Denomination}
+	}
+
+	return db.Put(key, value)
+}
+
+// deleteAddressUTXOPerKey deletes a single UTXO from per-key storage.
+func deleteAddressUTXOPerKey(db ethdb.KeyValueWriter, address [20]byte, txHash common.Hash, index uint16) error {
+	key := addressUtxoPerKey(address, txHash, index)
+	return db.Delete(key)
+}
+
+// migrateAddressToPerKeyStorage migrates an address from blob storage to per-key storage.
+func migrateAddressToPerKeyStorage(db ethdb.KeyValueWriter, address [20]byte, existingOutpoints []*types.OutpointAndDenomination, newOutpoints []*types.OutpointAndDenomination) error {
+	db.Logger().WithFields(log.Fields{
+		"address":       address,
+		"existingCount": len(existingOutpoints),
+		"newCount":      len(newOutpoints),
+	}).Info("Migrating address to per-key storage")
+	// Write all existing outpoints to per-key storage
+	for _, outpoint := range existingOutpoints {
+		if err := writeAddressUTXOPerKey(db, address, outpoint); err != nil {
+			return err
+		}
+	}
+
+	// Write all new outpoints to per-key storage
+	for _, outpoint := range newOutpoints {
+		if err := writeAddressUTXOPerKey(db, address, outpoint); err != nil {
+			return err
+		}
+	}
+
+	// Replace the blob with the migration marker
+	return db.Put(addressUtxosWithoutHeightKey(address), AddressUtxoMigratedMarker)
 }
 
 func WriteAddressOutpoints(db ethdb.KeyValueWriter, outpointMap map[[20]byte][]*types.OutpointAndDenomination) error {

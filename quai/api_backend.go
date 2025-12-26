@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"sort"
 
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/hexutil"
@@ -32,6 +33,7 @@ import (
 	"github.com/dominant-strategies/go-quai/core/vm"
 	"github.com/dominant-strategies/go-quai/ethdb"
 	"github.com/dominant-strategies/go-quai/event"
+	"github.com/dominant-strategies/go-quai/internal/quaiapi"
 	"github.com/dominant-strategies/go-quai/log"
 	"github.com/dominant-strategies/go-quai/params"
 	"github.com/dominant-strategies/go-quai/rpc"
@@ -42,6 +44,38 @@ import (
 type QuaiAPIBackend struct {
 	extRPCEnabled bool
 	quai          *Quai
+}
+
+func (b *QuaiAPIBackend) PeerInfo() (*quaiapi.PeerInfoResult, error) {
+	// The core Quai service keeps its p2p backend behind an interface; for peer
+	// introspection (RPC), we only require a narrow method surface.
+	type peerInfoProvider interface {
+		PeerInfo() ([]string, map[string][]string, error)
+	}
+
+	provider, ok := b.quai.p2p.(peerInfoProvider)
+	if !ok {
+		return nil, errors.New("p2p backend does not support peer introspection")
+	}
+	self, peersMap, err := provider.PeerInfo()
+	if err != nil {
+		return nil, err
+	}
+
+	peers := make([]quaiapi.PeerInfoPeer, 0, len(peersMap))
+	for peerID, addrs := range peersMap {
+		peers = append(peers, quaiapi.PeerInfoPeer{
+			PeerID:     peerID,
+			Multiaddrs: addrs,
+		})
+	}
+	sort.Slice(peers, func(i, j int) bool { return peers[i].PeerID < peers[j].PeerID })
+
+	return &quaiapi.PeerInfoResult{
+		PeerCount: hexutil.Uint64(len(peersMap)),
+		Self:      self,
+		Peers:     peers,
+	}, nil
 }
 
 func (b *QuaiAPIBackend) RpcVersion() string {

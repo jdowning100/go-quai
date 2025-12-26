@@ -75,6 +75,8 @@ var NodeFlags = []Flag{
 	IPAddrFlag,
 	P2PPortFlag,
 	BootPeersFlag,
+	StaticPeersFlag,
+	StaticPeersOnlyFlag,
 	PortMapFlag,
 	KeyFileFlag,
 	MinPeersFlag,
@@ -254,6 +256,18 @@ var (
 		Name:  c_NodeFlagPrefix + "bootpeers",
 		Value: []string{},
 		Usage: "list of bootstrap peers. Syntax: <multiaddress1>,<multiaddress2>,..." + generateEnvDoc(c_NodeFlagPrefix+"bootpeers"),
+	}
+
+	StaticPeersFlag = Flag{
+		Name:  c_NodeFlagPrefix + "staticpeers",
+		Value: []string{},
+		Usage: "list of static peers to dial and prefer for request/response. Syntax: <multiaddress1>,<multiaddress2>,... (must include /p2p/<peerID>). Unlike bootpeers, static peers are maintained and prioritized for block/header requests." + generateEnvDoc(c_NodeFlagPrefix+"staticpeers"),
+	}
+
+	StaticPeersOnlyFlag = Flag{
+		Name:  c_NodeFlagPrefix + "staticpeers-only",
+		Value: false,
+		Usage: "use only static peers for request/response (still participates in pubsub gossip)" + generateEnvDoc(c_NodeFlagPrefix+"staticpeers-only"),
 	}
 
 	PortMapFlag = Flag{

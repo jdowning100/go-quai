@@ -2563,7 +2563,7 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 
 	// Hash rate = difficulty / average share time (hashes per second)
 	// Returns string to avoid float64 overflow with petahash-scale values
-	calcHashRate := func(diff *big.Int, totalShares uint64, timeDiff int64) string {
+	calcHashRate := func(diff *big.Int, totalShares uint64, timeDiff uint64) string {
 		if diff == nil || totalShares == 0 || timeDiff <= 0 {
 			return "0"
 		}
@@ -2576,9 +2576,9 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 		return intPart.String()
 	}
 
-	fields["kawpowHashRate"] = calcHashRate(kawpowDiff, totalKawpowShares, int64(endKawpowTime)-int64(startKawpowTime))
-	fields["shaHashRate"] = calcHashRate(shaDiff, totalShaShares, int64(endShaTime)-int64(startShaTime))
-	fields["scryptHashRate"] = calcHashRate(scryptDiff, totalScryptShares, int64(endScryptTime)-int64(startScryptTime))
+	fields["kawpowHashRate"] = calcHashRate(kawpowDiff, totalKawpowShares, endKawpowTime-startKawpowTime)
+	fields["shaHashRate"] = calcHashRate(shaDiff, totalShaShares, endShaTime-startShaTime)
+	fields["scryptHashRate"] = calcHashRate(scryptDiff, totalScryptShares, endScryptTime-startScryptTime)
 
 	// Include current block number and hash for reference
 	if decimal != nil && *decimal {

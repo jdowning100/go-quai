@@ -1791,3 +1791,220 @@ func (s *PublicWorkSharesAPI) ReceiveSubWorkshare(ctx context.Context, input hex
 		return errors.New("work share is invalid")
 	}
 }
+
+// WorkshareTrackingAPI provides RPC methods for querying workshare tracking data
+type WorkshareTrackingAPI struct {
+	b Backend
+}
+
+// NewWorkshareTrackingAPI creates a new workshare tracking API
+func NewWorkshareTrackingAPI(b Backend) *WorkshareTrackingAPI {
+	return &WorkshareTrackingAPI{b: b}
+}
+
+// WorkshareTrackingResult is the response structure for workshare tracking queries
+type WorkshareTrackingResult struct {
+	Enabled bool `json:"enabled"`
+}
+
+// GetTrackingStatus returns whether workshare tracking is enabled
+func (api *WorkshareTrackingAPI) GetTrackingStatus(ctx context.Context) WorkshareTrackingResult {
+	return WorkshareTrackingResult{
+		Enabled: api.b.GetWorkshareTrackingEnabled(),
+	}
+}
+
+// WorkshareReceptionResult is the response for workshare reception query
+type WorkshareReceptionResult struct {
+	WorkshareHash          common.Hash    `json:"workshareHash"`
+	ReceivedTimestamp      uint64         `json:"receivedTimestamp"`
+	BlockHeightAtReception uint64         `json:"blockHeightAtReception"`
+	Coinbase               common.Address `json:"coinbase"`
+	PowType                uint32         `json:"powType"`
+	ParentHash             common.Hash    `json:"parentHash"`
+	WorkshareNumber        uint64         `json:"workshareNumber"`
+}
+
+// GetWorkshareReception retrieves workshare reception info by hash
+func (api *WorkshareTrackingAPI) GetWorkshareReception(ctx context.Context, hash common.Hash) (*WorkshareReceptionResult, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	reception, err := api.b.GetWorkshareReception(hash)
+	if err != nil {
+		return nil, err
+	}
+	if reception == nil {
+		return nil, nil
+	}
+	return &WorkshareReceptionResult{
+		WorkshareHash:          reception.WorkshareHash,
+		ReceivedTimestamp:      reception.ReceivedTimestamp,
+		BlockHeightAtReception: reception.BlockHeightAtReception,
+		Coinbase:               reception.Coinbase,
+		PowType:                uint32(reception.PowType),
+		ParentHash:             reception.ParentHash,
+		WorkshareNumber:        reception.WorkshareNumber,
+	}, nil
+}
+
+// WorkerInclusionResult is the response for worker inclusion query
+type WorkerInclusionResult struct {
+	WorkshareHash        common.Hash `json:"workshareHash"`
+	PendingBlockHash     common.Hash `json:"pendingBlockHash"`
+	PendingBlockNumber   uint64      `json:"pendingBlockNumber"`
+	InclusionTimestamp   uint64      `json:"inclusionTimestamp"`
+	ConfirmedBlockHash   common.Hash `json:"confirmedBlockHash"`
+	ConfirmedBlockNumber uint64      `json:"confirmedBlockNumber"`
+	ConfirmedTimestamp   uint64      `json:"confirmedTimestamp"`
+	IsConfirmed          bool        `json:"isConfirmed"`
+}
+
+// GetWorkerInclusion retrieves worker inclusion info by workshare hash
+func (api *WorkshareTrackingAPI) GetWorkerInclusion(ctx context.Context, hash common.Hash) (*WorkerInclusionResult, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	inclusion, err := api.b.GetWorkerInclusion(hash)
+	if err != nil {
+		return nil, err
+	}
+	if inclusion == nil {
+		return nil, nil
+	}
+	return &WorkerInclusionResult{
+		WorkshareHash:        inclusion.WorkshareHash,
+		PendingBlockHash:     inclusion.PendingBlockHash,
+		PendingBlockNumber:   inclusion.PendingBlockNumber,
+		InclusionTimestamp:   inclusion.InclusionTimestamp,
+		ConfirmedBlockHash:   inclusion.ConfirmedBlockHash,
+		ConfirmedBlockNumber: inclusion.ConfirmedBlockNumber,
+		ConfirmedTimestamp:   inclusion.ConfirmedTimestamp,
+		IsConfirmed:          inclusion.IsConfirmed(),
+	}, nil
+}
+
+// MissedWorkshareResult is the response for missed workshare query
+type MissedWorkshareResult struct {
+	WorkshareHash     common.Hash    `json:"workshareHash"`
+	ReceivedTimestamp uint64         `json:"receivedTimestamp"`
+	ExpiredAtBlock    uint64         `json:"expiredAtBlock"`
+	Reason            string         `json:"reason"`
+	Coinbase          common.Address `json:"coinbase"`
+	PowType           uint32         `json:"powType"`
+}
+
+// GetMissedWorkshare retrieves missed workshare info by hash
+func (api *WorkshareTrackingAPI) GetMissedWorkshare(ctx context.Context, hash common.Hash) (*MissedWorkshareResult, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	missed, err := api.b.GetMissedWorkshare(hash)
+	if err != nil {
+		return nil, err
+	}
+	if missed == nil {
+		return nil, nil
+	}
+	var reason string
+	switch missed.Reason {
+	case types.MissedExpired:
+		reason = "expired"
+	case types.MissedNotSeenByWorker:
+		reason = "not_seen_by_worker"
+	case types.MissedRejected:
+		reason = "rejected"
+	default:
+		reason = "unknown"
+	}
+	return &MissedWorkshareResult{
+		WorkshareHash:     missed.WorkshareHash,
+		ReceivedTimestamp: missed.ReceivedTimestamp,
+		ExpiredAtBlock:    missed.ExpiredAtBlock,
+		Reason:            reason,
+		Coinbase:          missed.Coinbase,
+		PowType:           uint32(missed.PowType),
+	}, nil
+}
+
+// BlockRecordResult is the response for block record query
+type BlockRecordResult struct {
+	BlockHash             common.Hash    `json:"blockHash"`
+	BlockNumber           uint64         `json:"blockNumber"`
+	ReceivedTimestamp     uint64         `json:"receivedTimestamp"`
+	WorkshareHashes       []common.Hash  `json:"workshareHashes"`
+	WorkshareCount        uint32         `json:"workshareCount"`
+	TotalWorkshareEntropy string         `json:"totalWorkshareEntropy"`
+	Coinbase              common.Address `json:"coinbase"`
+	IsCanonical           bool           `json:"isCanonical"`
+}
+
+// GetBlockRecord retrieves block record by hash
+func (api *WorkshareTrackingAPI) GetBlockRecord(ctx context.Context, hash common.Hash) (*BlockRecordResult, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	record, err := api.b.GetBlockRecord(hash)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, nil
+	}
+	var entropy string
+	if record.TotalWorkshareEntropy != nil {
+		entropy = record.TotalWorkshareEntropy.String()
+	}
+	return &BlockRecordResult{
+		BlockHash:             record.BlockHash,
+		BlockNumber:           record.BlockNumber,
+		ReceivedTimestamp:     record.ReceivedTimestamp,
+		WorkshareHashes:       record.WorkshareHashes,
+		WorkshareCount:        record.WorkshareCount,
+		TotalWorkshareEntropy: entropy,
+		Coinbase:              record.Coinbase,
+		IsCanonical:           record.IsCanonical,
+	}, nil
+}
+
+// OrphanedBlockResult is the response for orphaned block query
+type OrphanedBlockResult struct {
+	BlockHash             common.Hash    `json:"blockHash"`
+	BlockNumber           uint64         `json:"blockNumber"`
+	OrphanedAtTimestamp   uint64         `json:"orphanedAtTimestamp"`
+	OrphanedAtBlock       uint64         `json:"orphanedAtBlock"`
+	WorkshareHashes       []common.Hash  `json:"workshareHashes"`
+	WorkshareCount        uint32         `json:"workshareCount"`
+	TotalWorkshareEntropy string         `json:"totalWorkshareEntropy"`
+	Coinbase              common.Address `json:"coinbase"`
+	ReplacedBy            common.Hash    `json:"replacedBy"`
+}
+
+// GetOrphanedBlock retrieves orphaned block record by hash
+func (api *WorkshareTrackingAPI) GetOrphanedBlock(ctx context.Context, hash common.Hash) (*OrphanedBlockResult, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	orphaned, err := api.b.GetOrphanedBlock(hash)
+	if err != nil {
+		return nil, err
+	}
+	if orphaned == nil {
+		return nil, nil
+	}
+	var entropy string
+	if orphaned.TotalWorkshareEntropy != nil {
+		entropy = orphaned.TotalWorkshareEntropy.String()
+	}
+	return &OrphanedBlockResult{
+		BlockHash:             orphaned.BlockHash,
+		BlockNumber:           orphaned.BlockNumber,
+		OrphanedAtTimestamp:   orphaned.OrphanedAtTimestamp,
+		OrphanedAtBlock:       orphaned.OrphanedAtBlock,
+		WorkshareHashes:       orphaned.WorkshareHashes,
+		WorkshareCount:        orphaned.WorkshareCount,
+		TotalWorkshareEntropy: entropy,
+		Coinbase:              orphaned.Coinbase,
+		ReplacedBy:            orphaned.ReplacedBy,
+	}, nil
+}

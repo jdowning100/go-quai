@@ -335,3 +335,99 @@ message ProtoSupplyAnalytics {
   bytes total_supply_quai = 5;
   bytes total_supply_qi = 6;
 }
+
+// Workshare tracking experiment messages
+
+// Record when a workshare is first received via gossipsub
+message ProtoWorkshareReception {
+  common.ProtoHash workshare_hash = 1;
+  uint64 received_timestamp = 2;
+  uint64 block_height_at_reception = 3;
+  common.ProtoAddress coinbase = 4;
+  uint32 pow_type = 5;
+  common.ProtoHash parent_hash = 6;
+  uint64 workshare_number = 7;
+}
+
+// Track when worker adds workshare to pending block
+message ProtoWorkerInclusionRecord {
+  common.ProtoHash workshare_hash = 1;
+  common.ProtoHash pending_block_hash = 2;
+  uint64 pending_block_number = 3;
+  uint64 inclusion_timestamp = 4;
+  common.ProtoHash confirmed_block_hash = 5;  // Block hash when confirmed in canonical chain
+  uint64 confirmed_block_number = 6;          // Block number when confirmed
+  uint64 confirmed_timestamp = 7;             // Timestamp when confirmed
+}
+
+// Track workshares that expired without inclusion
+message ProtoMissedWorkshare {
+  common.ProtoHash workshare_hash = 1;
+  uint64 received_timestamp = 2;
+  uint64 expired_at_block = 3;
+  uint32 reason = 4;  // 0=expired, 1=not_seen_by_worker, 2=rejected
+  common.ProtoAddress coinbase = 5;
+  uint32 pow_type = 6;
+}
+
+// Track when and why worker rejected a workshare
+message ProtoWorkerRejection {
+  common.ProtoHash workshare_hash = 1;
+  uint32 rejection_reason = 2;  // WorkerRejectionReason enum value
+  uint64 rejection_time = 3;
+  uint64 block_number = 4;      // Block number being built when rejection occurred
+  string additional_info = 5;   // Error message or additional context
+}
+
+// Track a reorg event with workshare comparison
+message ProtoReorgEvent {
+  common.ProtoHash old_head = 1;
+  common.ProtoHash new_head = 2;
+  common.ProtoHash common_ancestor = 3;
+  uint64 reorg_depth = 4;
+  uint64 timestamp = 5;
+  uint32 old_chain_workshare_count = 6;
+  bytes old_chain_entropy = 7;
+  uint32 new_chain_workshare_count = 8;
+  bytes new_chain_entropy = 9;
+  repeated common.ProtoHash workshares_lost = 10;
+  repeated common.ProtoHash workshares_gained = 11;
+}
+
+// Track a block and the workshares it contains
+message ProtoBlockRecord {
+  common.ProtoHash block_hash = 1;
+  uint64 block_number = 2;
+  uint64 received_timestamp = 3;
+  repeated common.ProtoHash workshare_hashes = 4;
+  uint32 workshare_count = 5;
+  bytes total_workshare_entropy = 6;
+  common.ProtoAddress coinbase = 7;
+  bool is_canonical = 8;  // Whether this block became canonical
+}
+
+// Track an orphaned block (became non-canonical after a reorg)
+message ProtoOrphanedBlock {
+  common.ProtoHash block_hash = 1;
+  uint64 block_number = 2;
+  uint64 orphaned_at_timestamp = 3;
+  uint64 orphaned_at_block = 4;  // Block number when reorg happened
+  repeated common.ProtoHash workshare_hashes = 5;
+  uint32 workshare_count = 6;
+  bytes total_workshare_entropy = 7;
+  common.ProtoAddress coinbase = 8;
+  common.ProtoHash replaced_by = 9;  // The block that replaced this one
+}
+
+// Track fork competitions (blocks competing for same height)
+message ProtoForkCompetition {
+  common.ProtoHash block_hash = 1;
+  uint64 block_number = 2;
+  uint64 timestamp = 3;
+  uint32 workshare_count = 4;
+  uint64 intrinsic_entropy = 5;  // Intrinsic PoW entropy in bits
+  uint32 outcome = 6;            // 0=won, 1=lost
+  common.ProtoHash competitor_hash = 7;
+  uint32 competitor_ws_count = 8;
+  uint64 competitor_entropy = 9;
+}

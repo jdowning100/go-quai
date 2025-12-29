@@ -109,6 +109,16 @@ type Backend interface {
 	SubscribeExpansionEvent(ch chan<- core.ExpansionEvent) event.Subscription
 	WriteGenesisBlock(block *types.WorkObject, location common.Location)
 	SendWorkShare(workShare *types.WorkObjectHeader) error
+	TrackWorkshareReception(workShare *types.WorkObjectHeader)
+	TrackBlockReceived(block *types.WorkObject)
+
+	// Workshare tracking query methods
+	GetWorkshareTrackingEnabled() bool
+	GetWorkshareReception(hash common.Hash) (*types.WorkshareReception, error)
+	GetWorkerInclusion(hash common.Hash) (*types.WorkerInclusionRecord, error)
+	GetMissedWorkshare(hash common.Hash) (*types.MissedWorkshare, error)
+	GetBlockRecord(hash common.Hash) (*types.BlockRecord, error)
+	GetOrphanedBlock(hash common.Hash) (*types.OrphanedBlock, error)
 	SendAuxPowTemplate(auxTemplate *types.AuxTemplate) error
 	GetBestAuxTemplate(powId types.PowID) *types.AuxTemplate
 	CheckIfValidWorkShare(workShare *types.WorkObjectHeader) types.WorkShareValidity
@@ -258,6 +268,12 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 			Namespace: "workshare",
 			Version:   "1.0",
 			Service:   NewPublicWorkSharesAPI(apis[7].Service.(*PublicTransactionPoolAPI), apiBackend),
+			Public:    true,
+		})
+		apis = append(apis, rpc.API{
+			Namespace: "quai",
+			Version:   "1.0",
+			Service:   NewWorkshareTrackingAPI(apiBackend),
 			Public:    true,
 		})
 	}

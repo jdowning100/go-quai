@@ -116,9 +116,9 @@ var (
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllProgpowProtocolChanges = &ChainConfig{big.NewInt(1337), "progpow", new(Blake3powConfig), new(ProgpowConfig), common.Location{}, common.Hash{}, false, false}
+	AllProgpowProtocolChanges = &ChainConfig{big.NewInt(1337), "progpow", new(Blake3powConfig), new(ProgpowConfig), common.Location{}, common.Hash{}, false, false, false}
 
-	TestChainConfig = &ChainConfig{big.NewInt(1), "progpow", new(Blake3powConfig), new(ProgpowConfig), common.Location{}, common.Hash{}, false, false}
+	TestChainConfig = &ChainConfig{big.NewInt(1), "progpow", new(Blake3powConfig), new(ProgpowConfig), common.Location{}, common.Hash{}, false, false, false}
 	TestRules       = TestChainConfig.Rules(new(big.Int))
 )
 
@@ -133,10 +133,11 @@ type ChainConfig struct {
 	ConsensusEngine    string
 	Blake3Pow          *Blake3powConfig `json:"blake3pow,omitempty"`
 	Progpow            *ProgpowConfig   `json:"progpow,omitempty"`
-	Location           common.Location
-	DefaultGenesisHash common.Hash
-	IndexAddressUtxos  bool
-	TelemetryEnabled   bool
+	Location                 common.Location
+	DefaultGenesisHash       common.Hash
+	IndexAddressUtxos        bool
+	TelemetryEnabled         bool
+	WorkshareTrackingEnabled bool // Enable experimental workshare tracking for analysis
 }
 
 // Mode defines the type and amount of PoW verification a kawpow engine makes.

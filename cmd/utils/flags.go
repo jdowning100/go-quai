@@ -118,6 +118,7 @@ var NodeFlags = []Flag{
 	QuaiStatsURLFlag,
 	SendFullStatsFlag,
 	IndexAddressUtxos,
+	WorkshareTracking,
 	ReIndex,
 	ValidateIndexer,
 	StartingExpansionNumberFlag,
@@ -582,6 +583,12 @@ var (
 		Name:  c_NodeFlagPrefix + "index-address-utxos",
 		Value: false,
 		Usage: "Index address utxos" + generateEnvDoc(c_NodeFlagPrefix+"index-address-utxos"),
+	}
+
+	WorkshareTracking = Flag{
+		Name:  c_NodeFlagPrefix + "workshare-tracking",
+		Value: false,
+		Usage: "Enable experimental workshare tracking for analysis" + generateEnvDoc(c_NodeFlagPrefix+"workshare-tracking"),
 	}
 
 	ReIndex = Flag{
@@ -1583,6 +1590,8 @@ func SetQuaiConfig(stack *node.Node, cfg *quaiconfig.Config, slicesRunning []com
 	cfg.IndexAddressUtxos = viper.GetBool(IndexAddressUtxos.Name)
 
 	cfg.TelemetryEnabled = viper.GetBool(Telemetry.Name)
+
+	cfg.WorkshareTrackingEnabled = viper.GetBool(WorkshareTracking.Name)
 
 	cfg.RpcVersion = viper.GetString(RpcVersion.Name)
 	cfg.UsePendingState = viper.GetBool(UsePendingState.Name)

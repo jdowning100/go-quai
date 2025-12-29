@@ -1719,7 +1719,7 @@ func (s *Server) sendJobAndNotify(sess *session, clean bool) error {
 			if diffF > 0 {
 				workshareStratumDiff = diffF
 			}
-			s.logger.WithFields(log.Fields{"sha256Diff": sd.String(), "minerDiff": workshareStratumDiff}).Debug("sendJobAndNotify sha256 diff")
+			s.logger.WithFields(log.Fields{"sha256Diff": sd.String(), "workshareStratumDiff": workshareStratumDiff}).Debug("sendJobAndNotify sha256 diff")
 		} else {
 			s.logger.WithField("fallback", workshareStratumDiff).Debug("sendJobAndNotify: no sha256 diff available, using fallback")
 		}

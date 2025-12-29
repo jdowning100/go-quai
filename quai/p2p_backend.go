@@ -114,6 +114,8 @@ func (qbe *QuaiBackend) OnNewBroadcast(sourcePeer p2p.PeerID, Id string, topic s
 		backend.Logger().WithFields(log.Fields{"message id": Id, "Number": data.WorkObject.NumberArray(), "Hash": data.WorkObject.Hash()}).Info("Received a work object block view broadcast")
 
 		backend.WriteBlock(data.WorkObject)
+		// Track block and its workshares for the tracking experiment
+		backend.TrackBlockReceived(data.WorkObject)
 		blockIngressCounter.Inc()
 	case types.WorkObjectHeaderView:
 		backend := *qbe.GetBackend(nodeLocation)
@@ -146,6 +148,9 @@ func (qbe *QuaiBackend) OnNewBroadcast(sourcePeer p2p.PeerID, Id string, topic s
 					"error": err.Error(),
 					"hash":  data.WorkObject.Hash().Hex(),
 				}).Warn("Failed to process received workshare")
+			} else {
+				// Track workshare reception for the tracking experiment
+				backend.TrackWorkshareReception(data.WorkObject.WorkObjectHeader())
 			}
 			backend.SendRemoteTxs(data.WorkObject.Transactions())
 

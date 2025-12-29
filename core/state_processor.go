@@ -1187,6 +1187,9 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 
 		rewardPerShare := new(big.Int).Div(blockRewardAtTargetBlock, big.NewInt(int64(params.ExpectedWorksharesPerBlock+1)))
 
+		// Track unlively share penalty stats by algorithm
+		unlivelyStats := &UnlivelyShareStats{}
+
 		// Add an etx for each workshare for it to be rewarded
 		for i, share := range sharesAtTargetBlockDepth {
 
@@ -1230,19 +1233,43 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 					}
 				}
 
-				// If mining progpow after the fork, 20% is deducted from the
+				// If mining progpow after the fork, 30% is deducted from the
 				// expectation
 				if share.AuxPow() == nil {
 					shareReward = new(big.Int).Mul(shareReward, params.ProgpowPenalty)
 					shareReward = new(big.Int).Div(shareReward, params.ShareRewardPenaltyDivisor)
+					// Track progpow penalty
+					unlivelyStats.ProgpowPenalized++
 				} else {
-					// If the share hash unlively template, 10% is deducted from
+					// If the share has unlively template, 30% is deducted from
 					// the expectation
 					scritSig := types.ExtractScriptSigFromCoinbaseTx(share.AuxPow().Transaction())
 					signatureTime, err := types.ExtractSignatureTimeFromCoinbase(scritSig)
-					if err != nil || signatureTime+params.ShareLivenessTime < share.AuxPow().Header().Timestamp() {
+					isUnlively := err != nil || signatureTime+params.ShareLivenessTime < share.AuxPow().Header().Timestamp()
+					if isUnlively {
 						shareReward = new(big.Int).Mul(shareReward, params.UnlivelySharePenalty)
 						shareReward = new(big.Int).Div(shareReward, params.ShareRewardPenaltyDivisor)
+					}
+					// Track unlively stats by algorithm
+					switch share.AuxPow().PowID() {
+					case types.Kawpow:
+						if isUnlively {
+							unlivelyStats.KawpowUnlively++
+						} else {
+							unlivelyStats.KawpowLive++
+						}
+					case types.SHA_BCH, types.SHA_BTC:
+						if isUnlively {
+							unlivelyStats.ShaUnlively++
+						} else {
+							unlivelyStats.ShaLive++
+						}
+					case types.Scrypt:
+						if isUnlively {
+							unlivelyStats.ScryptUnlively++
+						} else {
+							unlivelyStats.ScryptLive++
+						}
 					}
 				}
 
@@ -1262,6 +1289,9 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 			}
 			emittedEtxs = append(emittedEtxs, types.NewTx(&types.ExternalTx{To: &uncleCoinbase, Gas: params.TxGas, Value: shareReward, EtxType: types.CoinbaseType, OriginatingTxHash: originHash, ETXIndex: uint16(len(emittedEtxs)), Sender: uncleCoinbase, Data: append(share.Data(), share.Hash().Bytes()...)}))
 		}
+
+		// Track unlively share penalty statistics
+		p.hc.TrackUnlivelySharePenalties(block.NumberU64(nodeCtx), block.Hash(), unlivelyStats)
 	}
 
 	time4 := common.PrettyDuration(time.Since(start))

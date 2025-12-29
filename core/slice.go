@@ -259,6 +259,12 @@ func (sl *Slice) Append(header *types.WorkObject, domTerminus common.Hash, domOr
 	}
 	time4 := common.PrettyDuration(time.Since(start))
 
+	// Track fork competition if there's already a canonical block at this height
+	// Initially mark as lost - will be updated to won if this block triggers a reorg
+	if nodeCtx == common.ZONE_CTX {
+		sl.hc.TrackForkCompetition(block, false)
+	}
+
 	sl.hc.CalculateManifest(block)
 	if nodeCtx == common.PRIME_CTX {
 		_, err = sl.hc.CalculateInterlink(block)

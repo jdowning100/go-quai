@@ -798,6 +798,38 @@ func (b *QuaiAPIBackend) SendWorkShare(workShare *types.WorkObjectHeader) error 
 	return b.quai.core.SendWorkShare(workShare)
 }
 
+func (b *QuaiAPIBackend) TrackWorkshareReception(workShare *types.WorkObjectHeader) {
+	b.quai.core.TrackWorkshareReception(workShare)
+}
+
+func (b *QuaiAPIBackend) TrackBlockReceived(block *types.WorkObject) {
+	b.quai.core.TrackBlockReceived(block)
+}
+
+func (b *QuaiAPIBackend) GetWorkshareTrackingEnabled() bool {
+	return b.quai.core.GetWorkshareTrackingEnabled()
+}
+
+func (b *QuaiAPIBackend) GetWorkshareReception(hash common.Hash) (*types.WorkshareReception, error) {
+	return b.quai.core.GetWorkshareReception(hash)
+}
+
+func (b *QuaiAPIBackend) GetWorkerInclusion(hash common.Hash) (*types.WorkerInclusionRecord, error) {
+	return b.quai.core.GetWorkerInclusion(hash)
+}
+
+func (b *QuaiAPIBackend) GetMissedWorkshare(hash common.Hash) (*types.MissedWorkshare, error) {
+	return b.quai.core.GetMissedWorkshare(hash)
+}
+
+func (b *QuaiAPIBackend) GetBlockRecord(hash common.Hash) (*types.BlockRecord, error) {
+	return b.quai.core.GetBlockRecord(hash)
+}
+
+func (b *QuaiAPIBackend) GetOrphanedBlock(hash common.Hash) (*types.OrphanedBlock, error) {
+	return b.quai.core.GetOrphanedBlock(hash)
+}
+
 func (b *QuaiAPIBackend) CheckIfValidWorkShare(workShare *types.WorkObjectHeader) types.WorkShareValidity {
 	return b.quai.core.CheckIfValidWorkShare(workShare)
 }

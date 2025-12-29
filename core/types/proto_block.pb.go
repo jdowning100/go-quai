@@ -3367,6 +3367,798 @@ func (x *ProtoSupplyAnalytics) GetTotalSupplyQi() []byte {
 	return nil
 }
 
+// Record when a workshare is first received via gossipsub
+type ProtoWorkshareReception struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	WorkshareHash          *common.ProtoHash      `protobuf:"bytes,1,opt,name=workshare_hash,json=workshareHash,proto3" json:"workshare_hash,omitempty"`
+	ReceivedTimestamp      uint64                 `protobuf:"varint,2,opt,name=received_timestamp,json=receivedTimestamp,proto3" json:"received_timestamp,omitempty"`
+	BlockHeightAtReception uint64                 `protobuf:"varint,3,opt,name=block_height_at_reception,json=blockHeightAtReception,proto3" json:"block_height_at_reception,omitempty"`
+	Coinbase               *common.ProtoAddress   `protobuf:"bytes,4,opt,name=coinbase,proto3" json:"coinbase,omitempty"`
+	PowType                uint32                 `protobuf:"varint,5,opt,name=pow_type,json=powType,proto3" json:"pow_type,omitempty"`
+	ParentHash             *common.ProtoHash      `protobuf:"bytes,6,opt,name=parent_hash,json=parentHash,proto3" json:"parent_hash,omitempty"`
+	WorkshareNumber        uint64                 `protobuf:"varint,7,opt,name=workshare_number,json=workshareNumber,proto3" json:"workshare_number,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *ProtoWorkshareReception) Reset() {
+	*x = ProtoWorkshareReception{}
+	mi := &file_core_types_proto_block_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoWorkshareReception) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoWorkshareReception) ProtoMessage() {}
+
+func (x *ProtoWorkshareReception) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoWorkshareReception.ProtoReflect.Descriptor instead.
+func (*ProtoWorkshareReception) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *ProtoWorkshareReception) GetWorkshareHash() *common.ProtoHash {
+	if x != nil {
+		return x.WorkshareHash
+	}
+	return nil
+}
+
+func (x *ProtoWorkshareReception) GetReceivedTimestamp() uint64 {
+	if x != nil {
+		return x.ReceivedTimestamp
+	}
+	return 0
+}
+
+func (x *ProtoWorkshareReception) GetBlockHeightAtReception() uint64 {
+	if x != nil {
+		return x.BlockHeightAtReception
+	}
+	return 0
+}
+
+func (x *ProtoWorkshareReception) GetCoinbase() *common.ProtoAddress {
+	if x != nil {
+		return x.Coinbase
+	}
+	return nil
+}
+
+func (x *ProtoWorkshareReception) GetPowType() uint32 {
+	if x != nil {
+		return x.PowType
+	}
+	return 0
+}
+
+func (x *ProtoWorkshareReception) GetParentHash() *common.ProtoHash {
+	if x != nil {
+		return x.ParentHash
+	}
+	return nil
+}
+
+func (x *ProtoWorkshareReception) GetWorkshareNumber() uint64 {
+	if x != nil {
+		return x.WorkshareNumber
+	}
+	return 0
+}
+
+// Track when worker adds workshare to pending block
+type ProtoWorkerInclusionRecord struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	WorkshareHash        *common.ProtoHash      `protobuf:"bytes,1,opt,name=workshare_hash,json=workshareHash,proto3" json:"workshare_hash,omitempty"`
+	PendingBlockHash     *common.ProtoHash      `protobuf:"bytes,2,opt,name=pending_block_hash,json=pendingBlockHash,proto3" json:"pending_block_hash,omitempty"`
+	PendingBlockNumber   uint64                 `protobuf:"varint,3,opt,name=pending_block_number,json=pendingBlockNumber,proto3" json:"pending_block_number,omitempty"`
+	InclusionTimestamp   uint64                 `protobuf:"varint,4,opt,name=inclusion_timestamp,json=inclusionTimestamp,proto3" json:"inclusion_timestamp,omitempty"`
+	ConfirmedBlockHash   *common.ProtoHash      `protobuf:"bytes,5,opt,name=confirmed_block_hash,json=confirmedBlockHash,proto3" json:"confirmed_block_hash,omitempty"`        // Block hash when confirmed in canonical chain
+	ConfirmedBlockNumber uint64                 `protobuf:"varint,6,opt,name=confirmed_block_number,json=confirmedBlockNumber,proto3" json:"confirmed_block_number,omitempty"` // Block number when confirmed
+	ConfirmedTimestamp   uint64                 `protobuf:"varint,7,opt,name=confirmed_timestamp,json=confirmedTimestamp,proto3" json:"confirmed_timestamp,omitempty"`         // Timestamp when confirmed
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ProtoWorkerInclusionRecord) Reset() {
+	*x = ProtoWorkerInclusionRecord{}
+	mi := &file_core_types_proto_block_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoWorkerInclusionRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoWorkerInclusionRecord) ProtoMessage() {}
+
+func (x *ProtoWorkerInclusionRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoWorkerInclusionRecord.ProtoReflect.Descriptor instead.
+func (*ProtoWorkerInclusionRecord) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *ProtoWorkerInclusionRecord) GetWorkshareHash() *common.ProtoHash {
+	if x != nil {
+		return x.WorkshareHash
+	}
+	return nil
+}
+
+func (x *ProtoWorkerInclusionRecord) GetPendingBlockHash() *common.ProtoHash {
+	if x != nil {
+		return x.PendingBlockHash
+	}
+	return nil
+}
+
+func (x *ProtoWorkerInclusionRecord) GetPendingBlockNumber() uint64 {
+	if x != nil {
+		return x.PendingBlockNumber
+	}
+	return 0
+}
+
+func (x *ProtoWorkerInclusionRecord) GetInclusionTimestamp() uint64 {
+	if x != nil {
+		return x.InclusionTimestamp
+	}
+	return 0
+}
+
+func (x *ProtoWorkerInclusionRecord) GetConfirmedBlockHash() *common.ProtoHash {
+	if x != nil {
+		return x.ConfirmedBlockHash
+	}
+	return nil
+}
+
+func (x *ProtoWorkerInclusionRecord) GetConfirmedBlockNumber() uint64 {
+	if x != nil {
+		return x.ConfirmedBlockNumber
+	}
+	return 0
+}
+
+func (x *ProtoWorkerInclusionRecord) GetConfirmedTimestamp() uint64 {
+	if x != nil {
+		return x.ConfirmedTimestamp
+	}
+	return 0
+}
+
+// Track workshares that expired without inclusion
+type ProtoMissedWorkshare struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	WorkshareHash     *common.ProtoHash      `protobuf:"bytes,1,opt,name=workshare_hash,json=workshareHash,proto3" json:"workshare_hash,omitempty"`
+	ReceivedTimestamp uint64                 `protobuf:"varint,2,opt,name=received_timestamp,json=receivedTimestamp,proto3" json:"received_timestamp,omitempty"`
+	ExpiredAtBlock    uint64                 `protobuf:"varint,3,opt,name=expired_at_block,json=expiredAtBlock,proto3" json:"expired_at_block,omitempty"`
+	Reason            uint32                 `protobuf:"varint,4,opt,name=reason,proto3" json:"reason,omitempty"` // 0=expired, 1=not_seen_by_worker, 2=rejected
+	Coinbase          *common.ProtoAddress   `protobuf:"bytes,5,opt,name=coinbase,proto3" json:"coinbase,omitempty"`
+	PowType           uint32                 `protobuf:"varint,6,opt,name=pow_type,json=powType,proto3" json:"pow_type,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ProtoMissedWorkshare) Reset() {
+	*x = ProtoMissedWorkshare{}
+	mi := &file_core_types_proto_block_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoMissedWorkshare) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoMissedWorkshare) ProtoMessage() {}
+
+func (x *ProtoMissedWorkshare) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoMissedWorkshare.ProtoReflect.Descriptor instead.
+func (*ProtoMissedWorkshare) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *ProtoMissedWorkshare) GetWorkshareHash() *common.ProtoHash {
+	if x != nil {
+		return x.WorkshareHash
+	}
+	return nil
+}
+
+func (x *ProtoMissedWorkshare) GetReceivedTimestamp() uint64 {
+	if x != nil {
+		return x.ReceivedTimestamp
+	}
+	return 0
+}
+
+func (x *ProtoMissedWorkshare) GetExpiredAtBlock() uint64 {
+	if x != nil {
+		return x.ExpiredAtBlock
+	}
+	return 0
+}
+
+func (x *ProtoMissedWorkshare) GetReason() uint32 {
+	if x != nil {
+		return x.Reason
+	}
+	return 0
+}
+
+func (x *ProtoMissedWorkshare) GetCoinbase() *common.ProtoAddress {
+	if x != nil {
+		return x.Coinbase
+	}
+	return nil
+}
+
+func (x *ProtoMissedWorkshare) GetPowType() uint32 {
+	if x != nil {
+		return x.PowType
+	}
+	return 0
+}
+
+// Track when and why worker rejected a workshare
+type ProtoWorkerRejection struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	WorkshareHash   *common.ProtoHash      `protobuf:"bytes,1,opt,name=workshare_hash,json=workshareHash,proto3" json:"workshare_hash,omitempty"`
+	RejectionReason uint32                 `protobuf:"varint,2,opt,name=rejection_reason,json=rejectionReason,proto3" json:"rejection_reason,omitempty"` // WorkerRejectionReason enum value
+	RejectionTime   uint64                 `protobuf:"varint,3,opt,name=rejection_time,json=rejectionTime,proto3" json:"rejection_time,omitempty"`
+	BlockNumber     uint64                 `protobuf:"varint,4,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`         // Block number being built when rejection occurred
+	AdditionalInfo  string                 `protobuf:"bytes,5,opt,name=additional_info,json=additionalInfo,proto3" json:"additional_info,omitempty"` // Error message or additional context
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ProtoWorkerRejection) Reset() {
+	*x = ProtoWorkerRejection{}
+	mi := &file_core_types_proto_block_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoWorkerRejection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoWorkerRejection) ProtoMessage() {}
+
+func (x *ProtoWorkerRejection) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoWorkerRejection.ProtoReflect.Descriptor instead.
+func (*ProtoWorkerRejection) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *ProtoWorkerRejection) GetWorkshareHash() *common.ProtoHash {
+	if x != nil {
+		return x.WorkshareHash
+	}
+	return nil
+}
+
+func (x *ProtoWorkerRejection) GetRejectionReason() uint32 {
+	if x != nil {
+		return x.RejectionReason
+	}
+	return 0
+}
+
+func (x *ProtoWorkerRejection) GetRejectionTime() uint64 {
+	if x != nil {
+		return x.RejectionTime
+	}
+	return 0
+}
+
+func (x *ProtoWorkerRejection) GetBlockNumber() uint64 {
+	if x != nil {
+		return x.BlockNumber
+	}
+	return 0
+}
+
+func (x *ProtoWorkerRejection) GetAdditionalInfo() string {
+	if x != nil {
+		return x.AdditionalInfo
+	}
+	return ""
+}
+
+// Track a reorg event with workshare comparison
+type ProtoReorgEvent struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	OldHead                *common.ProtoHash      `protobuf:"bytes,1,opt,name=old_head,json=oldHead,proto3" json:"old_head,omitempty"`
+	NewHead                *common.ProtoHash      `protobuf:"bytes,2,opt,name=new_head,json=newHead,proto3" json:"new_head,omitempty"`
+	CommonAncestor         *common.ProtoHash      `protobuf:"bytes,3,opt,name=common_ancestor,json=commonAncestor,proto3" json:"common_ancestor,omitempty"`
+	ReorgDepth             uint64                 `protobuf:"varint,4,opt,name=reorg_depth,json=reorgDepth,proto3" json:"reorg_depth,omitempty"`
+	Timestamp              uint64                 `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	OldChainWorkshareCount uint32                 `protobuf:"varint,6,opt,name=old_chain_workshare_count,json=oldChainWorkshareCount,proto3" json:"old_chain_workshare_count,omitempty"`
+	OldChainEntropy        []byte                 `protobuf:"bytes,7,opt,name=old_chain_entropy,json=oldChainEntropy,proto3" json:"old_chain_entropy,omitempty"`
+	NewChainWorkshareCount uint32                 `protobuf:"varint,8,opt,name=new_chain_workshare_count,json=newChainWorkshareCount,proto3" json:"new_chain_workshare_count,omitempty"`
+	NewChainEntropy        []byte                 `protobuf:"bytes,9,opt,name=new_chain_entropy,json=newChainEntropy,proto3" json:"new_chain_entropy,omitempty"`
+	WorksharesLost         []*common.ProtoHash    `protobuf:"bytes,10,rep,name=workshares_lost,json=worksharesLost,proto3" json:"workshares_lost,omitempty"`
+	WorksharesGained       []*common.ProtoHash    `protobuf:"bytes,11,rep,name=workshares_gained,json=worksharesGained,proto3" json:"workshares_gained,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *ProtoReorgEvent) Reset() {
+	*x = ProtoReorgEvent{}
+	mi := &file_core_types_proto_block_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoReorgEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoReorgEvent) ProtoMessage() {}
+
+func (x *ProtoReorgEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoReorgEvent.ProtoReflect.Descriptor instead.
+func (*ProtoReorgEvent) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *ProtoReorgEvent) GetOldHead() *common.ProtoHash {
+	if x != nil {
+		return x.OldHead
+	}
+	return nil
+}
+
+func (x *ProtoReorgEvent) GetNewHead() *common.ProtoHash {
+	if x != nil {
+		return x.NewHead
+	}
+	return nil
+}
+
+func (x *ProtoReorgEvent) GetCommonAncestor() *common.ProtoHash {
+	if x != nil {
+		return x.CommonAncestor
+	}
+	return nil
+}
+
+func (x *ProtoReorgEvent) GetReorgDepth() uint64 {
+	if x != nil {
+		return x.ReorgDepth
+	}
+	return 0
+}
+
+func (x *ProtoReorgEvent) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *ProtoReorgEvent) GetOldChainWorkshareCount() uint32 {
+	if x != nil {
+		return x.OldChainWorkshareCount
+	}
+	return 0
+}
+
+func (x *ProtoReorgEvent) GetOldChainEntropy() []byte {
+	if x != nil {
+		return x.OldChainEntropy
+	}
+	return nil
+}
+
+func (x *ProtoReorgEvent) GetNewChainWorkshareCount() uint32 {
+	if x != nil {
+		return x.NewChainWorkshareCount
+	}
+	return 0
+}
+
+func (x *ProtoReorgEvent) GetNewChainEntropy() []byte {
+	if x != nil {
+		return x.NewChainEntropy
+	}
+	return nil
+}
+
+func (x *ProtoReorgEvent) GetWorksharesLost() []*common.ProtoHash {
+	if x != nil {
+		return x.WorksharesLost
+	}
+	return nil
+}
+
+func (x *ProtoReorgEvent) GetWorksharesGained() []*common.ProtoHash {
+	if x != nil {
+		return x.WorksharesGained
+	}
+	return nil
+}
+
+// Track a block and the workshares it contains
+type ProtoBlockRecord struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	BlockHash             *common.ProtoHash      `protobuf:"bytes,1,opt,name=block_hash,json=blockHash,proto3" json:"block_hash,omitempty"`
+	BlockNumber           uint64                 `protobuf:"varint,2,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`
+	ReceivedTimestamp     uint64                 `protobuf:"varint,3,opt,name=received_timestamp,json=receivedTimestamp,proto3" json:"received_timestamp,omitempty"`
+	WorkshareHashes       []*common.ProtoHash    `protobuf:"bytes,4,rep,name=workshare_hashes,json=workshareHashes,proto3" json:"workshare_hashes,omitempty"`
+	WorkshareCount        uint32                 `protobuf:"varint,5,opt,name=workshare_count,json=workshareCount,proto3" json:"workshare_count,omitempty"`
+	TotalWorkshareEntropy []byte                 `protobuf:"bytes,6,opt,name=total_workshare_entropy,json=totalWorkshareEntropy,proto3" json:"total_workshare_entropy,omitempty"`
+	Coinbase              *common.ProtoAddress   `protobuf:"bytes,7,opt,name=coinbase,proto3" json:"coinbase,omitempty"`
+	IsCanonical           bool                   `protobuf:"varint,8,opt,name=is_canonical,json=isCanonical,proto3" json:"is_canonical,omitempty"` // Whether this block became canonical
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *ProtoBlockRecord) Reset() {
+	*x = ProtoBlockRecord{}
+	mi := &file_core_types_proto_block_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoBlockRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoBlockRecord) ProtoMessage() {}
+
+func (x *ProtoBlockRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoBlockRecord.ProtoReflect.Descriptor instead.
+func (*ProtoBlockRecord) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *ProtoBlockRecord) GetBlockHash() *common.ProtoHash {
+	if x != nil {
+		return x.BlockHash
+	}
+	return nil
+}
+
+func (x *ProtoBlockRecord) GetBlockNumber() uint64 {
+	if x != nil {
+		return x.BlockNumber
+	}
+	return 0
+}
+
+func (x *ProtoBlockRecord) GetReceivedTimestamp() uint64 {
+	if x != nil {
+		return x.ReceivedTimestamp
+	}
+	return 0
+}
+
+func (x *ProtoBlockRecord) GetWorkshareHashes() []*common.ProtoHash {
+	if x != nil {
+		return x.WorkshareHashes
+	}
+	return nil
+}
+
+func (x *ProtoBlockRecord) GetWorkshareCount() uint32 {
+	if x != nil {
+		return x.WorkshareCount
+	}
+	return 0
+}
+
+func (x *ProtoBlockRecord) GetTotalWorkshareEntropy() []byte {
+	if x != nil {
+		return x.TotalWorkshareEntropy
+	}
+	return nil
+}
+
+func (x *ProtoBlockRecord) GetCoinbase() *common.ProtoAddress {
+	if x != nil {
+		return x.Coinbase
+	}
+	return nil
+}
+
+func (x *ProtoBlockRecord) GetIsCanonical() bool {
+	if x != nil {
+		return x.IsCanonical
+	}
+	return false
+}
+
+// Track an orphaned block (became non-canonical after a reorg)
+type ProtoOrphanedBlock struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	BlockHash             *common.ProtoHash      `protobuf:"bytes,1,opt,name=block_hash,json=blockHash,proto3" json:"block_hash,omitempty"`
+	BlockNumber           uint64                 `protobuf:"varint,2,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`
+	OrphanedAtTimestamp   uint64                 `protobuf:"varint,3,opt,name=orphaned_at_timestamp,json=orphanedAtTimestamp,proto3" json:"orphaned_at_timestamp,omitempty"`
+	OrphanedAtBlock       uint64                 `protobuf:"varint,4,opt,name=orphaned_at_block,json=orphanedAtBlock,proto3" json:"orphaned_at_block,omitempty"` // Block number when reorg happened
+	WorkshareHashes       []*common.ProtoHash    `protobuf:"bytes,5,rep,name=workshare_hashes,json=workshareHashes,proto3" json:"workshare_hashes,omitempty"`
+	WorkshareCount        uint32                 `protobuf:"varint,6,opt,name=workshare_count,json=workshareCount,proto3" json:"workshare_count,omitempty"`
+	TotalWorkshareEntropy []byte                 `protobuf:"bytes,7,opt,name=total_workshare_entropy,json=totalWorkshareEntropy,proto3" json:"total_workshare_entropy,omitempty"`
+	Coinbase              *common.ProtoAddress   `protobuf:"bytes,8,opt,name=coinbase,proto3" json:"coinbase,omitempty"`
+	ReplacedBy            *common.ProtoHash      `protobuf:"bytes,9,opt,name=replaced_by,json=replacedBy,proto3" json:"replaced_by,omitempty"` // The block that replaced this one
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *ProtoOrphanedBlock) Reset() {
+	*x = ProtoOrphanedBlock{}
+	mi := &file_core_types_proto_block_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoOrphanedBlock) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoOrphanedBlock) ProtoMessage() {}
+
+func (x *ProtoOrphanedBlock) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoOrphanedBlock.ProtoReflect.Descriptor instead.
+func (*ProtoOrphanedBlock) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *ProtoOrphanedBlock) GetBlockHash() *common.ProtoHash {
+	if x != nil {
+		return x.BlockHash
+	}
+	return nil
+}
+
+func (x *ProtoOrphanedBlock) GetBlockNumber() uint64 {
+	if x != nil {
+		return x.BlockNumber
+	}
+	return 0
+}
+
+func (x *ProtoOrphanedBlock) GetOrphanedAtTimestamp() uint64 {
+	if x != nil {
+		return x.OrphanedAtTimestamp
+	}
+	return 0
+}
+
+func (x *ProtoOrphanedBlock) GetOrphanedAtBlock() uint64 {
+	if x != nil {
+		return x.OrphanedAtBlock
+	}
+	return 0
+}
+
+func (x *ProtoOrphanedBlock) GetWorkshareHashes() []*common.ProtoHash {
+	if x != nil {
+		return x.WorkshareHashes
+	}
+	return nil
+}
+
+func (x *ProtoOrphanedBlock) GetWorkshareCount() uint32 {
+	if x != nil {
+		return x.WorkshareCount
+	}
+	return 0
+}
+
+func (x *ProtoOrphanedBlock) GetTotalWorkshareEntropy() []byte {
+	if x != nil {
+		return x.TotalWorkshareEntropy
+	}
+	return nil
+}
+
+func (x *ProtoOrphanedBlock) GetCoinbase() *common.ProtoAddress {
+	if x != nil {
+		return x.Coinbase
+	}
+	return nil
+}
+
+func (x *ProtoOrphanedBlock) GetReplacedBy() *common.ProtoHash {
+	if x != nil {
+		return x.ReplacedBy
+	}
+	return nil
+}
+
+// Track fork competitions (blocks competing for same height)
+type ProtoForkCompetition struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	BlockHash         *common.ProtoHash      `protobuf:"bytes,1,opt,name=block_hash,json=blockHash,proto3" json:"block_hash,omitempty"`
+	BlockNumber       uint64                 `protobuf:"varint,2,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`
+	Timestamp         uint64                 `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	WorkshareCount    uint32                 `protobuf:"varint,4,opt,name=workshare_count,json=workshareCount,proto3" json:"workshare_count,omitempty"`
+	IntrinsicEntropy  uint64                 `protobuf:"varint,5,opt,name=intrinsic_entropy,json=intrinsicEntropy,proto3" json:"intrinsic_entropy,omitempty"` // Intrinsic PoW entropy in bits
+	Outcome           uint32                 `protobuf:"varint,6,opt,name=outcome,proto3" json:"outcome,omitempty"`                                           // 0=won, 1=lost
+	CompetitorHash    *common.ProtoHash      `protobuf:"bytes,7,opt,name=competitor_hash,json=competitorHash,proto3" json:"competitor_hash,omitempty"`
+	CompetitorWsCount uint32                 `protobuf:"varint,8,opt,name=competitor_ws_count,json=competitorWsCount,proto3" json:"competitor_ws_count,omitempty"`
+	CompetitorEntropy uint64                 `protobuf:"varint,9,opt,name=competitor_entropy,json=competitorEntropy,proto3" json:"competitor_entropy,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ProtoForkCompetition) Reset() {
+	*x = ProtoForkCompetition{}
+	mi := &file_core_types_proto_block_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtoForkCompetition) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtoForkCompetition) ProtoMessage() {}
+
+func (x *ProtoForkCompetition) ProtoReflect() protoreflect.Message {
+	mi := &file_core_types_proto_block_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtoForkCompetition.ProtoReflect.Descriptor instead.
+func (*ProtoForkCompetition) Descriptor() ([]byte, []int) {
+	return file_core_types_proto_block_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *ProtoForkCompetition) GetBlockHash() *common.ProtoHash {
+	if x != nil {
+		return x.BlockHash
+	}
+	return nil
+}
+
+func (x *ProtoForkCompetition) GetBlockNumber() uint64 {
+	if x != nil {
+		return x.BlockNumber
+	}
+	return 0
+}
+
+func (x *ProtoForkCompetition) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *ProtoForkCompetition) GetWorkshareCount() uint32 {
+	if x != nil {
+		return x.WorkshareCount
+	}
+	return 0
+}
+
+func (x *ProtoForkCompetition) GetIntrinsicEntropy() uint64 {
+	if x != nil {
+		return x.IntrinsicEntropy
+	}
+	return 0
+}
+
+func (x *ProtoForkCompetition) GetOutcome() uint32 {
+	if x != nil {
+		return x.Outcome
+	}
+	return 0
+}
+
+func (x *ProtoForkCompetition) GetCompetitorHash() *common.ProtoHash {
+	if x != nil {
+		return x.CompetitorHash
+	}
+	return nil
+}
+
+func (x *ProtoForkCompetition) GetCompetitorWsCount() uint32 {
+	if x != nil {
+		return x.CompetitorWsCount
+	}
+	return 0
+}
+
+func (x *ProtoForkCompetition) GetCompetitorEntropy() uint64 {
+	if x != nil {
+		return x.CompetitorEntropy
+	}
+	return 0
+}
+
 var File_core_types_proto_block_proto protoreflect.FileDescriptor
 
 var file_core_types_proto_block_proto_rawDesc = string([]byte{
@@ -4080,11 +4872,207 @@ var file_core_types_proto_block_proto_rawDesc = string([]byte{
 	0x74, 0x61, 0x6c, 0x53, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x51, 0x75, 0x61, 0x69, 0x12, 0x26, 0x0a,
 	0x0f, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x73, 0x75, 0x70, 0x70, 0x6c, 0x79, 0x5f, 0x71, 0x69,
 	0x18, 0x06, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0d, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x53, 0x75, 0x70,
-	0x70, 0x6c, 0x79, 0x51, 0x69, 0x42, 0x33, 0x5a, 0x31, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e,
-	0x63, 0x6f, 0x6d, 0x2f, 0x64, 0x6f, 0x6d, 0x69, 0x6e, 0x61, 0x6e, 0x74, 0x2d, 0x73, 0x74, 0x72,
-	0x61, 0x74, 0x65, 0x67, 0x69, 0x65, 0x73, 0x2f, 0x67, 0x6f, 0x2d, 0x71, 0x75, 0x61, 0x69, 0x2f,
-	0x63, 0x6f, 0x72, 0x65, 0x2f, 0x74, 0x79, 0x70, 0x65, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x33,
+	0x70, 0x6c, 0x79, 0x51, 0x69, 0x22, 0xe9, 0x02, 0x0a, 0x17, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x57,
+	0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x52, 0x65, 0x63, 0x65, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x12, 0x38, 0x0a, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x68,
+	0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d,
+	0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0d, 0x77, 0x6f,
+	0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x2d, 0x0a, 0x12, 0x72,
+	0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d,
+	0x70, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x72, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65,
+	0x64, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x39, 0x0a, 0x19, 0x62, 0x6c,
+	0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x5f, 0x61, 0x74, 0x5f, 0x72, 0x65,
+	0x63, 0x65, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x16, 0x62,
+	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x41, 0x74, 0x52, 0x65, 0x63, 0x65,
+	0x70, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x30, 0x0a, 0x08, 0x63, 0x6f, 0x69, 0x6e, 0x62, 0x61, 0x73,
+	0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e,
+	0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x08, 0x63,
+	0x6f, 0x69, 0x6e, 0x62, 0x61, 0x73, 0x65, 0x12, 0x19, 0x0a, 0x08, 0x70, 0x6f, 0x77, 0x5f, 0x74,
+	0x79, 0x70, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x07, 0x70, 0x6f, 0x77, 0x54, 0x79,
+	0x70, 0x65, 0x12, 0x32, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x68, 0x61, 0x73,
+	0x68, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e,
+	0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0a, 0x70, 0x61, 0x72, 0x65,
+	0x6e, 0x74, 0x48, 0x61, 0x73, 0x68, 0x12, 0x29, 0x0a, 0x10, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68,
+	0x61, 0x72, 0x65, 0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18, 0x07, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x0f, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x4e, 0x75, 0x6d, 0x62, 0x65,
+	0x72, 0x22, 0xa6, 0x03, 0x0a, 0x1a, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x57, 0x6f, 0x72, 0x6b, 0x65,
+	0x72, 0x49, 0x6e, 0x63, 0x6c, 0x75, 0x73, 0x69, 0x6f, 0x6e, 0x52, 0x65, 0x63, 0x6f, 0x72, 0x64,
+	0x12, 0x38, 0x0a, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x68, 0x61,
+	0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f,
+	0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0d, 0x77, 0x6f, 0x72,
+	0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x3f, 0x0a, 0x12, 0x70, 0x65,
+	0x6e, 0x64, 0x69, 0x6e, 0x67, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x61, 0x73, 0x68,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e,
+	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x10, 0x70, 0x65, 0x6e, 0x64, 0x69,
+	0x6e, 0x67, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x61, 0x73, 0x68, 0x12, 0x30, 0x0a, 0x14, 0x70,
+	0x65, 0x6e, 0x64, 0x69, 0x6e, 0x67, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x6e, 0x75, 0x6d,
+	0x62, 0x65, 0x72, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x70, 0x65, 0x6e, 0x64, 0x69,
+	0x6e, 0x67, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x12, 0x2f, 0x0a,
+	0x13, 0x69, 0x6e, 0x63, 0x6c, 0x75, 0x73, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73,
+	0x74, 0x61, 0x6d, 0x70, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x69, 0x6e, 0x63, 0x6c,
+	0x75, 0x73, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x43,
+	0x0a, 0x14, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x65, 0x64, 0x5f, 0x62, 0x6c, 0x6f, 0x63,
+	0x6b, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63,
+	0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52,
+	0x12, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x65, 0x64, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48,
+	0x61, 0x73, 0x68, 0x12, 0x34, 0x0a, 0x16, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x65, 0x64,
+	0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18, 0x06, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x14, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x65, 0x64, 0x42, 0x6c,
+	0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x12, 0x2f, 0x0a, 0x13, 0x63, 0x6f, 0x6e,
+	0x66, 0x69, 0x72, 0x6d, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70,
+	0x18, 0x07, 0x20, 0x01, 0x28, 0x04, 0x52, 0x12, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x65,
+	0x64, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x22, 0x8e, 0x02, 0x0a, 0x14, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x4d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x57, 0x6f, 0x72, 0x6b, 0x73, 0x68,
+	0x61, 0x72, 0x65, 0x12, 0x38, 0x0a, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65,
+	0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f,
+	0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0d,
+	0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x2d, 0x0a,
+	0x12, 0x72, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74,
+	0x61, 0x6d, 0x70, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x72, 0x65, 0x63, 0x65, 0x69,
+	0x76, 0x65, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x28, 0x0a, 0x10,
+	0x65, 0x78, 0x70, 0x69, 0x72, 0x65, 0x64, 0x5f, 0x61, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x65, 0x78, 0x70, 0x69, 0x72, 0x65, 0x64, 0x41,
+	0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x12, 0x30,
+	0x0a, 0x08, 0x63, 0x6f, 0x69, 0x6e, 0x62, 0x61, 0x73, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x14, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x41,
+	0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x08, 0x63, 0x6f, 0x69, 0x6e, 0x62, 0x61, 0x73, 0x65,
+	0x12, 0x19, 0x0a, 0x08, 0x70, 0x6f, 0x77, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x06, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x07, 0x70, 0x6f, 0x77, 0x54, 0x79, 0x70, 0x65, 0x22, 0xee, 0x01, 0x0a, 0x14,
+	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x57, 0x6f, 0x72, 0x6b, 0x65, 0x72, 0x52, 0x65, 0x6a, 0x65, 0x63,
+	0x74, 0x69, 0x6f, 0x6e, 0x12, 0x38, 0x0a, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72,
+	0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63,
+	0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52,
+	0x0d, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x48, 0x61, 0x73, 0x68, 0x12, 0x29,
+	0x0a, 0x10, 0x72, 0x65, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x72, 0x65, 0x61, 0x73,
+	0x6f, 0x6e, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0f, 0x72, 0x65, 0x6a, 0x65, 0x63, 0x74,
+	0x69, 0x6f, 0x6e, 0x52, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x12, 0x25, 0x0a, 0x0e, 0x72, 0x65, 0x6a,
+	0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0d, 0x72, 0x65, 0x6a, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65,
+	0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d,
+	0x62, 0x65, 0x72, 0x12, 0x27, 0x0a, 0x0f, 0x61, 0x64, 0x64, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x61,
+	0x6c, 0x5f, 0x69, 0x6e, 0x66, 0x6f, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x61, 0x64,
+	0x64, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x61, 0x6c, 0x49, 0x6e, 0x66, 0x6f, 0x22, 0xb2, 0x04, 0x0a,
+	0x0f, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x52, 0x65, 0x6f, 0x72, 0x67, 0x45, 0x76, 0x65, 0x6e, 0x74,
+	0x12, 0x2c, 0x0a, 0x08, 0x6f, 0x6c, 0x64, 0x5f, 0x68, 0x65, 0x61, 0x64, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74,
+	0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x07, 0x6f, 0x6c, 0x64, 0x48, 0x65, 0x61, 0x64, 0x12, 0x2c,
+	0x0a, 0x08, 0x6e, 0x65, 0x77, 0x5f, 0x68, 0x65, 0x61, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48,
+	0x61, 0x73, 0x68, 0x52, 0x07, 0x6e, 0x65, 0x77, 0x48, 0x65, 0x61, 0x64, 0x12, 0x3a, 0x0a, 0x0f,
+	0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x5f, 0x61, 0x6e, 0x63, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x18,
+	0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50,
+	0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e,
+	0x41, 0x6e, 0x63, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65, 0x6f, 0x72,
+	0x67, 0x5f, 0x64, 0x65, 0x70, 0x74, 0x68, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x72,
+	0x65, 0x6f, 0x72, 0x67, 0x44, 0x65, 0x70, 0x74, 0x68, 0x12, 0x1c, 0x0a, 0x09, 0x74, 0x69, 0x6d,
+	0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x74, 0x69,
+	0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x39, 0x0a, 0x19, 0x6f, 0x6c, 0x64, 0x5f, 0x63,
+	0x68, 0x61, 0x69, 0x6e, 0x5f, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x63,
+	0x6f, 0x75, 0x6e, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x16, 0x6f, 0x6c, 0x64, 0x43,
+	0x68, 0x61, 0x69, 0x6e, 0x57, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x43, 0x6f, 0x75,
+	0x6e, 0x74, 0x12, 0x2a, 0x0a, 0x11, 0x6f, 0x6c, 0x64, 0x5f, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x5f,
+	0x65, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x18, 0x07, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0f, 0x6f,
+	0x6c, 0x64, 0x43, 0x68, 0x61, 0x69, 0x6e, 0x45, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x12, 0x39,
+	0x0a, 0x19, 0x6e, 0x65, 0x77, 0x5f, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x5f, 0x77, 0x6f, 0x72, 0x6b,
+	0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x08, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x16, 0x6e, 0x65, 0x77, 0x43, 0x68, 0x61, 0x69, 0x6e, 0x57, 0x6f, 0x72, 0x6b, 0x73,
+	0x68, 0x61, 0x72, 0x65, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2a, 0x0a, 0x11, 0x6e, 0x65, 0x77,
+	0x5f, 0x63, 0x68, 0x61, 0x69, 0x6e, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x18, 0x09,
+	0x20, 0x01, 0x28, 0x0c, 0x52, 0x0f, 0x6e, 0x65, 0x77, 0x43, 0x68, 0x61, 0x69, 0x6e, 0x45, 0x6e,
+	0x74, 0x72, 0x6f, 0x70, 0x79, 0x12, 0x3a, 0x0a, 0x0f, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61,
+	0x72, 0x65, 0x73, 0x5f, 0x6c, 0x6f, 0x73, 0x74, 0x18, 0x0a, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x11,
+	0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73,
+	0x68, 0x52, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x73, 0x4c, 0x6f, 0x73,
+	0x74, 0x12, 0x3e, 0x0a, 0x11, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x73, 0x5f,
+	0x67, 0x61, 0x69, 0x6e, 0x65, 0x64, 0x18, 0x0b, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63,
+	0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52,
+	0x10, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x73, 0x47, 0x61, 0x69, 0x6e, 0x65,
+	0x64, 0x22, 0x8a, 0x03, 0x0a, 0x10, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
+	0x52, 0x65, 0x63, 0x6f, 0x72, 0x64, 0x12, 0x30, 0x0a, 0x0a, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f,
+	0x68, 0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d,
+	0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x09, 0x62,
+	0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x61, 0x73, 0x68, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63,
+	0x6b, 0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b,
+	0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x12, 0x2d, 0x0a, 0x12, 0x72,
+	0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d,
+	0x70, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11, 0x72, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65,
+	0x64, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x3c, 0x0a, 0x10, 0x77, 0x6f,
+	0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x65, 0x73, 0x18, 0x04,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0f, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61,
+	0x72, 0x65, 0x48, 0x61, 0x73, 0x68, 0x65, 0x73, 0x12, 0x27, 0x0a, 0x0f, 0x77, 0x6f, 0x72, 0x6b,
+	0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x43, 0x6f, 0x75, 0x6e,
+	0x74, 0x12, 0x36, 0x0a, 0x17, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x77, 0x6f, 0x72, 0x6b, 0x73,
+	0x68, 0x61, 0x72, 0x65, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x18, 0x06, 0x20, 0x01,
+	0x28, 0x0c, 0x52, 0x15, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x57, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61,
+	0x72, 0x65, 0x45, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x12, 0x30, 0x0a, 0x08, 0x63, 0x6f, 0x69,
+	0x6e, 0x62, 0x61, 0x73, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x63, 0x6f,
+	0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73,
+	0x73, 0x52, 0x08, 0x63, 0x6f, 0x69, 0x6e, 0x62, 0x61, 0x73, 0x65, 0x12, 0x21, 0x0a, 0x0c, 0x69,
+	0x73, 0x5f, 0x63, 0x61, 0x6e, 0x6f, 0x6e, 0x69, 0x63, 0x61, 0x6c, 0x18, 0x08, 0x20, 0x01, 0x28,
+	0x08, 0x52, 0x0b, 0x69, 0x73, 0x43, 0x61, 0x6e, 0x6f, 0x6e, 0x69, 0x63, 0x61, 0x6c, 0x22, 0xce,
+	0x03, 0x0a, 0x12, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x4f, 0x72, 0x70, 0x68, 0x61, 0x6e, 0x65, 0x64,
+	0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x12, 0x30, 0x0a, 0x0a, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68,
+	0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d,
+	0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x09, 0x62, 0x6c,
+	0x6f, 0x63, 0x6b, 0x48, 0x61, 0x73, 0x68, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c, 0x6f, 0x63, 0x6b,
+	0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x62,
+	0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x12, 0x32, 0x0a, 0x15, 0x6f, 0x72,
+	0x70, 0x68, 0x61, 0x6e, 0x65, 0x64, 0x5f, 0x61, 0x74, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74,
+	0x61, 0x6d, 0x70, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13, 0x6f, 0x72, 0x70, 0x68, 0x61,
+	0x6e, 0x65, 0x64, 0x41, 0x74, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x2a,
+	0x0a, 0x11, 0x6f, 0x72, 0x70, 0x68, 0x61, 0x6e, 0x65, 0x64, 0x5f, 0x61, 0x74, 0x5f, 0x62, 0x6c,
+	0x6f, 0x63, 0x6b, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0f, 0x6f, 0x72, 0x70, 0x68, 0x61,
+	0x6e, 0x65, 0x64, 0x41, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x12, 0x3c, 0x0a, 0x10, 0x77, 0x6f,
+	0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x65, 0x73, 0x18, 0x05,
+	0x20, 0x03, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0f, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61,
+	0x72, 0x65, 0x48, 0x61, 0x73, 0x68, 0x65, 0x73, 0x12, 0x27, 0x0a, 0x0f, 0x77, 0x6f, 0x72, 0x6b,
+	0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x43, 0x6f, 0x75, 0x6e,
+	0x74, 0x12, 0x36, 0x0a, 0x17, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x77, 0x6f, 0x72, 0x6b, 0x73,
+	0x68, 0x61, 0x72, 0x65, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x18, 0x07, 0x20, 0x01,
+	0x28, 0x0c, 0x52, 0x15, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x57, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61,
+	0x72, 0x65, 0x45, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x12, 0x30, 0x0a, 0x08, 0x63, 0x6f, 0x69,
+	0x6e, 0x62, 0x61, 0x73, 0x65, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x63, 0x6f,
+	0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73,
+	0x73, 0x52, 0x08, 0x63, 0x6f, 0x69, 0x6e, 0x62, 0x61, 0x73, 0x65, 0x12, 0x32, 0x0a, 0x0b, 0x72,
+	0x65, 0x70, 0x6c, 0x61, 0x63, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x18, 0x09, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48,
+	0x61, 0x73, 0x68, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x6c, 0x61, 0x63, 0x65, 0x64, 0x42, 0x79, 0x22,
+	0x94, 0x03, 0x0a, 0x14, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x46, 0x6f, 0x72, 0x6b, 0x43, 0x6f, 0x6d,
+	0x70, 0x65, 0x74, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x30, 0x0a, 0x0a, 0x62, 0x6c, 0x6f, 0x63,
+	0x6b, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63,
+	0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52,
+	0x09, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x61, 0x73, 0x68, 0x12, 0x21, 0x0a, 0x0c, 0x62, 0x6c,
+	0x6f, 0x63, 0x6b, 0x5f, 0x6e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x0b, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x12, 0x1c, 0x0a,
+	0x09, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x09, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x12, 0x27, 0x0a, 0x0f, 0x77,
+	0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x04,
+	0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x68, 0x61, 0x72, 0x65, 0x43,
+	0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2b, 0x0a, 0x11, 0x69, 0x6e, 0x74, 0x72, 0x69, 0x6e, 0x73, 0x69,
+	0x63, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x10, 0x69, 0x6e, 0x74, 0x72, 0x69, 0x6e, 0x73, 0x69, 0x63, 0x45, 0x6e, 0x74, 0x72, 0x6f, 0x70,
+	0x79, 0x12, 0x18, 0x0a, 0x07, 0x6f, 0x75, 0x74, 0x63, 0x6f, 0x6d, 0x65, 0x18, 0x06, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x07, 0x6f, 0x75, 0x74, 0x63, 0x6f, 0x6d, 0x65, 0x12, 0x3a, 0x0a, 0x0f, 0x63,
+	0x6f, 0x6d, 0x70, 0x65, 0x74, 0x69, 0x74, 0x6f, 0x72, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x07,
+	0x20, 0x01, 0x28, 0x0b, 0x32, 0x11, 0x2e, 0x63, 0x6f, 0x6d, 0x6d, 0x6f, 0x6e, 0x2e, 0x50, 0x72,
+	0x6f, 0x74, 0x6f, 0x48, 0x61, 0x73, 0x68, 0x52, 0x0e, 0x63, 0x6f, 0x6d, 0x70, 0x65, 0x74, 0x69,
+	0x74, 0x6f, 0x72, 0x48, 0x61, 0x73, 0x68, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x6f, 0x6d, 0x70, 0x65,
+	0x74, 0x69, 0x74, 0x6f, 0x72, 0x5f, 0x77, 0x73, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x08,
+	0x20, 0x01, 0x28, 0x0d, 0x52, 0x11, 0x63, 0x6f, 0x6d, 0x70, 0x65, 0x74, 0x69, 0x74, 0x6f, 0x72,
+	0x57, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2d, 0x0a, 0x12, 0x63, 0x6f, 0x6d, 0x70, 0x65,
+	0x74, 0x69, 0x74, 0x6f, 0x72, 0x5f, 0x65, 0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x18, 0x09, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x11, 0x63, 0x6f, 0x6d, 0x70, 0x65, 0x74, 0x69, 0x74, 0x6f, 0x72, 0x45,
+	0x6e, 0x74, 0x72, 0x6f, 0x70, 0x79, 0x42, 0x33, 0x5a, 0x31, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62,
+	0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x64, 0x6f, 0x6d, 0x69, 0x6e, 0x61, 0x6e, 0x74, 0x2d, 0x73, 0x74,
+	0x72, 0x61, 0x74, 0x65, 0x67, 0x69, 0x65, 0x73, 0x2f, 0x67, 0x6f, 0x2d, 0x71, 0x75, 0x61, 0x69,
+	0x2f, 0x63, 0x6f, 0x72, 0x65, 0x2f, 0x74, 0x79, 0x70, 0x65, 0x73, 0x62, 0x06, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x33,
 })
 
 var (
@@ -4099,7 +5087,7 @@ func file_core_types_proto_block_proto_rawDescGZIP() []byte {
 	return file_core_types_proto_block_proto_rawDescData
 }
 
-var file_core_types_proto_block_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
+var file_core_types_proto_block_proto_msgTypes = make([]protoimpl.MessageInfo, 60)
 var file_core_types_proto_block_proto_goTypes = []any{
 	(*ProtoHeader)(nil),                  // 0: block.ProtoHeader
 	(*ProtoTransaction)(nil),             // 1: block.ProtoTransaction
@@ -4152,103 +5140,134 @@ var file_core_types_proto_block_proto_goTypes = []any{
 	(*ProtoLockedBalance)(nil),           // 48: block.ProtoLockedBalance
 	(*ProtoLockups)(nil),                 // 49: block.ProtoLockups
 	(*ProtoSupplyAnalytics)(nil),         // 50: block.ProtoSupplyAnalytics
-	nil,                                  // 51: block.ProtoTrimDepths.TrimDepthsEntry
-	(*common.ProtoHash)(nil),             // 52: common.ProtoHash
-	(*common.ProtoLocation)(nil),         // 53: common.ProtoLocation
-	(*common.ProtoAddress)(nil),          // 54: common.ProtoAddress
-	(*common.ProtoHashes)(nil),           // 55: common.ProtoHashes
+	(*ProtoWorkshareReception)(nil),      // 51: block.ProtoWorkshareReception
+	(*ProtoWorkerInclusionRecord)(nil),   // 52: block.ProtoWorkerInclusionRecord
+	(*ProtoMissedWorkshare)(nil),         // 53: block.ProtoMissedWorkshare
+	(*ProtoWorkerRejection)(nil),         // 54: block.ProtoWorkerRejection
+	(*ProtoReorgEvent)(nil),              // 55: block.ProtoReorgEvent
+	(*ProtoBlockRecord)(nil),             // 56: block.ProtoBlockRecord
+	(*ProtoOrphanedBlock)(nil),           // 57: block.ProtoOrphanedBlock
+	(*ProtoForkCompetition)(nil),         // 58: block.ProtoForkCompetition
+	nil,                                  // 59: block.ProtoTrimDepths.TrimDepthsEntry
+	(*common.ProtoHash)(nil),             // 60: common.ProtoHash
+	(*common.ProtoLocation)(nil),         // 61: common.ProtoLocation
+	(*common.ProtoAddress)(nil),          // 62: common.ProtoAddress
+	(*common.ProtoHashes)(nil),           // 63: common.ProtoHashes
 }
 var file_core_types_proto_block_proto_depIdxs = []int32{
-	52, // 0: block.ProtoHeader.parent_hash:type_name -> common.ProtoHash
-	52, // 1: block.ProtoHeader.uncle_hash:type_name -> common.ProtoHash
-	52, // 2: block.ProtoHeader.evm_root:type_name -> common.ProtoHash
-	52, // 3: block.ProtoHeader.tx_hash:type_name -> common.ProtoHash
-	52, // 4: block.ProtoHeader.outbound_etx_hash:type_name -> common.ProtoHash
-	52, // 5: block.ProtoHeader.etx_rollup_hash:type_name -> common.ProtoHash
-	52, // 6: block.ProtoHeader.manifest_hash:type_name -> common.ProtoHash
-	52, // 7: block.ProtoHeader.receipt_hash:type_name -> common.ProtoHash
-	53, // 8: block.ProtoHeader.location:type_name -> common.ProtoLocation
-	52, // 9: block.ProtoHeader.mix_hash:type_name -> common.ProtoHash
-	52, // 10: block.ProtoHeader.utxo_root:type_name -> common.ProtoHash
-	52, // 11: block.ProtoHeader.etx_set_root:type_name -> common.ProtoHash
-	52, // 12: block.ProtoHeader.etx_eligible_slices:type_name -> common.ProtoHash
-	52, // 13: block.ProtoHeader.prime_terminus_hash:type_name -> common.ProtoHash
-	52, // 14: block.ProtoHeader.interlink_root_hash:type_name -> common.ProtoHash
-	52, // 15: block.ProtoHeader.prime_state_root:type_name -> common.ProtoHash
-	52, // 16: block.ProtoHeader.region_state_root:type_name -> common.ProtoHash
-	5,  // 17: block.ProtoTransaction.access_list:type_name -> block.ProtoAccessList
-	52, // 18: block.ProtoTransaction.originating_tx_hash:type_name -> common.ProtoHash
-	28, // 19: block.ProtoTransaction.tx_ins:type_name -> block.ProtoTxIns
-	29, // 20: block.ProtoTransaction.tx_outs:type_name -> block.ProtoTxOuts
-	52, // 21: block.ProtoTransaction.parent_hash:type_name -> common.ProtoHash
-	52, // 22: block.ProtoTransaction.mix_hash:type_name -> common.ProtoHash
-	1,  // 23: block.ProtoTransactions.transactions:type_name -> block.ProtoTransaction
-	0,  // 24: block.ProtoHeaders.headers:type_name -> block.ProtoHeader
-	52, // 25: block.ProtoManifest.manifest:type_name -> common.ProtoHash
-	18, // 26: block.ProtoAccessList.access_tuples:type_name -> block.ProtoAccessTuple
-	52, // 27: block.ProtoWorkObjectHeader.header_hash:type_name -> common.ProtoHash
-	52, // 28: block.ProtoWorkObjectHeader.parent_hash:type_name -> common.ProtoHash
-	52, // 29: block.ProtoWorkObjectHeader.tx_hash:type_name -> common.ProtoHash
-	53, // 30: block.ProtoWorkObjectHeader.location:type_name -> common.ProtoLocation
-	52, // 31: block.ProtoWorkObjectHeader.mix_hash:type_name -> common.ProtoHash
-	54, // 32: block.ProtoWorkObjectHeader.primary_coinbase:type_name -> common.ProtoAddress
-	6,  // 33: block.ProtoWorkObjectHeader.aux_pow:type_name -> block.ProtoAuxPow
-	8,  // 34: block.ProtoWorkObjectHeader.scrypt_diff_and_count:type_name -> block.ProtoPowShareDiffAndCount
-	8,  // 35: block.ProtoWorkObjectHeader.sha_diff_and_count:type_name -> block.ProtoPowShareDiffAndCount
-	9,  // 36: block.ProtoWorkObjectHeaders.wo_headers:type_name -> block.ProtoWorkObjectHeader
-	0,  // 37: block.ProtoWorkObjectBody.header:type_name -> block.ProtoHeader
-	2,  // 38: block.ProtoWorkObjectBody.transactions:type_name -> block.ProtoTransactions
-	10, // 39: block.ProtoWorkObjectBody.uncles:type_name -> block.ProtoWorkObjectHeaders
-	2,  // 40: block.ProtoWorkObjectBody.outbound_etxs:type_name -> block.ProtoTransactions
-	4,  // 41: block.ProtoWorkObjectBody.manifest:type_name -> block.ProtoManifest
-	55, // 42: block.ProtoWorkObjectBody.interlink_hashes:type_name -> common.ProtoHashes
-	9,  // 43: block.ProtoWorkObject.wo_header:type_name -> block.ProtoWorkObjectHeader
-	11, // 44: block.ProtoWorkObject.wo_body:type_name -> block.ProtoWorkObjectBody
-	1,  // 45: block.ProtoWorkObject.tx:type_name -> block.ProtoTransaction
-	12, // 46: block.ProtoWorkObjects.work_objects:type_name -> block.ProtoWorkObject
-	12, // 47: block.ProtoWorkObjectBlockView.work_object:type_name -> block.ProtoWorkObject
-	14, // 48: block.ProtoWorkObjectBlocksView.work_objects:type_name -> block.ProtoWorkObjectBlockView
-	12, // 49: block.ProtoWorkObjectHeaderView.work_object:type_name -> block.ProtoWorkObject
-	12, // 50: block.ProtoWorkObjectShareView.work_object:type_name -> block.ProtoWorkObject
-	52, // 51: block.ProtoAccessTuple.storage_key:type_name -> common.ProtoHash
-	22, // 52: block.ProtoReceiptForStorage.logs:type_name -> block.ProtoLogsForStorage
-	52, // 53: block.ProtoReceiptForStorage.tx_hash:type_name -> common.ProtoHash
-	54, // 54: block.ProtoReceiptForStorage.contract_address:type_name -> common.ProtoAddress
-	2,  // 55: block.ProtoReceiptForStorage.outbound_etxs:type_name -> block.ProtoTransactions
-	19, // 56: block.ProtoReceiptsForStorage.receipts:type_name -> block.ProtoReceiptForStorage
-	54, // 57: block.ProtoLogForStorage.address:type_name -> common.ProtoAddress
-	52, // 58: block.ProtoLogForStorage.topics:type_name -> common.ProtoHash
-	21, // 59: block.ProtoLogsForStorage.logs:type_name -> block.ProtoLogForStorage
-	12, // 60: block.ProtoPendingHeader.wo:type_name -> block.ProtoWorkObject
-	24, // 61: block.ProtoPendingHeader.termini:type_name -> block.ProtoTermini
-	52, // 62: block.ProtoTermini.dom_termini:type_name -> common.ProtoHash
-	52, // 63: block.ProtoTermini.sub_termini:type_name -> common.ProtoHash
-	12, // 64: block.ProtoPendingEtxs.header:type_name -> block.ProtoWorkObject
-	2,  // 65: block.ProtoPendingEtxs.outbound_etxs:type_name -> block.ProtoTransactions
-	12, // 66: block.ProtoPendingEtxsRollup.header:type_name -> block.ProtoWorkObject
-	2,  // 67: block.ProtoPendingEtxsRollup.etxs_rollup:type_name -> block.ProtoTransactions
-	30, // 68: block.ProtoTxIns.tx_ins:type_name -> block.ProtoTxIn
-	32, // 69: block.ProtoTxOuts.tx_outs:type_name -> block.ProtoTxOut
-	31, // 70: block.ProtoTxIn.previous_out_point:type_name -> block.ProtoOutPoint
-	52, // 71: block.ProtoOutPoint.hash:type_name -> common.ProtoHash
-	52, // 72: block.ProtoOutPointAndDenomination.hash:type_name -> common.ProtoHash
-	33, // 73: block.ProtoAddressOutPoints.out_points:type_name -> block.ProtoOutPointAndDenomination
-	31, // 74: block.ProtoSpentUTXO.outpoint:type_name -> block.ProtoOutPoint
-	32, // 75: block.ProtoSpentUTXO.sutxo:type_name -> block.ProtoTxOut
-	35, // 76: block.ProtoSpentUTXOs.sutxos:type_name -> block.ProtoSpentUTXO
-	38, // 77: block.ProtoKeysAndValues.keys_and_values:type_name -> block.ProtoKeyValue
-	51, // 78: block.ProtoTrimDepths.trim_depths:type_name -> block.ProtoTrimDepths.TrimDepthsEntry
-	42, // 79: block.ProtoTokenChoiceSet.token_choice_array:type_name -> block.ProtoTokenChoiceArray
-	43, // 80: block.ProtoTokenChoiceArray.token_choices:type_name -> block.ProtoTokenChoice
-	54, // 81: block.ProtoLockup.address:type_name -> common.ProtoAddress
-	54, // 82: block.ProtoUnlock.address:type_name -> common.ProtoAddress
-	46, // 83: block.ProtoUnlocks.unlocks:type_name -> block.ProtoUnlock
-	45, // 84: block.ProtoLockups.lockups:type_name -> block.ProtoLockup
-	85, // [85:85] is the sub-list for method output_type
-	85, // [85:85] is the sub-list for method input_type
-	85, // [85:85] is the sub-list for extension type_name
-	85, // [85:85] is the sub-list for extension extendee
-	0,  // [0:85] is the sub-list for field type_name
+	60,  // 0: block.ProtoHeader.parent_hash:type_name -> common.ProtoHash
+	60,  // 1: block.ProtoHeader.uncle_hash:type_name -> common.ProtoHash
+	60,  // 2: block.ProtoHeader.evm_root:type_name -> common.ProtoHash
+	60,  // 3: block.ProtoHeader.tx_hash:type_name -> common.ProtoHash
+	60,  // 4: block.ProtoHeader.outbound_etx_hash:type_name -> common.ProtoHash
+	60,  // 5: block.ProtoHeader.etx_rollup_hash:type_name -> common.ProtoHash
+	60,  // 6: block.ProtoHeader.manifest_hash:type_name -> common.ProtoHash
+	60,  // 7: block.ProtoHeader.receipt_hash:type_name -> common.ProtoHash
+	61,  // 8: block.ProtoHeader.location:type_name -> common.ProtoLocation
+	60,  // 9: block.ProtoHeader.mix_hash:type_name -> common.ProtoHash
+	60,  // 10: block.ProtoHeader.utxo_root:type_name -> common.ProtoHash
+	60,  // 11: block.ProtoHeader.etx_set_root:type_name -> common.ProtoHash
+	60,  // 12: block.ProtoHeader.etx_eligible_slices:type_name -> common.ProtoHash
+	60,  // 13: block.ProtoHeader.prime_terminus_hash:type_name -> common.ProtoHash
+	60,  // 14: block.ProtoHeader.interlink_root_hash:type_name -> common.ProtoHash
+	60,  // 15: block.ProtoHeader.prime_state_root:type_name -> common.ProtoHash
+	60,  // 16: block.ProtoHeader.region_state_root:type_name -> common.ProtoHash
+	5,   // 17: block.ProtoTransaction.access_list:type_name -> block.ProtoAccessList
+	60,  // 18: block.ProtoTransaction.originating_tx_hash:type_name -> common.ProtoHash
+	28,  // 19: block.ProtoTransaction.tx_ins:type_name -> block.ProtoTxIns
+	29,  // 20: block.ProtoTransaction.tx_outs:type_name -> block.ProtoTxOuts
+	60,  // 21: block.ProtoTransaction.parent_hash:type_name -> common.ProtoHash
+	60,  // 22: block.ProtoTransaction.mix_hash:type_name -> common.ProtoHash
+	1,   // 23: block.ProtoTransactions.transactions:type_name -> block.ProtoTransaction
+	0,   // 24: block.ProtoHeaders.headers:type_name -> block.ProtoHeader
+	60,  // 25: block.ProtoManifest.manifest:type_name -> common.ProtoHash
+	18,  // 26: block.ProtoAccessList.access_tuples:type_name -> block.ProtoAccessTuple
+	60,  // 27: block.ProtoWorkObjectHeader.header_hash:type_name -> common.ProtoHash
+	60,  // 28: block.ProtoWorkObjectHeader.parent_hash:type_name -> common.ProtoHash
+	60,  // 29: block.ProtoWorkObjectHeader.tx_hash:type_name -> common.ProtoHash
+	61,  // 30: block.ProtoWorkObjectHeader.location:type_name -> common.ProtoLocation
+	60,  // 31: block.ProtoWorkObjectHeader.mix_hash:type_name -> common.ProtoHash
+	62,  // 32: block.ProtoWorkObjectHeader.primary_coinbase:type_name -> common.ProtoAddress
+	6,   // 33: block.ProtoWorkObjectHeader.aux_pow:type_name -> block.ProtoAuxPow
+	8,   // 34: block.ProtoWorkObjectHeader.scrypt_diff_and_count:type_name -> block.ProtoPowShareDiffAndCount
+	8,   // 35: block.ProtoWorkObjectHeader.sha_diff_and_count:type_name -> block.ProtoPowShareDiffAndCount
+	9,   // 36: block.ProtoWorkObjectHeaders.wo_headers:type_name -> block.ProtoWorkObjectHeader
+	0,   // 37: block.ProtoWorkObjectBody.header:type_name -> block.ProtoHeader
+	2,   // 38: block.ProtoWorkObjectBody.transactions:type_name -> block.ProtoTransactions
+	10,  // 39: block.ProtoWorkObjectBody.uncles:type_name -> block.ProtoWorkObjectHeaders
+	2,   // 40: block.ProtoWorkObjectBody.outbound_etxs:type_name -> block.ProtoTransactions
+	4,   // 41: block.ProtoWorkObjectBody.manifest:type_name -> block.ProtoManifest
+	63,  // 42: block.ProtoWorkObjectBody.interlink_hashes:type_name -> common.ProtoHashes
+	9,   // 43: block.ProtoWorkObject.wo_header:type_name -> block.ProtoWorkObjectHeader
+	11,  // 44: block.ProtoWorkObject.wo_body:type_name -> block.ProtoWorkObjectBody
+	1,   // 45: block.ProtoWorkObject.tx:type_name -> block.ProtoTransaction
+	12,  // 46: block.ProtoWorkObjects.work_objects:type_name -> block.ProtoWorkObject
+	12,  // 47: block.ProtoWorkObjectBlockView.work_object:type_name -> block.ProtoWorkObject
+	14,  // 48: block.ProtoWorkObjectBlocksView.work_objects:type_name -> block.ProtoWorkObjectBlockView
+	12,  // 49: block.ProtoWorkObjectHeaderView.work_object:type_name -> block.ProtoWorkObject
+	12,  // 50: block.ProtoWorkObjectShareView.work_object:type_name -> block.ProtoWorkObject
+	60,  // 51: block.ProtoAccessTuple.storage_key:type_name -> common.ProtoHash
+	22,  // 52: block.ProtoReceiptForStorage.logs:type_name -> block.ProtoLogsForStorage
+	60,  // 53: block.ProtoReceiptForStorage.tx_hash:type_name -> common.ProtoHash
+	62,  // 54: block.ProtoReceiptForStorage.contract_address:type_name -> common.ProtoAddress
+	2,   // 55: block.ProtoReceiptForStorage.outbound_etxs:type_name -> block.ProtoTransactions
+	19,  // 56: block.ProtoReceiptsForStorage.receipts:type_name -> block.ProtoReceiptForStorage
+	62,  // 57: block.ProtoLogForStorage.address:type_name -> common.ProtoAddress
+	60,  // 58: block.ProtoLogForStorage.topics:type_name -> common.ProtoHash
+	21,  // 59: block.ProtoLogsForStorage.logs:type_name -> block.ProtoLogForStorage
+	12,  // 60: block.ProtoPendingHeader.wo:type_name -> block.ProtoWorkObject
+	24,  // 61: block.ProtoPendingHeader.termini:type_name -> block.ProtoTermini
+	60,  // 62: block.ProtoTermini.dom_termini:type_name -> common.ProtoHash
+	60,  // 63: block.ProtoTermini.sub_termini:type_name -> common.ProtoHash
+	12,  // 64: block.ProtoPendingEtxs.header:type_name -> block.ProtoWorkObject
+	2,   // 65: block.ProtoPendingEtxs.outbound_etxs:type_name -> block.ProtoTransactions
+	12,  // 66: block.ProtoPendingEtxsRollup.header:type_name -> block.ProtoWorkObject
+	2,   // 67: block.ProtoPendingEtxsRollup.etxs_rollup:type_name -> block.ProtoTransactions
+	30,  // 68: block.ProtoTxIns.tx_ins:type_name -> block.ProtoTxIn
+	32,  // 69: block.ProtoTxOuts.tx_outs:type_name -> block.ProtoTxOut
+	31,  // 70: block.ProtoTxIn.previous_out_point:type_name -> block.ProtoOutPoint
+	60,  // 71: block.ProtoOutPoint.hash:type_name -> common.ProtoHash
+	60,  // 72: block.ProtoOutPointAndDenomination.hash:type_name -> common.ProtoHash
+	33,  // 73: block.ProtoAddressOutPoints.out_points:type_name -> block.ProtoOutPointAndDenomination
+	31,  // 74: block.ProtoSpentUTXO.outpoint:type_name -> block.ProtoOutPoint
+	32,  // 75: block.ProtoSpentUTXO.sutxo:type_name -> block.ProtoTxOut
+	35,  // 76: block.ProtoSpentUTXOs.sutxos:type_name -> block.ProtoSpentUTXO
+	38,  // 77: block.ProtoKeysAndValues.keys_and_values:type_name -> block.ProtoKeyValue
+	59,  // 78: block.ProtoTrimDepths.trim_depths:type_name -> block.ProtoTrimDepths.TrimDepthsEntry
+	42,  // 79: block.ProtoTokenChoiceSet.token_choice_array:type_name -> block.ProtoTokenChoiceArray
+	43,  // 80: block.ProtoTokenChoiceArray.token_choices:type_name -> block.ProtoTokenChoice
+	62,  // 81: block.ProtoLockup.address:type_name -> common.ProtoAddress
+	62,  // 82: block.ProtoUnlock.address:type_name -> common.ProtoAddress
+	46,  // 83: block.ProtoUnlocks.unlocks:type_name -> block.ProtoUnlock
+	45,  // 84: block.ProtoLockups.lockups:type_name -> block.ProtoLockup
+	60,  // 85: block.ProtoWorkshareReception.workshare_hash:type_name -> common.ProtoHash
+	62,  // 86: block.ProtoWorkshareReception.coinbase:type_name -> common.ProtoAddress
+	60,  // 87: block.ProtoWorkshareReception.parent_hash:type_name -> common.ProtoHash
+	60,  // 88: block.ProtoWorkerInclusionRecord.workshare_hash:type_name -> common.ProtoHash
+	60,  // 89: block.ProtoWorkerInclusionRecord.pending_block_hash:type_name -> common.ProtoHash
+	60,  // 90: block.ProtoWorkerInclusionRecord.confirmed_block_hash:type_name -> common.ProtoHash
+	60,  // 91: block.ProtoMissedWorkshare.workshare_hash:type_name -> common.ProtoHash
+	62,  // 92: block.ProtoMissedWorkshare.coinbase:type_name -> common.ProtoAddress
+	60,  // 93: block.ProtoWorkerRejection.workshare_hash:type_name -> common.ProtoHash
+	60,  // 94: block.ProtoReorgEvent.old_head:type_name -> common.ProtoHash
+	60,  // 95: block.ProtoReorgEvent.new_head:type_name -> common.ProtoHash
+	60,  // 96: block.ProtoReorgEvent.common_ancestor:type_name -> common.ProtoHash
+	60,  // 97: block.ProtoReorgEvent.workshares_lost:type_name -> common.ProtoHash
+	60,  // 98: block.ProtoReorgEvent.workshares_gained:type_name -> common.ProtoHash
+	60,  // 99: block.ProtoBlockRecord.block_hash:type_name -> common.ProtoHash
+	60,  // 100: block.ProtoBlockRecord.workshare_hashes:type_name -> common.ProtoHash
+	62,  // 101: block.ProtoBlockRecord.coinbase:type_name -> common.ProtoAddress
+	60,  // 102: block.ProtoOrphanedBlock.block_hash:type_name -> common.ProtoHash
+	60,  // 103: block.ProtoOrphanedBlock.workshare_hashes:type_name -> common.ProtoHash
+	62,  // 104: block.ProtoOrphanedBlock.coinbase:type_name -> common.ProtoAddress
+	60,  // 105: block.ProtoOrphanedBlock.replaced_by:type_name -> common.ProtoHash
+	60,  // 106: block.ProtoForkCompetition.block_hash:type_name -> common.ProtoHash
+	60,  // 107: block.ProtoForkCompetition.competitor_hash:type_name -> common.ProtoHash
+	108, // [108:108] is the sub-list for method output_type
+	108, // [108:108] is the sub-list for method input_type
+	108, // [108:108] is the sub-list for extension type_name
+	108, // [108:108] is the sub-list for extension extendee
+	0,   // [0:108] is the sub-list for field type_name
 }
 
 func init() { file_core_types_proto_block_proto_init() }
@@ -4283,7 +5302,7 @@ func file_core_types_proto_block_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_core_types_proto_block_proto_rawDesc), len(file_core_types_proto_block_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   52,
+			NumMessages:   60,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

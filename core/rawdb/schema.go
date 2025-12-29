@@ -123,6 +123,17 @@ var (
 	deletedCoinbaseLockupsPrefix = []byte("dcl") // deletedCoinbaseLockupsPrefix + hash -> [][]byte
 	supplyAnalyticsPrefix        = []byte("sa")  // supplyAnalyticsKey + hash -> SupplyAnalytics
 	lockupDeltasPrefix           = []byte("ld")  // lockupDeltasPrefix + hash -> []types.LockupDelta
+
+	// Workshare tracking experiment prefixes
+	workshareReceptionPrefix = []byte("wsr")  // workshareReceptionPrefix + hash -> ProtoWorkshareReception
+	workerInclusionPrefix    = []byte("wsi")  // workerInclusionPrefix + hash -> ProtoWorkerInclusionRecord
+	missedWorksharePrefix    = []byte("wsm")  // missedWorksharePrefix + hash -> ProtoMissedWorkshare
+	reorgEventPrefix         = []byte("wre")  // reorgEventPrefix + timestamp -> ProtoReorgEvent
+	workshareByBlockPrefix   = []byte("wsb")  // workshareByBlockPrefix + block_number -> []workshare_hashes
+	blockRecordPrefix        = []byte("wbr")  // blockRecordPrefix + block_hash -> ProtoBlockRecord
+	orphanedBlockPrefix      = []byte("wob")  // orphanedBlockPrefix + block_hash -> ProtoOrphanedBlock
+	workerRejectionPrefix    = []byte("wsrej") // workerRejectionPrefix + hash -> ProtoWorkerRejection
+	forkCompetitionPrefix    = []byte("wsfc")  // forkCompetitionPrefix + block_hash -> ProtoForkCompetition
 )
 
 const (
@@ -495,4 +506,51 @@ func ReverseCoinbaseLockupKey(data []byte, location common.Location) (common.Add
 	epoch := binary.BigEndian.Uint32(data[:epochLength])
 
 	return ownerContract, beneficiaryMiner, lockupByte, epoch, nil
+}
+
+// Workshare tracking key functions
+
+// workshareReceptionKey = workshareReceptionPrefix + hash
+func workshareReceptionKey(hash common.Hash) []byte {
+	return append(workshareReceptionPrefix, hash.Bytes()...)
+}
+
+// workerInclusionKey = workerInclusionPrefix + hash
+func workerInclusionKey(hash common.Hash) []byte {
+	return append(workerInclusionPrefix, hash.Bytes()...)
+}
+
+// missedWorkshareKey = missedWorksharePrefix + hash
+func missedWorkshareKey(hash common.Hash) []byte {
+	return append(missedWorksharePrefix, hash.Bytes()...)
+}
+
+// reorgEventKey = reorgEventPrefix + timestamp (uint64 big endian)
+func reorgEventKey(timestamp uint64) []byte {
+	return append(reorgEventPrefix, encodeBlockNumber(timestamp)...)
+}
+
+// workshareByBlockKey = workshareByBlockPrefix + blockNumber (uint64 big endian)
+func workshareByBlockKey(blockNumber uint64) []byte {
+	return append(workshareByBlockPrefix, encodeBlockNumber(blockNumber)...)
+}
+
+// blockRecordKey = blockRecordPrefix + block_hash
+func blockRecordKey(hash common.Hash) []byte {
+	return append(blockRecordPrefix, hash.Bytes()...)
+}
+
+// orphanedBlockKey = orphanedBlockPrefix + block_hash
+func orphanedBlockKey(hash common.Hash) []byte {
+	return append(orphanedBlockPrefix, hash.Bytes()...)
+}
+
+// workerRejectionKey = workerRejectionPrefix + hash
+func workerRejectionKey(hash common.Hash) []byte {
+	return append(workerRejectionPrefix, hash.Bytes()...)
+}
+
+// forkCompetitionKey = forkCompetitionPrefix + block_hash
+func forkCompetitionKey(hash common.Hash) []byte {
+	return append(forkCompetitionPrefix, hash.Bytes()...)
 }

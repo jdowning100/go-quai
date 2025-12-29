@@ -834,6 +834,10 @@ func (hc *HeaderChain) AppendBlock(block *types.WorkObject) error {
 				}
 			}
 		}
+		// Mark workshares in this block as confirmed included (workshare tracking experiment)
+		hc.MarkWorksharesConfirmed(block)
+		// Check for missed workshares (workshare tracking experiment)
+		hc.CheckMissingWorkshares(block.NumberU64(common.ZONE_CTX))
 	}
 
 	if unlocks != nil && len(unlocks) > 0 {
@@ -870,6 +874,9 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 				rawdb.DeleteCanonicalHash(hc.headerDb, head.NumberU64(hc.NodeCtx()))
 				return err
 			}
+			// Track fork competition - this block won and became canonical
+			// (will only record if there were competing blocks at this height)
+			hc.TrackForkCompetition(head, true)
 		}
 		// write the head block hash to the db
 		rawdb.WriteHeadBlockHash(hc.headerDb, head.Hash())
@@ -890,6 +897,14 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.WorkObject) error {
 	if prevHeader.NumberU64(common.ZONE_CTX) > params.MaxCodeSizeForkHeight && prevHeader.NumberU64(common.ZONE_CTX) > commonHeader.NumberU64(common.ZONE_CTX)+c_zoneHorizonThreshold {
 		return errors.New("common header too old")
 	}
+
+	// Track reorg event for workshare tracking experiment
+	hc.TrackReorgEvent(prevHeader, head, commonHeader)
+	// Track orphaned blocks and their workshares
+	hc.TrackOrphanedBlocks(prevHeader, head, commonHeader)
+	// Track fork competition win for the new head
+	hc.TrackForkCompetition(head, true)
+
 	newHeader := types.CopyWorkObject(head)
 
 	// Delete each header and rollback state processor until common header
@@ -1939,4 +1954,628 @@ func (hc *HeaderChain) GetMaxTxInWorkShare() uint64 {
 
 func (hc *HeaderChain) Database() ethdb.Database {
 	return hc.headerDb
+}
+
+// ==================== Workshare Tracking Experiment ====================
+
+// WorkshareTrackingEnabled returns whether workshare tracking is enabled
+func (hc *HeaderChain) WorkshareTrackingEnabled() bool {
+	return hc.config.WorkshareTrackingEnabled && hc.NodeCtx() == common.ZONE_CTX
+}
+
+// TrackWorkshareReception records when a valid workshare is first received from p2p
+func (hc *HeaderChain) TrackWorkshareReception(ws *types.WorkObjectHeader) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	currentHeader := hc.CurrentHeader()
+	if currentHeader == nil {
+		return
+	}
+
+	// Get PowID - default to Progpow if no AuxPow
+	var powType types.PowID
+	if ws.AuxPow() != nil {
+		powType = ws.AuxPow().PowID()
+	} else {
+		powType = types.Progpow
+	}
+
+	reception := &types.WorkshareReception{
+		WorkshareHash:          ws.Hash(),
+		ReceivedTimestamp:      uint64(time.Now().UnixNano()),
+		BlockHeightAtReception: currentHeader.NumberU64(common.ZONE_CTX),
+		Coinbase:               ws.PrimaryCoinbase(),
+		PowType:                powType,
+		ParentHash:             ws.ParentHash(),
+		WorkshareNumber:        ws.NumberU64(),
+	}
+
+	if err := rawdb.WriteWorkshareReception(hc.headerDb, reception); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to write workshare reception")
+		return
+	}
+
+	// Index by block number for later cleanup and missed detection
+	if err := rawdb.AddWorkshareToBlockIndex(hc.headerDb, hc.headerDb, reception.BlockHeightAtReception, ws.Hash()); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to index workshare by block")
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":     "ws.received",
+		"hash":     ws.Hash().String(),
+		"coinbase": ws.PrimaryCoinbase().String(),
+		"powType":  powType,
+		"height":   reception.BlockHeightAtReception,
+	}).Debug("Workshare received")
+}
+
+// MarkWorkshareIncluded records when a workshare is included in a pending block
+func (hc *HeaderChain) MarkWorkshareIncluded(workshareHash common.Hash, pendingBlockHash common.Hash, pendingBlockNumber uint64) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	record := &types.WorkerInclusionRecord{
+		WorkshareHash:      workshareHash,
+		PendingBlockHash:   pendingBlockHash,
+		PendingBlockNumber: pendingBlockNumber,
+		InclusionTimestamp: uint64(time.Now().UnixNano()),
+	}
+
+	if err := rawdb.WriteWorkerInclusion(hc.headerDb, record); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to write worker inclusion record")
+	}
+}
+
+// TrackWorkerRejection records when and why the worker rejected a workshare
+func (hc *HeaderChain) TrackWorkerRejection(workshareHash common.Hash, reason types.WorkerRejectionReason, blockNumber uint64, additionalInfo string) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	// Check if workshare was already included in a block (don't track as rejection)
+	inclusion, _ := rawdb.ReadWorkerInclusion(hc.headerDb, workshareHash)
+	if inclusion != nil {
+		return
+	}
+
+	// Check if we already have a rejection record for this workshare (avoid duplicates)
+	existing, _ := rawdb.ReadWorkerRejection(hc.headerDb, workshareHash)
+	if existing != nil {
+		return
+	}
+
+	rejection := &types.WorkerRejection{
+		WorkshareHash:   workshareHash,
+		RejectionReason: reason,
+		RejectionTime:   uint64(time.Now().UnixNano()),
+		BlockNumber:     blockNumber,
+		AdditionalInfo:  additionalInfo,
+	}
+
+	if err := rawdb.WriteWorkerRejection(hc.headerDb, rejection); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to write worker rejection record")
+		return
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":       "ws.worker_rejected",
+		"hash":       workshareHash.String(),
+		"reason":     reason.String(),
+		"blockNum":   blockNumber,
+		"additional": additionalInfo,
+	}).Debug("Workshare rejected by worker")
+}
+
+// MarkWorksharesConfirmed marks all workshares in the block as confirmed in the canonical chain
+func (hc *HeaderChain) MarkWorksharesConfirmed(block *types.WorkObject) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	if block == nil {
+		return
+	}
+
+	confirmedTimestamp := uint64(time.Now().UnixNano())
+	blockHash := block.Hash()
+	blockNumber := block.NumberU64(common.ZONE_CTX)
+
+	for _, ws := range block.Uncles() {
+		wsHash := ws.Hash()
+
+		// Try to read existing inclusion record
+		record, err := rawdb.ReadWorkerInclusion(hc.headerDb, wsHash)
+		if err != nil {
+			hc.logger.WithField("err", err).Debug("Failed to read worker inclusion record")
+		}
+
+		if record == nil {
+			// Create a new record if none exists (workshare came from another miner)
+			record = &types.WorkerInclusionRecord{
+				WorkshareHash: wsHash,
+			}
+		}
+
+		// Update with confirmed info
+		record.ConfirmedBlockHash = blockHash
+		record.ConfirmedBlockNumber = blockNumber
+		record.ConfirmedTimestamp = confirmedTimestamp
+
+		if err := rawdb.WriteWorkerInclusion(hc.headerDb, record); err != nil {
+			hc.logger.WithField("err", err).Error("Failed to write confirmed inclusion record")
+		}
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":       "ws.confirmed",
+		"blockHash":  blockHash.String(),
+		"blockNum":   blockNumber,
+		"workshares": len(block.Uncles()),
+	}).Debug("Workshares confirmed in block")
+}
+
+// CheckMissingWorkshares checks for workshares that expired without being included
+// Called after block N is finalized to check workshares from block N - grace period
+// We use 5 blocks instead of WorkSharesInclusionDepth (3) to give a grace period
+const workshareTrackingGracePeriod = 5
+
+func (hc *HeaderChain) CheckMissingWorkshares(currentBlockNumber uint64) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	// Check workshares that should have been included by now
+	// We use a 5-block grace period instead of protocol's 3-block inclusion depth
+	if currentBlockNumber <= workshareTrackingGracePeriod {
+		return
+	}
+
+	checkBlock := currentBlockNumber - workshareTrackingGracePeriod - 1 // Check block that just expired
+
+	workshares, err := rawdb.GetWorksharesForBlock(hc.headerDb, checkBlock)
+	if err != nil {
+		hc.logger.WithField("err", err).Error("Failed to get workshares for block")
+		return
+	}
+
+	for _, wsHash := range workshares {
+		// Check if this workshare was confirmed in a canonical block
+		inclusion, err := rawdb.ReadWorkerInclusion(hc.headerDb, wsHash)
+		if err != nil {
+			continue
+		}
+
+		// A workshare is missed if it was never confirmed in a canonical block
+		// (inclusion == nil means no record, !IsConfirmed() means added to pending but never confirmed)
+		if inclusion == nil || !inclusion.IsConfirmed() {
+			// Workshare was never confirmed in canonical chain - it was missed
+			reception, err := rawdb.ReadWorkshareReception(hc.headerDb, wsHash)
+			if err != nil || reception == nil {
+				continue
+			}
+
+			// Check for worker rejection record for more granular reason
+			rejection, _ := rawdb.ReadWorkerRejection(hc.headerDb, wsHash)
+
+			// Determine reason - prioritize worker rejection info if available
+			var reason types.MissedReason
+			var reasonStr string
+			var workerReason string
+
+			if rejection != nil {
+				// Worker explicitly rejected this workshare - use the specific reason
+				reason = types.MissedRejected
+				reasonStr = "worker_rejected"
+				workerReason = rejection.RejectionReason.String()
+			} else if inclusion == nil {
+				// Worker never saw this workshare - it wasn't processed by our node
+				reason = types.MissedNotSeenByWorker
+				reasonStr = "not_seen_by_worker"
+				workerReason = ""
+			} else {
+				// Worker saw it and added to pending, but it was never confirmed
+				// (our block was orphaned or we never found a block in time)
+				reason = types.MissedExpired
+				reasonStr = "expired_after_pending"
+				workerReason = ""
+			}
+
+			missed := &types.MissedWorkshare{
+				WorkshareHash:     wsHash,
+				ReceivedTimestamp: reception.ReceivedTimestamp,
+				ExpiredAtBlock:    currentBlockNumber,
+				Reason:            reason,
+				Coinbase:          reception.Coinbase,
+				PowType:           reception.PowType,
+			}
+
+			if err := rawdb.WriteMissedWorkshare(hc.headerDb, missed); err != nil {
+				hc.logger.WithField("err", err).Error("Failed to write missed workshare")
+				continue
+			}
+
+			logFields := log.Fields{
+				"type":     "ws.missed",
+				"hash":     wsHash.String(),
+				"coinbase": reception.Coinbase.String(),
+				"powType":  reception.PowType,
+				"reason":   reasonStr,
+			}
+			if workerReason != "" {
+				logFields["workerReason"] = workerReason
+			}
+			hc.logger.WithFields(logFields).Warn("Workshare missed")
+		}
+	}
+
+	// Periodic cleanup (every 1000 blocks, keep 50000 blocks = ~5-8 days at 10-15 sec/block)
+	if currentBlockNumber%1000 == 0 {
+		go func() {
+			if err := rawdb.CleanupOldWorkshareTrackingData(hc.headerDb, hc.headerDb, currentBlockNumber, 50000); err != nil {
+				hc.logger.WithField("err", err).Error("Failed to cleanup old workshare tracking data")
+			}
+		}()
+	}
+}
+
+// TrackReorgEvent records a chain reorganization with workshare analysis
+func (hc *HeaderChain) TrackReorgEvent(oldHead, newHead, commonAncestor *types.WorkObject) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	if oldHead == nil || newHead == nil || commonAncestor == nil {
+		return
+	}
+
+	// Calculate reorg depth
+	reorgDepth := oldHead.NumberU64(common.ZONE_CTX) - commonAncestor.NumberU64(common.ZONE_CTX)
+
+	// Count workshares in old chain
+	var oldWorkshares []common.Hash
+	var oldEntropy *big.Int = big.NewInt(0)
+	block := oldHead
+	for block != nil && block.Hash() != commonAncestor.Hash() {
+		for _, ws := range block.Uncles() {
+			oldWorkshares = append(oldWorkshares, ws.Hash())
+			if entropy, err := hc.HeaderIntrinsicLogEntropy(ws); err == nil {
+				oldEntropy = new(big.Int).Add(oldEntropy, entropy)
+			}
+		}
+		block = hc.GetHeaderByHash(block.ParentHash(common.ZONE_CTX))
+	}
+
+	// Count workshares in new chain
+	var newWorkshares []common.Hash
+	var newEntropy *big.Int = big.NewInt(0)
+	block = newHead
+	for block != nil && block.Hash() != commonAncestor.Hash() {
+		for _, ws := range block.Uncles() {
+			newWorkshares = append(newWorkshares, ws.Hash())
+			if entropy, err := hc.HeaderIntrinsicLogEntropy(ws); err == nil {
+				newEntropy = new(big.Int).Add(newEntropy, entropy)
+			}
+		}
+		block = hc.GetHeaderByHash(block.ParentHash(common.ZONE_CTX))
+	}
+
+	// Find workshares lost (in old but not in new)
+	newSet := make(map[common.Hash]bool)
+	for _, h := range newWorkshares {
+		newSet[h] = true
+	}
+	var worksharesLost []common.Hash
+	for _, h := range oldWorkshares {
+		if !newSet[h] {
+			worksharesLost = append(worksharesLost, h)
+		}
+	}
+
+	// Find workshares gained (in new but not in old)
+	oldSet := make(map[common.Hash]bool)
+	for _, h := range oldWorkshares {
+		oldSet[h] = true
+	}
+	var worksharesGained []common.Hash
+	for _, h := range newWorkshares {
+		if !oldSet[h] {
+			worksharesGained = append(worksharesGained, h)
+		}
+	}
+
+	event := &types.ReorgEvent{
+		OldHead:                oldHead.Hash(),
+		NewHead:                newHead.Hash(),
+		CommonAncestor:         commonAncestor.Hash(),
+		ReorgDepth:             reorgDepth,
+		Timestamp:              uint64(time.Now().UnixNano()),
+		OldChainWorkshareCount: uint32(len(oldWorkshares)),
+		OldChainEntropy:        oldEntropy,
+		NewChainWorkshareCount: uint32(len(newWorkshares)),
+		NewChainEntropy:        newEntropy,
+		WorksharesLost:         worksharesLost,
+		WorksharesGained:       worksharesGained,
+	}
+
+	if err := rawdb.WriteReorgEvent(hc.headerDb, event); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to write reorg event")
+		return
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":       "ws.reorg",
+		"depth":      reorgDepth,
+		"wsLost":     len(worksharesLost),
+		"wsGained":   len(worksharesGained),
+		"oldWsCount": len(oldWorkshares),
+		"newWsCount": len(newWorkshares),
+	}).Warn("Reorg with workshare impact")
+
+	// Invalidate inclusion records for workshares lost in reorg
+	// These were marked as included in the orphaned block but are not in the new canonical chain
+	for _, wsHash := range worksharesLost {
+		rawdb.DeleteWorkerInclusion(hc.headerDb, wsHash)
+	}
+}
+
+// TrackBlockReceived records a block and its contained workshares
+func (hc *HeaderChain) TrackBlockReceived(block *types.WorkObject) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	if block == nil {
+		return
+	}
+
+	// Extract workshare hashes and calculate total entropy
+	var workshareHashes []common.Hash
+	var totalEntropy *big.Int = big.NewInt(0)
+
+	for _, ws := range block.Uncles() {
+		workshareHashes = append(workshareHashes, ws.Hash())
+		if entropy, err := hc.HeaderIntrinsicLogEntropy(ws); err == nil {
+			totalEntropy = new(big.Int).Add(totalEntropy, entropy)
+		}
+	}
+
+	record := &types.BlockRecord{
+		BlockHash:             block.Hash(),
+		BlockNumber:           block.NumberU64(common.ZONE_CTX),
+		ReceivedTimestamp:     uint64(time.Now().UnixNano()),
+		WorkshareHashes:       workshareHashes,
+		WorkshareCount:        uint32(len(workshareHashes)),
+		TotalWorkshareEntropy: totalEntropy,
+		Coinbase:              block.PrimaryCoinbase(),
+		IsCanonical:           false, // Will be updated when block becomes canonical
+	}
+
+	if err := rawdb.WriteBlockRecord(hc.headerDb, record); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to write block record")
+		return
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":       "ws.block_received",
+		"hash":       block.Hash().String(),
+		"number":     record.BlockNumber,
+		"workshares": len(workshareHashes),
+		"coinbase":   block.PrimaryCoinbase().String(),
+	}).Debug("Block received with workshares")
+}
+
+// TrackOrphanedBlocks records blocks that became non-canonical during a reorg
+func (hc *HeaderChain) TrackOrphanedBlocks(oldHead, newHead, commonAncestor *types.WorkObject) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	if oldHead == nil || newHead == nil || commonAncestor == nil {
+		return
+	}
+
+	// Walk back from oldHead to commonAncestor and record each orphaned block
+	block := oldHead
+	for block != nil && block.Hash() != commonAncestor.Hash() {
+		// Extract workshare hashes and calculate entropy
+		var workshareHashes []common.Hash
+		var totalEntropy *big.Int = big.NewInt(0)
+
+		for _, ws := range block.Uncles() {
+			workshareHashes = append(workshareHashes, ws.Hash())
+			if entropy, err := hc.HeaderIntrinsicLogEntropy(ws); err == nil {
+				totalEntropy = new(big.Int).Add(totalEntropy, entropy)
+			}
+		}
+
+		orphaned := &types.OrphanedBlock{
+			BlockHash:             block.Hash(),
+			BlockNumber:           block.NumberU64(common.ZONE_CTX),
+			OrphanedAtTimestamp:   uint64(time.Now().UnixNano()),
+			OrphanedAtBlock:       newHead.NumberU64(common.ZONE_CTX),
+			WorkshareHashes:       workshareHashes,
+			WorkshareCount:        uint32(len(workshareHashes)),
+			TotalWorkshareEntropy: totalEntropy,
+			Coinbase:              block.PrimaryCoinbase(),
+			ReplacedBy:            newHead.Hash(),
+		}
+
+		if err := rawdb.WriteOrphanedBlock(hc.headerDb, orphaned); err != nil {
+			hc.logger.WithField("err", err).Error("Failed to write orphaned block")
+		} else {
+			hc.logger.WithFields(log.Fields{
+				"type":       "ws.orphaned",
+				"hash":       block.Hash().String(),
+				"number":     orphaned.BlockNumber,
+				"workshares": len(workshareHashes),
+				"coinbase":   block.PrimaryCoinbase().String(),
+				"replacedBy": newHead.Hash().String(),
+			}).Warn("Block orphaned with workshares")
+		}
+
+		block = hc.GetHeaderByHash(block.ParentHash(common.ZONE_CTX))
+	}
+}
+
+// TrackForkCompetition records when a new block competes with an existing canonical block
+// at the same height. This is called when a block is appended and there's already a
+// canonical block at that height.
+func (hc *HeaderChain) TrackForkCompetition(newBlock *types.WorkObject, won bool) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	if newBlock == nil {
+		return
+	}
+
+	blockNumber := newBlock.NumberU64(common.ZONE_CTX)
+
+	// Get the canonical block at this height
+	canonicalBlock := hc.GetBlockByNumber(blockNumber)
+	if canonicalBlock == nil {
+		// No canonical block at this height yet, this is the first
+		return
+	}
+
+	// Don't track if it's the same block
+	if canonicalBlock.Hash() == newBlock.Hash() {
+		return
+	}
+
+	// Get intrinsic entropy for both blocks
+	newEntropy, _, err := hc.CalcOrder(newBlock)
+	if err != nil {
+		return
+	}
+	canonicalEntropy, _, err := hc.CalcOrder(canonicalBlock)
+	if err != nil {
+		return
+	}
+
+	// Determine outcome based on which block is now canonical
+	var outcome types.ForkOutcome
+	var competitorHash common.Hash
+	var competitorWsCount uint32
+	var competitorEntropy uint64
+
+	if won {
+		// newBlock won, canonical block is the loser
+		outcome = types.ForkOutcomeWon
+		competitorHash = canonicalBlock.Hash()
+		competitorWsCount = uint32(len(canonicalBlock.Uncles()))
+		competitorEntropy = canonicalEntropy.Uint64()
+	} else {
+		// newBlock lost, canonical block is the winner
+		outcome = types.ForkOutcomeLost
+		competitorHash = canonicalBlock.Hash()
+		competitorWsCount = uint32(len(canonicalBlock.Uncles()))
+		competitorEntropy = canonicalEntropy.Uint64()
+	}
+
+	competition := &types.ForkCompetition{
+		BlockHash:         newBlock.Hash(),
+		BlockNumber:       blockNumber,
+		Timestamp:         uint64(time.Now().UnixNano()),
+		WorkshareCount:    uint32(len(newBlock.Uncles())),
+		IntrinsicEntropy:  newEntropy.Uint64(),
+		Outcome:           outcome,
+		CompetitorHash:    competitorHash,
+		CompetitorWsCount: competitorWsCount,
+		CompetitorEntropy: competitorEntropy,
+	}
+
+	if err := rawdb.WriteForkCompetition(hc.headerDb, competition); err != nil {
+		hc.logger.WithField("err", err).Error("Failed to write fork competition")
+		return
+	}
+
+	outcomeStr := "lost"
+	if won {
+		outcomeStr = "won"
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":              "ws.fork_competition",
+		"hash":              newBlock.Hash().String(),
+		"number":            blockNumber,
+		"workshares":        len(newBlock.Uncles()),
+		"intrinsicEntropy":  newEntropy.Uint64(),
+		"outcome":           outcomeStr,
+		"competitorHash":    competitorHash.String(),
+		"competitorWs":      competitorWsCount,
+		"competitorEntropy": competitorEntropy,
+	}).Info("Fork competition recorded")
+}
+
+// UnlivelyShareStats tracks unlively share penalty statistics by algorithm
+type UnlivelyShareStats struct {
+	KawpowLive     int
+	KawpowUnlively int
+	ShaLive        int
+	ShaUnlively    int
+	ScryptLive     int
+	ScryptUnlively int
+	ProgpowLive    int
+	ProgpowPenalized int // Progpow after fork gets 30% penalty too
+}
+
+// TrackUnlivelySharePenalties logs statistics about unlively share penalties per block
+func (hc *HeaderChain) TrackUnlivelySharePenalties(blockNumber uint64, blockHash common.Hash, stats *UnlivelyShareStats) {
+	if !hc.WorkshareTrackingEnabled() {
+		return
+	}
+
+	totalLive := stats.KawpowLive + stats.ShaLive + stats.ScryptLive + stats.ProgpowLive
+	totalUnlively := stats.KawpowUnlively + stats.ShaUnlively + stats.ScryptUnlively + stats.ProgpowPenalized
+	total := totalLive + totalUnlively
+
+	if total == 0 {
+		return
+	}
+
+	hc.logger.WithFields(log.Fields{
+		"type":             "ws.unlively_stats",
+		"blockNum":         blockNumber,
+		"blockHash":        blockHash.String(),
+		"totalShares":      total,
+		"totalLive":        totalLive,
+		"totalUnlively":    totalUnlively,
+		"kawpowLive":       stats.KawpowLive,
+		"kawpowUnlively":   stats.KawpowUnlively,
+		"shaLive":          stats.ShaLive,
+		"shaUnlively":      stats.ShaUnlively,
+		"scryptLive":       stats.ScryptLive,
+		"scryptUnlively":   stats.ScryptUnlively,
+		"progpowLive":      stats.ProgpowLive,
+		"progpowPenalized": stats.ProgpowPenalized,
+	}).Info("Unlively share penalty stats")
+}
+
+// GetWorkshareReception retrieves a workshare reception record by hash
+func (hc *HeaderChain) GetWorkshareReception(hash common.Hash) (*types.WorkshareReception, error) {
+	return rawdb.ReadWorkshareReception(hc.headerDb, hash)
+}
+
+// GetWorkerInclusion retrieves a worker inclusion record by workshare hash
+func (hc *HeaderChain) GetWorkerInclusion(hash common.Hash) (*types.WorkerInclusionRecord, error) {
+	return rawdb.ReadWorkerInclusion(hc.headerDb, hash)
+}
+
+// GetMissedWorkshare retrieves a missed workshare record by hash
+func (hc *HeaderChain) GetMissedWorkshare(hash common.Hash) (*types.MissedWorkshare, error) {
+	return rawdb.ReadMissedWorkshare(hc.headerDb, hash)
+}
+
+// GetBlockRecord retrieves a block record by hash
+func (hc *HeaderChain) GetBlockRecord(hash common.Hash) (*types.BlockRecord, error) {
+	return rawdb.ReadBlockRecord(hc.headerDb, hash)
+}
+
+// GetOrphanedBlock retrieves an orphaned block record by hash
+func (hc *HeaderChain) GetOrphanedBlock(hash common.Hash) (*types.OrphanedBlock, error) {
+	return rawdb.ReadOrphanedBlock(hc.headerDb, hash)
 }

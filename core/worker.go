@@ -2409,12 +2409,15 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				maxLen = len(scryptKeys)
 			}
 
+			currentBlockNum := wo.NumberU64(common.ZONE_CTX)
 			for i := 0; i < maxLen; i++ {
 				if i < len(kawpowKeys) {
 					if value, exist := kawpowCache.Peek(kawpowKeys[i]); exist {
 						uncle := value
-						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
+						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < currentBlockNum {
 							kawpowCache.Remove(kawpowKeys[i])
+							// Track rejection: workshare expired in cache
+							w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionExpiredInCache, currentBlockNum, "kawpow")
 						} else {
 							uncles = append(uncles, &uncle)
 						}
@@ -2423,8 +2426,10 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				if i < len(shaKeys) {
 					if value, exist := shaCache.Peek(shaKeys[i]); exist {
 						uncle := value
-						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
+						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < currentBlockNum {
 							shaCache.Remove(shaKeys[i])
+							// Track rejection: workshare expired in cache
+							w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionExpiredInCache, currentBlockNum, "sha")
 						} else {
 							uncles = append(uncles, &uncle)
 						}
@@ -2433,8 +2438,10 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				if i < len(scryptKeys) {
 					if value, exist := scryptCache.Peek(scryptKeys[i]); exist {
 						uncle := value
-						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
+						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < currentBlockNum {
 							scryptCache.Remove(scryptKeys[i])
+							// Track rejection: workshare expired in cache
+							w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionExpiredInCache, currentBlockNum, "scrypt")
 						} else {
 							uncles = append(uncles, &uncle)
 						}
@@ -2446,6 +2453,9 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				env.uncleMu.RLock()
 				if len(env.uncles) == params.MaxWorkShareCount {
 					env.uncleMu.RUnlock()
+					// Track rejection: max workshare count reached
+					// Note: We only track the current uncle, remaining ones in 'uncles' will also be skipped
+					w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionMaxCountReached, currentBlockNum, "")
 					break
 				}
 
@@ -2459,6 +2469,8 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 						if uncle.AuxPow() != nil &&
 							(uncle.AuxPow().PowID() == types.SHA_BTC || uncle.AuxPow().PowID() == types.SHA_BCH) {
 							env.uncleMu.RUnlock()
+							// Track rejection: max SHA workshares reached
+							w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionMaxShaReached, currentBlockNum, "")
 							continue
 						}
 					}
@@ -2467,6 +2479,8 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 					if scryptCount >= params.MaxScryptSharesCount {
 						if uncle.AuxPow() != nil && uncle.AuxPow().PowID() == types.Scrypt {
 							env.uncleMu.RUnlock()
+							// Track rejection: max Scrypt workshares reached
+							w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionMaxScryptReached, currentBlockNum, "")
 							continue
 						}
 					}
@@ -2478,8 +2492,14 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 						"hash":   uncle.Hash(),
 						"reason": err,
 					}).Trace("Possible uncle rejected")
+					// Track rejection: commitUncle failed (but not "uncle already included" - that means success)
+					if err.Error() != "uncle already included" {
+						w.hc.TrackWorkerRejection(uncle.Hash(), types.RejectionCommitUncleFailed, currentBlockNum, err.Error())
+					}
 				} else {
 					w.logger.WithField("hash", uncle.Hash()).Debug("Committing new uncle to block")
+					// Track workshare inclusion for the tracking experiment
+					w.hc.MarkWorkshareIncluded(uncle.Hash(), env.wo.Hash(), env.wo.NumberU64(common.ZONE_CTX))
 				}
 			}
 		}
@@ -2733,7 +2753,11 @@ func (w *worker) AddAuxPowTemplate(auxTemplate *types.AuxTemplate) error {
 
 func (w *worker) AddWorkShare(workShare *types.WorkObjectHeader) error {
 	// Don't add the workshare into the list if its farther than the worksharefilterdist
-	if workShare.NumberU64()+uint64(2*params.WorkSharesInclusionDepth) < w.hc.CurrentHeader().NumberU64(common.ZONE_CTX) {
+	currentBlockNum := w.hc.CurrentHeader().NumberU64(common.ZONE_CTX)
+	if workShare.NumberU64()+uint64(2*params.WorkSharesInclusionDepth) < currentBlockNum {
+		// Track rejection: workshare too old to even add to cache
+		w.hc.TrackWorkerRejection(workShare.Hash(), types.RejectionTooOld, currentBlockNum,
+			fmt.Sprintf("workshare_num=%d, current=%d, max_age=%d", workShare.NumberU64(), currentBlockNum, 2*params.WorkSharesInclusionDepth))
 		return nil
 	}
 

@@ -1693,6 +1693,46 @@ func (c *Core) SendWorkShare(workShare *types.WorkObjectHeader) error {
 	return c.sl.miner.worker.AddWorkShare(workShare)
 }
 
+// TrackWorkshareReception records workshare reception for the tracking experiment
+func (c *Core) TrackWorkshareReception(workShare *types.WorkObjectHeader) {
+	c.sl.hc.TrackWorkshareReception(workShare)
+}
+
+// TrackBlockReceived records a block and its contained workshares for tracking
+func (c *Core) TrackBlockReceived(block *types.WorkObject) {
+	c.sl.hc.TrackBlockReceived(block)
+}
+
+// GetWorkshareTrackingEnabled returns whether workshare tracking is enabled
+func (c *Core) GetWorkshareTrackingEnabled() bool {
+	return c.sl.hc.WorkshareTrackingEnabled()
+}
+
+// GetWorkshareReception retrieves a workshare reception record by hash
+func (c *Core) GetWorkshareReception(hash common.Hash) (*types.WorkshareReception, error) {
+	return c.sl.hc.GetWorkshareReception(hash)
+}
+
+// GetWorkerInclusion retrieves a worker inclusion record by workshare hash
+func (c *Core) GetWorkerInclusion(hash common.Hash) (*types.WorkerInclusionRecord, error) {
+	return c.sl.hc.GetWorkerInclusion(hash)
+}
+
+// GetMissedWorkshare retrieves a missed workshare record by hash
+func (c *Core) GetMissedWorkshare(hash common.Hash) (*types.MissedWorkshare, error) {
+	return c.sl.hc.GetMissedWorkshare(hash)
+}
+
+// GetBlockRecord retrieves a block record by hash
+func (c *Core) GetBlockRecord(hash common.Hash) (*types.BlockRecord, error) {
+	return c.sl.hc.GetBlockRecord(hash)
+}
+
+// GetOrphanedBlock retrieves an orphaned block record by hash
+func (c *Core) GetOrphanedBlock(hash common.Hash) (*types.OrphanedBlock, error) {
+	return c.sl.hc.GetOrphanedBlock(hash)
+}
+
 func (c *Core) AddPendingAuxPow(powId types.PowID, sealHash common.Hash, auxpow *types.AuxPow) {
 	c.sl.miner.worker.AddPendingAuxPow(powId, sealHash, auxpow)
 }

@@ -167,6 +167,9 @@ type Config struct {
 	// TelemetryEnabled enables or disables telemetry reporting
 	TelemetryEnabled bool
 
+	// WorkshareTrackingEnabled enables experimental workshare tracking for analysis
+	WorkshareTrackingEnabled bool
+
 	// RpcVersion is the RPC version to use
 	RpcVersion string
 

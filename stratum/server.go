@@ -28,7 +28,7 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-)
+ )
 
 const (
 	seenSharesSize      = 1024  // Size of LRU cache for seen shares per session
@@ -49,9 +49,10 @@ type StratumConfig struct {
 
 // Connection limits and liveness timeout constants
 const (
-	defaultMaxConnections = 10000            // Default max concurrent connections
-	livenessTimeout       = 10 * time.Minute // Close connection if no share within this time
-	tickerInterval        = 1 * time.Second  // Interval for template polling and force broadcast loops
+	defaultMaxConnections  = 10000            // Default max concurrent connections
+	livenessTimeout        = 10 * time.Minute // Close connection if no share within this time
+	tickerInterval         = 1 * time.Second  // Interval for template polling and force broadcast loops
+	forceBroadcastInterval = 5 * time.Second  // Interval for forced update of the workers
 )
 
 // templateState tracks the last template sent for change detection
@@ -202,6 +203,9 @@ type Server struct {
 	// Body cache - many-to-one mapping from jobs to block bodies
 	// Key is BodyCacheKey (excludes coinbase), so all miners on same template share one body
 	pendingBodies *lru.Cache[common.Hash, *types.WorkObject]
+
+	lastHeightChangeTime time.Time
+	lastUpdateTime time.Time
 }
 
 // NewServer creates a new stratum server with the given configuration.
@@ -375,6 +379,7 @@ func (s *Server) templatePollingLoop(algorithm string) {
 		case <-ticker.C:
 			changed, clean, isNewBlock := s.checkTemplateChanged(algorithm)
 			if changed {
+				s.lastUpdateTime = time.Now()
 				s.broadcastJob(algorithm, clean, isNewBlock)
 			}
 		}
@@ -443,12 +448,18 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool, bool) {
 	}
 
 	if lastState.quaiHeight != newState.quaiHeight {
+		currentTime := time.Now()
+		clean := false
+		if currentTime.Sub(s.lastHeightChangeTime) < 3*time.Second {
+			clean = true
+		}
+		s.lastHeightChangeTime = time.Now()
 		s.logger.WithFields(log.Fields{
 			"algo":          algorithm,
 			"oldQuaiHeight": lastState.quaiHeight,
 			"newQuaiHeight": newState.quaiHeight,
 		}).Info("QuaiHeight changed")
-		return true, true, false // isNewBlock=false: only quaiHeight changed
+		return true, clean, false // isNewBlock=false: only quaiHeight changed
 	}
 
 	if algorithm == "kawpow" && lastState.sealHash != newState.sealHash {
@@ -456,7 +467,7 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool, bool) {
 			"algo":   algorithm,
 			"height": newState.height,
 		}).Trace("Template updated (sealhash changed)")
-		return true, true, false
+		return true, false, false
 	}
 
 	return false, false, false
@@ -531,7 +542,7 @@ func (s *Server) broadcastJob(algorithm string, clean bool, isNewBlock bool) {
 // forceBroadcastLoop runs the force broadcast check every tickerInterval until shutdown
 func (s *Server) forceBroadcastLoop(algorithm string) {
 	defer s.wg.Done()
-	ticker := time.NewTicker(tickerInterval)
+	ticker := time.NewTicker(forceBroadcastInterval)
 	defer ticker.Stop()
 
 	for {
@@ -574,10 +585,14 @@ func (s *Server) forceBroadcastStale(algorithm string) {
 	varDiffTimeoutSessions := make([]*session, 0)
 	livenessTimeoutSessions := make([]*session, 0)
 	now := time.Now()
+	// Dont force update if the last update happened less than 5 secs ago
+	if now.Sub(s.lastUpdateTime) < 10 * time.Second {
+		return
+	}
 	for _, sess := range sessionsCopy {
 		if !sess.authorized {
 			continue
-		}
+		} 
 		sess.mu.Lock()
 		timeSinceLastJob := now.Sub(sess.lastJobSent)
 		timeSinceLastShare := now.Sub(sess.lastShareTime)
@@ -2178,7 +2193,7 @@ func (s *Server) submitAsWorkShare(sess *session, curJob *job, ex2hex, ntimeHex,
 	sess.mu.Lock()
 	sess.totalShares++
 	sess.mu.Unlock()
-	s.logger.WithFields(log.Fields{"sid": sess.id, "totalShares": sess.totalShares, "invalidShares": sess.invalidShares, "powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes), "workshareHash": fullPending.Hash().Hex()}).Info("workshare received - submitting to network")
+	s.logger.WithFields(log.Fields{"sid": sess.id, "user": sess.user, "quai height": fullPending.NumberU64(common.ZONE_CTX), "totalShares": sess.totalShares, "invalidShares": sess.invalidShares, "powID": pending.AuxPow().PowID(), "achievedDiff": achievedDiff.String(), "hashBytes": hex.EncodeToString(hashBytes), "workshareHash": fullPending.Hash().Hex()}).Info("workshare received - submitting to network")
 	// Record the block discovery for pool stats
 	workerKey := sess.user
 	if sess.workerName != "" {

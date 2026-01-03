@@ -1458,7 +1458,6 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 						"hashrateHR": formatAlgoHashrate(float64(hashrate), "kawpow"),
 						"workerID":   workerID,
 					}).Info("eth_submitHashrate received")
-					s.stats.SetReportedHashrate(sess.user, sess.workerName, float64(hashrate))
 				}
 			}
 			// Always respond with success

@@ -8,6 +8,10 @@ import (
 	"github.com/dominant-strategies/go-quai/log"
 )
 
+const (
+	c_hashRateEmaSamples = 50
+)
+
 // formatAlgoHashrate returns a human-readable hashrate string with fixed units per algorithm
 // SHA256: TH/s, Scrypt: GH/s, KawPoW: MH/s
 func formatAlgoHashrate(hashrate float64, algorithm string) string {
@@ -42,7 +46,6 @@ type WorkerStats struct {
 	SharesInvalid    uint64    `json:"sharesInvalid"`
 	Difficulty       float64   `json:"difficulty"`
 	Hashrate         float64   `json:"hashrate"` // estimated from share rate
-	ReportedHashrate float64   `json:"reportedHashrate"`
 	CumulativeWork   float64   `json:"-"` // sum of (difficulty) for each valid share
 	IsConnected      bool      `json:"isConnected"`
 }
@@ -157,21 +160,6 @@ func (ps *PoolStats) WorkerDisconnected(address, workerName string) {
 
 	if worker, exists := ps.workers[key]; exists {
 		worker.IsConnected = false
-	}
-}
-
-// SetReportedHashrate updates the miner-reported hashrate for a worker
-func (ps *PoolStats) SetReportedHashrate(address, workerName string, hashrate float64) {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-
-	key := address
-	if workerName != "" {
-		key = address + "." + workerName
-	}
-
-	if worker, exists := ps.workers[key]; exists {
-		worker.ReportedHashrate = hashrate
 	}
 }
 
@@ -512,10 +500,6 @@ func (ps *PoolStats) calculateWorkerHashrate(address string) float64 {
 		return 0
 	}
 
-	if worker.ReportedHashrate > 0 {
-		return worker.ReportedHashrate
-	}
-
 	elapsed := time.Since(worker.ConnectedAt).Seconds()
 	if elapsed < 1 {
 		elapsed = 1
@@ -532,9 +516,12 @@ func (ps *PoolStats) calculateWorkerHashrate(address string) float64 {
 	default:
 		scale = 4294967296 // 2^32
 	}
+     
 
 	// Hashrate = (cumulative_work * scale) / time
-	return worker.CumulativeWork * scale / elapsed
+	newHashRate := worker.CumulativeWork * scale / elapsed
+
+	return (float64(c_hashRateEmaSamples-1)*worker.Hashrate + newHashRate )/float64(c_hashRateEmaSamples)
 }
 
 // GetTotalHashrate calculates pool-wide hashrate

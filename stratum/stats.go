@@ -124,19 +124,6 @@ func (ps *PoolStats) WorkerConnected(address, workerName, algorithm string) {
 		if worker.IsConnected {
 			return
 		}
-
-		worker.IsConnected = true
-		worker.ConnectedAt = time.Now()
-		// Reset stats on reconnect to avoid hashrate spikes
-		// (old shares with new short time window = inflated hashrate)
-		worker.SharesValid = 0
-		worker.SharesStale = 0
-		worker.SharesInvalid = 0
-		worker.Hashrate = 0
-		worker.CumulativeWork = 0
-		if algorithm != "" {
-			worker.Algorithm = algorithm
-		}
 	} else {
 		ps.workers[key] = &WorkerStats{
 			Address:     address,
@@ -202,16 +189,6 @@ func (ps *PoolStats) ShareSubmittedWithDiff(address, workerName, algorithm strin
 		ps.workers[key] = worker
 	} else if !worker.IsConnected {
 		worker.IsConnected = true
-		worker.ConnectedAt = now
-		// Reset stats on reconnect to avoid hashrate spikes
-		worker.SharesValid = 0
-		worker.SharesStale = 0
-		worker.SharesInvalid = 0
-		worker.Hashrate = 0
-		worker.CumulativeWork = 0
-		if algorithm != "" {
-			worker.Algorithm = algorithm
-		}
 	}
 
 	worker.LastShareAt = now

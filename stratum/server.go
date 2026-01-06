@@ -204,8 +204,9 @@ type Server struct {
 	// Key is BodyCacheKey (excludes coinbase), so all miners on same template share one body
 	pendingBodies *lru.Cache[common.Hash, *types.WorkObject]
 
-	lastHeightChangeTime time.Time
-	lastUpdateTime       time.Time
+	lastSealHashChangeTime time.Time
+	lastHeightChangeTime   time.Time
+	lastUpdateTime         time.Time
 }
 
 // NewServer creates a new stratum server with the given configuration.
@@ -463,6 +464,12 @@ func (s *Server) checkTemplateChanged(algorithm string) (bool, bool, bool) {
 	}
 
 	if algorithm == "kawpow" && lastState.sealHash != newState.sealHash {
+		currentTime := time.Now()
+		if currentTime.Sub(s.lastHeightChangeTime) < 3*time.Second {
+			s.lastSealHashChangeTime = currentTime
+			return false, false, false
+		}
+		s.lastSealHashChangeTime = currentTime
 		s.logger.WithFields(log.Fields{
 			"algo":   algorithm,
 			"height": newState.height,

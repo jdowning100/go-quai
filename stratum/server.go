@@ -585,10 +585,7 @@ func (s *Server) forceBroadcastStale(algorithm string) {
 	varDiffTimeoutSessions := make([]*session, 0)
 	livenessTimeoutSessions := make([]*session, 0)
 	now := time.Now()
-	// Dont force update if the last update happened less than 5 secs ago
-	if now.Sub(s.lastUpdateTime) < 10*time.Second {
-		return
-	}
+
 	for _, sess := range sessionsCopy {
 		if !sess.authorized {
 			continue
@@ -680,6 +677,11 @@ func (s *Server) forceBroadcastStale(algorithm string) {
 		"algo":   algorithm,
 		"miners": len(staleSessions),
 	}).Debug("Force broadcasting to stale sessions")
+
+	// Dont force update if the last update happened less than 5 secs ago
+	if now.Sub(s.lastUpdateTime) < 5*time.Second {
+		return
+	}
 
 	// Broadcast with clean=true to stale sessions via worker pool
 	for _, sess := range staleSessions {

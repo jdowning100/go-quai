@@ -792,8 +792,9 @@ const (
 // - Scrypt: ~65k hashes per stratum diff 1 (ASIC miners at high hashrate)
 const (
 	// Kawpow vardiff (diff1 = ~2^32 hashes)
-	varDiffDefaultKawpow = 50  // Starting difficulty
-	varDiffMinKawpow     = 0.1 // Minimum difficulty
+	varDiffDefaultKawpow               = 50  // Starting difficulty
+	varDiffMinKawpow                   = 0.1 // Minimum difficulty
+	diffHashesInterpretationThresholdD = 1000000
 
 	// SHA256 vardiff (diff1 = 2^32 hashes)
 	// default=230,000 (one petahash), min=2300 (ten terahash)
@@ -1242,6 +1243,18 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 					if sess.minerDifficulty != nil && *sess.minerDifficulty < minScryptDiff && sess.chain == "scrypt" {
 						minScryptDiff_ := minScryptDiff
 						sess.minerDifficulty = &minScryptDiff_
+					}
+					if sess.minerDifficulty != nil && sess.chain == "kawpow" {
+						diff := *sess.minerDifficulty
+						minKawpowDiff_ := varDiffMinKawpow
+						// If *sess.minerDifficulty is greater than million, interpret as number of hashes,
+						// otherwise treat is as scaled down value
+						if diff > diffHashesInterpretationThresholdD {
+							diff = *sess.minerDifficulty / 4294967296
+						}
+						if diff < varDiffMinKawpow {
+							sess.minerDifficulty = &minKawpowDiff_
+						}
 					}
 					if pwFreq > 0 {
 						sess.jobFrequency = pwFreq // Password frequency overrides username frequency

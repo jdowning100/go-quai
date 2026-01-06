@@ -28,7 +28,7 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
- )
+)
 
 const (
 	seenSharesSize      = 1024  // Size of LRU cache for seen shares per session
@@ -205,7 +205,7 @@ type Server struct {
 	pendingBodies *lru.Cache[common.Hash, *types.WorkObject]
 
 	lastHeightChangeTime time.Time
-	lastUpdateTime time.Time
+	lastUpdateTime       time.Time
 }
 
 // NewServer creates a new stratum server with the given configuration.
@@ -586,13 +586,13 @@ func (s *Server) forceBroadcastStale(algorithm string) {
 	livenessTimeoutSessions := make([]*session, 0)
 	now := time.Now()
 	// Dont force update if the last update happened less than 5 secs ago
-	if now.Sub(s.lastUpdateTime) < 10 * time.Second {
+	if now.Sub(s.lastUpdateTime) < 10*time.Second {
 		return
 	}
 	for _, sess := range sessionsCopy {
 		if !sess.authorized {
 			continue
-		} 
+		}
 		sess.mu.Lock()
 		timeSinceLastJob := now.Sub(sess.lastJobSent)
 		timeSinceLastShare := now.Sub(sess.lastShareTime)
@@ -1368,8 +1368,17 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 				if err := s.submitKawpowShare(sess, kawJob, nonceHex, headerHashHex, mixHashHex); err != nil {
 					sess.mu.Lock()
 					sess.invalidShares++
+					invalidCount := sess.invalidShares
 					sess.mu.Unlock()
 					s.stats.ShareSubmitted(sess.user, sess.workerName, difficulty, false, false) // invalid share
+					s.logger.WithFields(log.Fields{
+						"sid":           sess.id,
+						"worker":        sess.user + "." + sess.workerName,
+						"reason":        err.Error(),
+						"nonce":         nonceHex,
+						"jobID":         jobID,
+						"invalidShares": invalidCount,
+					}).Warn("invalid share rejected (kawpow)")
 					if err := sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: err.Error()}); err != nil {
 						s.logger.WithFields(log.Fields{"error": err, "worker": sess.user + "." + sess.workerName}).Debug("failed to send mining.submit invalid share (kawpow)")
 					}
@@ -1435,8 +1444,18 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 			if err != nil {
 				sess.mu.Lock()
 				sess.invalidShares++
+				invalidCount := sess.invalidShares
 				sess.mu.Unlock()
 				s.stats.ShareSubmitted(sess.user, sess.workerName, difficulty, false, false) // invalid share
+				s.logger.WithFields(log.Fields{
+					"sid":           sess.id,
+					"worker":        sess.user + "." + sess.workerName,
+					"chain":         sess.chain,
+					"reason":        err.Error(),
+					"nonce":         nonceHex,
+					"jobID":         jobID,
+					"invalidShares": invalidCount,
+				}).Warn("invalid share rejected (sha256/scrypt)")
 				if err := sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: err.Error()}); err != nil {
 					s.logger.WithFields(log.Fields{"error": err, "worker": sess.user + "." + sess.workerName}).Debug("failed to send mining.submit invalid share (sha256/scrypt)")
 				}

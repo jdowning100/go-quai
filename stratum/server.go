@@ -1464,6 +1464,14 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 			// Pass j directly to avoid TOCTOU race where sess.job could be replaced by concurrent sendJobAndNotify
 			refreshJob, err := s.submitAsWorkShare(sess, j, ex2hex, ntimeHex, nonceHex, versionBits)
 			if err != nil {
+				if strings.Contains(err.Error(), "below target") {
+					if err := sess.sendJSON(stratumResp{ID: req.ID, Result: true, Error: nil}); err != nil {
+						s.logger.WithFields(log.Fields{"error": err, "worker": sess.user + "." + sess.workerName}).Error("failed to send mining.submit accepted (sha256/scrypt)")
+						sess.conn.Close()
+						return
+					}
+					continue
+				}
 				sess.mu.Lock()
 				sess.invalidShares++
 				invalidCount := sess.invalidShares

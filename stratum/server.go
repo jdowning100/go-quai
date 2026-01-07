@@ -1075,7 +1075,7 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 	defer func() {
 		s.unregisterSession(sess)
 		if sess.authorized && sess.user != "" {
-			s.stats.WorkerDisconnected(sess.user, sess.workerName)
+			s.stats.WorkerDisconnected(sess.user, sess.workerName, algorithm)
 		}
 		close(sess.done)
 		if sess.jobTicker != nil {
@@ -1237,7 +1237,7 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 
 			// If re-authorizing with different worker name, disconnect old worker first
 			if wasAuthorized && (oldUser != sess.user || oldWorkerName != sess.workerName) {
-				s.stats.WorkerDisconnected(oldUser, oldWorkerName)
+				s.stats.WorkerDisconnected(oldUser, oldWorkerName, sess.chain)
 			}
 			// Parse password for optional difficulty, frequency, and skip settings
 			// Format: d=<difficulty>,frequency=<seconds>,skip=<true|false>
@@ -1379,7 +1379,7 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 						sess.staleShares++
 						sess.mu.Unlock()
 						s.logger.WithFields(log.Fields{"jobID": jobID, "sessionKnown": sess.kawJobs.Len(), "globalKnown": s.globalKawJobs.Len(), "worker": sess.user + "." + sess.workerName}).Error("unknown or stale kawpow jobID")
-						s.stats.ShareSubmitted(sess.user, sess.workerName, difficulty, false, true) // stale share
+						s.stats.ShareSubmitted(sess.user, sess.workerName, sess.chain, difficulty, false, true) // stale share
 						if err := sess.sendJSON(stratumResp{ID: req.ID, Result: false, Error: "nojob"}); err != nil {
 							s.logger.WithFields(log.Fields{"error": err, "worker": sess.user + "." + sess.workerName}).Debug("failed to send mining.submit stale job (kawpow)")
 						}
@@ -1394,7 +1394,7 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 					sess.invalidShares++
 					invalidCount := sess.invalidShares
 					sess.mu.Unlock()
-					s.stats.ShareSubmitted(sess.user, sess.workerName, difficulty, false, false) // invalid share
+					s.stats.ShareSubmitted(sess.user, sess.workerName, sess.chain, difficulty, false, false) // invalid share
 					s.logger.WithFields(log.Fields{
 						"sid":           sess.id,
 						"worker":        sess.user + "." + sess.workerName,
@@ -1452,7 +1452,7 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 					sess.staleShares++
 					sess.mu.Unlock()
 					s.logger.WithFields(log.Fields{"jobID": jobID, "sessionKnown": sess.jobs.Len(), "globalKnown": s.globalJobs.Len(), "worker": sess.user + "." + sess.workerName}).Error("unknown or stale jobID")
-					s.stats.ShareSubmitted(sess.user, sess.workerName, difficulty, false, true) // stale share
+					s.stats.ShareSubmitted(sess.user, sess.workerName, sess.chain, difficulty, false, true) // stale share
 					sess.sendJSON(stratumResp{
 						ID:     req.ID,
 						Result: false,
@@ -1478,7 +1478,7 @@ func (s *Server) handleConn(c net.Conn, algorithm string) {
 				sess.invalidShares++
 				invalidCount := sess.invalidShares
 				sess.mu.Unlock()
-				s.stats.ShareSubmitted(sess.user, sess.workerName, difficulty, false, false) // invalid share
+				s.stats.ShareSubmitted(sess.user, sess.workerName, sess.chain, difficulty, false, false) // invalid share
 				s.logger.WithFields(log.Fields{
 					"sid":           sess.id,
 					"worker":        sess.user + "." + sess.workerName,

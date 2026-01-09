@@ -45,6 +45,7 @@ type StratumConfig struct {
 	JobWorkerCount int    // Number of workers in the job broadcast pool (default 4)
 	MaxConnections int    // Maximum concurrent connections (default 10000, 0 = unlimited)
 	ProxyProtocol  bool   // Enable PROXY protocol support for load balancer (default false)
+	PoolTag        string // Tag to identify the mining pool that is set in the coinbase
 }
 
 // Connection limits and liveness timeout constants
@@ -54,8 +55,6 @@ const (
 	tickerInterval         = 1 * time.Second  // Interval for template polling and force broadcast loops
 	forceBroadcastInterval = 5 * time.Second  // Interval for forced update of the workers
 )
-
-var poolExtraData = []byte("/StratumX.org/")
 
 // templateState tracks the last template sent for change detection
 type templateState struct {
@@ -1682,7 +1681,7 @@ func (s *Server) sendJobAndNotify(sess *session, clean bool) error {
 // Kawpow stratum notify format: [job_id, header_hash, seed_hash, target, clean, height, bits]
 func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 	address := common.HexToAddress(sess.user, s.backend.NodeLocation())
-	pending, err := s.backend.GetPendingHeader(types.Kawpow, address, poolExtraData)
+	pending, err := s.backend.GetPendingHeader(types.Kawpow, address, []byte(s.config.PoolTag))
 	if err != nil || pending == nil || pending.WorkObjectHeader() == nil {
 		if err == nil {
 			err = fmt.Errorf("no pending header for kawpow")
@@ -1869,7 +1868,7 @@ func (s *Server) sendKawpowJob(sess *session, clean bool) error {
 func (s *Server) makeJob(sess *session) (*job, error) {
 	powID := powIDFromChain(sess.chain)
 	address := common.HexToAddress(sess.user, s.backend.NodeLocation())
-	pending, err := s.backend.GetPendingHeader(types.PowID(powID), address, poolExtraData)
+	pending, err := s.backend.GetPendingHeader(types.PowID(powID), address, []byte(s.config.PoolTag))
 
 	if err != nil || pending == nil || pending.WorkObjectHeader() == nil || pending.WorkObjectHeader().AuxPow() == nil {
 		if err == nil {

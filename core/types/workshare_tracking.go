@@ -109,6 +109,13 @@ type WorkshareReception struct {
 	PowType                PowID
 	ParentHash             common.Hash
 	WorkshareNumber        uint64
+	// New fields for hashrate measurement and difficulty comparison
+	SignatureTime      uint32      // When the work was done (from AuxPow coinbase)
+	PowHash            common.Hash // Actual PoW hash result
+	QuaiDifficulty     *big.Int    // Share difficulty target
+	AuxPowBits         uint32      // nBits from AuxPow header
+	BlockDifficultyPct float32     // How close to block difficulty (powHash/blockTarget * 100)
+	SealHash           common.Hash // Seal hash (Aux Merkle Root for merged mining)
 }
 
 // ProtoEncode converts WorkshareReception to protobuf format
@@ -117,6 +124,10 @@ func (wr *WorkshareReception) ProtoEncode() *ProtoWorkshareReception {
 		return nil
 	}
 	powType := uint32(wr.PowType)
+	var quaiDifficulty []byte
+	if wr.QuaiDifficulty != nil {
+		quaiDifficulty = wr.QuaiDifficulty.Bytes()
+	}
 	return &ProtoWorkshareReception{
 		WorkshareHash:          wr.WorkshareHash.ProtoEncode(),
 		ReceivedTimestamp:      wr.ReceivedTimestamp,
@@ -125,6 +136,12 @@ func (wr *WorkshareReception) ProtoEncode() *ProtoWorkshareReception {
 		PowType:                powType,
 		ParentHash:             wr.ParentHash.ProtoEncode(),
 		WorkshareNumber:        wr.WorkshareNumber,
+		SignatureTime:          wr.SignatureTime,
+		PowHash:                wr.PowHash.ProtoEncode(),
+		QuaiDifficulty:         quaiDifficulty,
+		AuxPowBits:             wr.AuxPowBits,
+		BlockDifficultyPct:     wr.BlockDifficultyPct,
+		SealHash:               wr.SealHash.ProtoEncode(),
 	}
 }
 
@@ -140,6 +157,14 @@ func (wr *WorkshareReception) ProtoDecode(proto *ProtoWorkshareReception, locati
 	wr.PowType = PowID(proto.PowType)
 	wr.ParentHash.ProtoDecode(proto.ParentHash)
 	wr.WorkshareNumber = proto.WorkshareNumber
+	wr.SignatureTime = proto.SignatureTime
+	wr.PowHash.ProtoDecode(proto.PowHash)
+	if len(proto.QuaiDifficulty) > 0 {
+		wr.QuaiDifficulty = new(big.Int).SetBytes(proto.QuaiDifficulty)
+	}
+	wr.AuxPowBits = proto.AuxPowBits
+	wr.BlockDifficultyPct = proto.BlockDifficultyPct
+	wr.SealHash.ProtoDecode(proto.SealHash)
 	return nil
 }
 

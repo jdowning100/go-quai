@@ -1087,7 +1087,7 @@ func parsePowID(algorithm string) (types.PowID, error) {
 	switch strings.ToLower(algorithm) {
 	case "kawpow":
 		return types.Kawpow, nil
-	case "sha", "sha256", "sha256d", "sha_bch":
+	case "sha", "sha256", "sha256d", "sha_btc", "sha_bch":
 		return types.SHA_BCH, nil
 	case "scrypt":
 		return types.Scrypt, nil

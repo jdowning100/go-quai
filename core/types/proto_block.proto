@@ -347,6 +347,13 @@ message ProtoWorkshareReception {
   uint32 pow_type = 5;
   common.ProtoHash parent_hash = 6;
   uint64 workshare_number = 7;
+  // New fields for hashrate measurement and difficulty comparison
+  uint32 signature_time = 8;           // When the work was done (from AuxPow coinbase)
+  common.ProtoHash pow_hash = 9;       // Actual PoW hash result
+  bytes quai_difficulty = 10;          // Share difficulty target (big.Int)
+  uint32 aux_pow_bits = 11;            // nBits from AuxPow header
+  float block_difficulty_pct = 12;     // How close to block difficulty (powHash/blockTarget * 100)
+  common.ProtoHash seal_hash = 13;     // Seal hash (Aux Merkle Root for merged mining)
 }
 
 // Track when worker adds workshare to pending block

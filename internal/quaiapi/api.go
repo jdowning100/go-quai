@@ -33,6 +33,7 @@ import (
 	"github.com/dominant-strategies/go-quai/common/math"
 	"github.com/dominant-strategies/go-quai/consensus/progpow"
 	"github.com/dominant-strategies/go-quai/core"
+	"github.com/dominant-strategies/go-quai/core/rawdb"
 	"github.com/dominant-strategies/go-quai/core/state"
 	"github.com/dominant-strategies/go-quai/core/types"
 	"github.com/dominant-strategies/go-quai/core/vm"
@@ -1823,6 +1824,13 @@ type WorkshareReceptionResult struct {
 	PowType                uint32         `json:"powType"`
 	ParentHash             common.Hash    `json:"parentHash"`
 	WorkshareNumber        uint64         `json:"workshareNumber"`
+	// New fields for hashrate measurement and difficulty comparison
+	SignatureTime      uint32      `json:"signatureTime"`      // When the work was done (from AuxPow coinbase)
+	PowHash            common.Hash `json:"powHash"`            // Actual PoW hash result
+	QuaiDifficulty     string      `json:"quaiDifficulty"`     // Share difficulty target (as decimal string)
+	AuxPowBits         string      `json:"auxPowBits"`         // nBits from AuxPow header (hex string)
+	BlockDifficultyPct float32     `json:"blockDifficultyPct"` // How close to block difficulty (powHash/blockTarget * 100)
+	SealHash           common.Hash `json:"sealHash"`           // Seal hash (Aux Merkle Root for merged mining)
 }
 
 // GetWorkshareReception retrieves workshare reception info by hash
@@ -1837,6 +1845,10 @@ func (api *WorkshareTrackingAPI) GetWorkshareReception(ctx context.Context, hash
 	if reception == nil {
 		return nil, nil
 	}
+	var quaiDiff string
+	if reception.QuaiDifficulty != nil {
+		quaiDiff = reception.QuaiDifficulty.String()
+	}
 	return &WorkshareReceptionResult{
 		WorkshareHash:          reception.WorkshareHash,
 		ReceivedTimestamp:      reception.ReceivedTimestamp,
@@ -1845,6 +1857,12 @@ func (api *WorkshareTrackingAPI) GetWorkshareReception(ctx context.Context, hash
 		PowType:                uint32(reception.PowType),
 		ParentHash:             reception.ParentHash,
 		WorkshareNumber:        reception.WorkshareNumber,
+		SignatureTime:          reception.SignatureTime,
+		PowHash:                reception.PowHash,
+		QuaiDifficulty:         quaiDiff,
+		AuxPowBits:             fmt.Sprintf("0x%x", reception.AuxPowBits),
+		BlockDifficultyPct:     reception.BlockDifficultyPct,
+		SealHash:               reception.SealHash,
 	}, nil
 }
 
@@ -2006,5 +2024,68 @@ func (api *WorkshareTrackingAPI) GetOrphanedBlock(ctx context.Context, hash comm
 		TotalWorkshareEntropy: entropy,
 		Coinbase:              orphaned.Coinbase,
 		ReplacedBy:            orphaned.ReplacedBy,
+	}, nil
+}
+
+// GetWorksharesForBlock retrieves all workshare hashes received at a specific block height
+func (api *WorkshareTrackingAPI) GetWorksharesForBlock(ctx context.Context, blockNumber hexutil.Uint64) ([]common.Hash, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	hashes, err := rawdb.GetWorksharesForBlock(api.b.ChainDb(), uint64(blockNumber))
+	if err != nil {
+		return nil, err
+	}
+	return hashes, nil
+}
+
+// WorksharesForBlockResult contains full workshare data for a block
+type WorksharesForBlockResult struct {
+	BlockNumber uint64                     `json:"blockNumber"`
+	Count       int                        `json:"count"`
+	Workshares  []*WorkshareReceptionResult `json:"workshares"`
+}
+
+// GetWorksharesForBlockFull retrieves all workshare reception data for a specific block height
+func (api *WorkshareTrackingAPI) GetWorksharesForBlockFull(ctx context.Context, blockNumber hexutil.Uint64) (*WorksharesForBlockResult, error) {
+	if !api.b.GetWorkshareTrackingEnabled() {
+		return nil, errors.New("workshare tracking is not enabled")
+	}
+	hashes, err := rawdb.GetWorksharesForBlock(api.b.ChainDb(), uint64(blockNumber))
+	if err != nil {
+		return nil, err
+	}
+
+	workshares := make([]*WorkshareReceptionResult, 0, len(hashes))
+	for _, hash := range hashes {
+		reception, err := api.b.GetWorkshareReception(hash)
+		if err != nil || reception == nil {
+			continue
+		}
+		var quaiDiff string
+		if reception.QuaiDifficulty != nil {
+			quaiDiff = reception.QuaiDifficulty.String()
+		}
+		workshares = append(workshares, &WorkshareReceptionResult{
+			WorkshareHash:          reception.WorkshareHash,
+			ReceivedTimestamp:      reception.ReceivedTimestamp,
+			BlockHeightAtReception: reception.BlockHeightAtReception,
+			Coinbase:               reception.Coinbase,
+			PowType:                uint32(reception.PowType),
+			ParentHash:             reception.ParentHash,
+			WorkshareNumber:        reception.WorkshareNumber,
+			SignatureTime:          reception.SignatureTime,
+			PowHash:                reception.PowHash,
+			QuaiDifficulty:         quaiDiff,
+			AuxPowBits:             fmt.Sprintf("0x%x", reception.AuxPowBits),
+			BlockDifficultyPct:     reception.BlockDifficultyPct,
+			SealHash:               reception.SealHash,
+		})
+	}
+
+	return &WorksharesForBlockResult{
+		BlockNumber: uint64(blockNumber),
+		Count:       len(workshares),
+		Workshares:  workshares,
 	}, nil
 }

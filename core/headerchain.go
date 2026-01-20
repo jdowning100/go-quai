@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/blockchain"
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/common/math"
 	"github.com/dominant-strategies/go-quai/consensus"
@@ -1974,12 +1975,82 @@ func (hc *HeaderChain) TrackWorkshareReception(ws *types.WorkObjectHeader) {
 		return
 	}
 
-	// Get PowID - default to Progpow if no AuxPow
+	// Get PowID and extract AuxPow data if available
 	var powType types.PowID
+	var signatureTime uint32
+	var powHash common.Hash
+	var auxPowBits uint32
+	var blockDifficultyPct float32
+
 	if ws.AuxPow() != nil {
 		powType = ws.AuxPow().PowID()
+
+		// Extract signatureTime from coinbase
+		if ws.AuxPow().Transaction() != nil {
+			scriptSig := types.ExtractScriptSigFromCoinbaseTx(ws.AuxPow().Transaction())
+			if sigTime, err := types.ExtractSignatureTimeFromCoinbase(scriptSig); err == nil {
+				signatureTime = sigTime
+			}
+		}
+
+		// Get nBits from AuxPow header
+		if ws.AuxPow().Header() != nil {
+			auxPowBits = ws.AuxPow().Header().Bits()
+		}
+
+		// Compute PowHash based on PoW type
+		switch powType {
+		case types.Kawpow:
+			// Use engine to compute Kawpow hash
+			engine := hc.GetEngineForPowID(types.Kawpow)
+			if engine != nil {
+				if computed, err := engine.ComputePowHash(ws); err == nil {
+					powHash = computed
+				} else {
+					hc.logger.WithFields(log.Fields{"err": err, "hash": ws.Hash()}).Warn("Failed to compute Kawpow hash for tracking")
+				}
+			}
+		case types.SHA_BCH, types.SHA_BTC, types.Scrypt:
+			// For SHA256 (BCH) and Scrypt (Dogecoin/Litecoin), use AuxPow header's PowHash
+			if ws.AuxPow().Header() != nil {
+				powHash = ws.AuxPow().Header().PowHash()
+			}
+		}
+
+		// Calculate block difficulty percentage (blockTarget / powHash * 100)
+		// Values > 100 mean the hash beat the block target (could be a valid parent chain block)
+		// Values < 100 mean the hash didn't meet the target (e.g., 50% = halfway there)
+		if auxPowBits > 0 && powHash != (common.Hash{}) {
+			blockTarget := blockchain.CompactToBig(auxPowBits)
+			powHashInt := new(big.Int).SetBytes(powHash.Bytes())
+			if powHashInt.Sign() > 0 && blockTarget.Sign() > 0 {
+				// ratio = (blockTarget / powHash) * 100
+				ratio := new(big.Float).Quo(
+					new(big.Float).SetInt(blockTarget),
+					new(big.Float).SetInt(powHashInt),
+				)
+				ratio.Mul(ratio, big.NewFloat(100))
+				pct, _ := ratio.Float32()
+				blockDifficultyPct = pct
+			}
+		}
 	} else {
+		// No AuxPow means Progpow - use engine to compute hash
 		powType = types.Progpow
+		engine := hc.GetEngineForPowID(types.Progpow)
+		if engine != nil {
+			if computed, err := engine.ComputePowHash(ws); err == nil {
+				powHash = computed
+			} else {
+				hc.logger.WithFields(log.Fields{"err": err, "hash": ws.Hash()}).Warn("Failed to compute Progpow hash for tracking")
+			}
+		}
+	}
+
+	// Get Quai difficulty from workshare
+	var quaiDifficulty *big.Int
+	if ws.Difficulty() != nil {
+		quaiDifficulty = new(big.Int).Set(ws.Difficulty())
 	}
 
 	reception := &types.WorkshareReception{
@@ -1990,6 +2061,12 @@ func (hc *HeaderChain) TrackWorkshareReception(ws *types.WorkObjectHeader) {
 		PowType:                powType,
 		ParentHash:             ws.ParentHash(),
 		WorkshareNumber:        ws.NumberU64(),
+		SignatureTime:          signatureTime,
+		PowHash:                powHash,
+		QuaiDifficulty:         quaiDifficulty,
+		AuxPowBits:             auxPowBits,
+		BlockDifficultyPct:     blockDifficultyPct,
+		SealHash:               ws.SealHash(),
 	}
 
 	if err := rawdb.WriteWorkshareReception(hc.headerDb, reception); err != nil {
@@ -2002,13 +2079,20 @@ func (hc *HeaderChain) TrackWorkshareReception(ws *types.WorkObjectHeader) {
 		hc.logger.WithField("err", err).Error("Failed to index workshare by block")
 	}
 
-	hc.logger.WithFields(log.Fields{
+	logFields := log.Fields{
 		"type":     "ws.received",
 		"hash":     ws.Hash().String(),
 		"coinbase": ws.PrimaryCoinbase().String(),
 		"powType":  powType,
 		"height":   reception.BlockHeightAtReception,
-	}).Debug("Workshare received")
+	}
+	// Add new fields for AuxPow workshares
+	if ws.AuxPow() != nil {
+		logFields["sigTime"] = signatureTime
+		logFields["auxBits"] = fmt.Sprintf("0x%x", auxPowBits)
+		logFields["blkDiffPct"] = fmt.Sprintf("%.2f%%", blockDifficultyPct)
+	}
+	hc.logger.WithFields(logFields).Debug("Workshare received")
 }
 
 // MarkWorkshareIncluded records when a workshare is included in a pending block
@@ -2513,13 +2597,13 @@ func (hc *HeaderChain) TrackForkCompetition(newBlock *types.WorkObject, won bool
 
 // UnlivelyShareStats tracks unlively share penalty statistics by algorithm
 type UnlivelyShareStats struct {
-	KawpowLive     int
-	KawpowUnlively int
-	ShaLive        int
-	ShaUnlively    int
-	ScryptLive     int
-	ScryptUnlively int
-	ProgpowLive    int
+	KawpowLive       int
+	KawpowUnlively   int
+	ShaLive          int
+	ShaUnlively      int
+	ScryptLive       int
+	ScryptUnlively   int
+	ProgpowLive      int
 	ProgpowPenalized int // Progpow after fork gets 30% penalty too
 }
 

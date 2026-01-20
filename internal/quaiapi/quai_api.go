@@ -2409,55 +2409,10 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 	var blockCount int64
 	var oldestBlockTime uint64
 
-	var startKawpowTime, endKawpowTime uint64
-	var startShaTime, endShaTime uint64
-	var startScryptTime, endScryptTime uint64
-
-	var totalKawpowShares, totalShaShares, totalScryptShares uint64
-
 	block := currentHeader
-
 	for block != nil && block.Time() > cutoffTime {
 		blockCount++
 		oldestBlockTime = block.Time()
-
-		if startKawpowTime == 0 || block.Time() <= startKawpowTime {
-			startKawpowTime = block.Time()
-		}
-		if endKawpowTime == 0 || block.Time() >= endKawpowTime {
-			endKawpowTime = block.Time()
-		}
-		totalKawpowShares++
-		for _, share := range block.Uncles() {
-			if share.AuxPow() != nil {
-				switch share.AuxPow().PowID() {
-				case types.Kawpow:
-					if startKawpowTime == 0 || share.Time() <= startKawpowTime {
-						startKawpowTime = share.Time()
-					}
-					if endKawpowTime == 0 || share.Time() >= endKawpowTime {
-						endKawpowTime = share.Time()
-					}
-					totalKawpowShares++
-				case types.SHA_BCH, types.SHA_BTC:
-					if startShaTime == 0 || share.Time() <= startShaTime {
-						startShaTime = share.Time()
-					}
-					if endShaTime == 0 || share.Time() >= endShaTime {
-						endShaTime = share.Time()
-					}
-					totalShaShares++
-				case types.Scrypt:
-					if startScryptTime == 0 || share.Time() <= startScryptTime {
-						startScryptTime = share.Time()
-					}
-					if endScryptTime == 0 || share.Time() >= endScryptTime {
-						endScryptTime = share.Time()
-					}
-					totalScryptShares++
-				}
-			}
-		}
 
 		// Get parent block
 		parentHash := block.ParentHash(common.ZONE_CTX)
@@ -2465,7 +2420,6 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 			break
 		}
 		block = s.b.GetBlockByHash(parentHash)
-
 	}
 
 	var avgBlockTime float64
@@ -2563,22 +2517,33 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 
 	// Hash rate = difficulty / average share time (hashes per second)
 	// Returns string to avoid float64 overflow with petahash-scale values
-	calcHashRate := func(diff *big.Int, totalShares uint64, timeDiff uint64) string {
-		if diff == nil || totalShares == 0 || timeDiff <= 0 {
+	calcHashRate := func(diff *big.Int, avgTime float64) string {
+		if diff == nil || avgTime <= 0 {
 			return "0"
 		}
 		diffFloat := new(big.Float).SetInt(diff)
-		totalDiff := new(big.Float).Mul(diffFloat, new(big.Float).SetUint64(totalShares))
-		timeFloat := new(big.Float).SetFloat64(float64(timeDiff))
-		hashRate := new(big.Float).Quo(totalDiff, timeFloat)
+		timeFloat := new(big.Float).SetFloat64(avgTime)
+		hashRate := new(big.Float).Quo(diffFloat, timeFloat)
 		// Format as integer string (truncate decimals)
 		intPart, _ := hashRate.Int(nil)
 		return intPart.String()
 	}
 
-	fields["kawpowHashRate"] = calcHashRate(kawpowDiff, totalKawpowShares, endKawpowTime-startKawpowTime)
-	fields["shaHashRate"] = calcHashRate(shaDiff, totalShaShares, endShaTime-startShaTime)
-	fields["scryptHashRate"] = calcHashRate(scryptDiff, totalScryptShares, endScryptTime-startScryptTime)
+	if avgTime, ok := fields["avgKawpowShareTime"].(float64); ok {
+		fields["kawpowHashRate"] = calcHashRate(kawpowDiff, avgTime)
+	} else {
+		fields["kawpowHashRate"] = "0"
+	}
+	if avgTime, ok := fields["avgShaShareTime"].(float64); ok {
+		fields["shaHashRate"] = calcHashRate(shaDiff, avgTime)
+	} else {
+		fields["shaHashRate"] = "0"
+	}
+	if avgTime, ok := fields["avgScryptShareTime"].(float64); ok {
+		fields["scryptHashRate"] = calcHashRate(scryptDiff, avgTime)
+	} else {
+		fields["scryptHashRate"] = "0"
+	}
 
 	// Include current block number and hash for reference
 	if decimal != nil && *decimal {
@@ -2597,12 +2562,136 @@ func (s *PublicBlockChainQuaiAPI) GetMiningInfo(ctx context.Context, decimal *bo
 	return fields, nil
 }
 
+// GetDonorChainInfoForWorkShare returns the donor chain PoW hash and difficulty info for a workshare.
+// This can be used to determine if a workshare is also a valid block on the donor chain (BCH, LTC, RVN).
+func (s *PublicBlockChainQuaiAPI) GetDonorChainInfoForWorkShare(ctx context.Context, workShareHash common.Hash) (map[string]interface{}, error) {
+	var workshare *types.WorkObjectHeader
+
+	// Helper function to find workshare in a block
+	findWorkshareInBlock := func(block *types.WorkObject) *types.WorkObjectHeader {
+		if block == nil {
+			return nil
+		}
+		// Check if the hash matches the block itself
+		if block.Hash() == workShareHash {
+			return block.WorkObjectHeader()
+		}
+		// Check the block's uncles/workshares
+		for _, uncle := range block.Uncles() {
+			if uncle.Hash() == workShareHash {
+				return uncle
+			}
+		}
+		return nil
+	}
+
+	// First try the direct lookup
+	block := s.b.GetBlockForWorkShareHash(workShareHash)
+	if block == nil {
+		return nil, errors.New("block not found for work share hash")
+	}
+	workshare = findWorkshareInBlock(block)
+
+	// If not found, search the last 20 blocks
+	if workshare == nil {
+		currentHeader := s.b.CurrentHeader()
+		if currentHeader != nil {
+			nodeCtx := s.b.NodeCtx()
+			currentNum := block.NumberU64(nodeCtx)
+			for i := uint64(0); i < 20 && currentNum >= i; i++ {
+				blockNum := currentNum - i
+				block, _ := s.b.BlockByNumber(ctx, rpc.BlockNumber(blockNum))
+				workshare = findWorkshareInBlock(block)
+				if workshare != nil {
+					break
+				}
+			}
+		}
+	}
+
+	if workshare == nil {
+		return nil, errors.New("workshare not found in recent blocks")
+	}
+
+	// Get AuxPow from the workshare
+	auxPow := workshare.AuxPow()
+	if auxPow == nil {
+		return nil, errors.New("workshare has no AuxPoW (Progpow workshare)")
+	}
+
+	// PowID to name mapping
+	powIdNames := map[types.PowID]string{
+		types.Progpow: "Progpow",
+		types.Kawpow:  "Kawpow",
+		types.SHA_BTC: "SHA_BTC",
+		types.SHA_BCH: "SHA_BCH",
+		types.Scrypt:  "Scrypt",
+	}
+
+	powID := auxPow.PowID()
+	auxPowBits := auxPow.Header().Bits()
+
+	// Get powHash - for SHA/Scrypt it's computed from header, for Kawpow we need the engine
+	var powHash common.Hash
+	if powID == types.Kawpow {
+		// For Kawpow, the powHash cannot be computed from the header alone.
+		// We need to use the consensus engine which has access to the DAG cache.
+		engine := s.b.Engine(workshare)
+		if computedHash, err := engine.ComputePowHash(workshare); err == nil {
+			powHash = computedHash
+		}
+		// If computation fails, powHash remains zero
+	} else {
+		// For SHA_BCH, SHA_BTC, Scrypt - powHash is computed directly from header
+		powHash = auxPow.Header().PowHash()
+	}
+
+	result := make(map[string]interface{})
+	result["powHash"] = powHash
+	result["powId"] = uint8(powID)
+	result["powIdName"] = powIdNames[powID]
+	result["bits"] = auxPowBits
+
+	// Calculate block difficulty percentage (blockTarget / powHash * 100)
+	// Values > 100 mean the hash beat the block target (could be a valid parent chain block)
+	// Values < 100 mean the hash didn't meet the target (e.g., 50% = halfway there)
+	if auxPowBits > 0 {
+		blockTarget := blockchain.CompactToBig(auxPowBits)
+		powHashInt := new(big.Int).SetBytes(powHash.Bytes())
+
+		result["blockTarget"] = (*hexutil.Big)(blockTarget)
+
+		if powHashInt.Sign() > 0 && blockTarget.Sign() > 0 {
+			// meetsBlockDifficulty: powHash <= blockTarget
+			meetsBlockDifficulty := powHashInt.Cmp(blockTarget) <= 0
+			result["meetsBlockDifficulty"] = meetsBlockDifficulty
+
+			// ratio = (blockTarget / powHash) * 100
+			ratio := new(big.Float).Quo(
+				new(big.Float).SetInt(blockTarget),
+				new(big.Float).SetInt(powHashInt),
+			)
+			ratio.Mul(ratio, big.NewFloat(100))
+			pct, _ := ratio.Float64()
+			result["difficultyPct"] = pct
+		}
+	}
+
+	return result, nil
+}
+
 // GetWorkshareByHash searches the last 10k blocks to find a workshare by its hash.
 // Returns the workshare details and the associated coinbase ETX from outboundEtxs.
 // Note: Coinbase ETXs for workshares are generated ~3-4 blocks AFTER the workshare is included.
-func (s *PublicBlockChainQuaiAPI) GetWorkshareByHash(ctx context.Context, workshareHash common.Hash) (map[string]interface{}, error) {
+// If isSealHash is true, the hash parameter is treated as a seal hash and workshares are matched
+// by their SealHash() instead of Hash(). This is useful for finding workshares from parent chain
+// blocks (BCH/RVN) which only commit to the Quai seal hash, not the full workshare hash.
+func (s *PublicBlockChainQuaiAPI) GetWorkshareByHash(ctx context.Context, hash common.Hash, isSealHash *bool) (map[string]interface{}, error) {
 	const maxSearchDepth = 10000
 	const coinbaseSearchDepth = 10 // Search forward this many blocks for coinbase ETX
+
+	// Determine if we're searching by seal hash or workshare hash
+	searchBySealHash := isSealHash != nil && *isSealHash
 
 	// Build a map of recent blocks by number for forward searching
 	blocksByNumber := make(map[uint64]*types.WorkObject)
@@ -2624,13 +2713,128 @@ func (s *PublicBlockChainQuaiAPI) GetWorkshareByHash(ctx context.Context, worksh
 
 		// Check each uncle/workshare for matching hash
 		for uncleIdx, uncle := range uncles {
-			if uncle.Hash() == workshareHash {
+			// Match by seal hash or workshare hash based on the flag
+			var matches bool
+			if searchBySealHash {
+				matches = uncle.SealHash() == hash
+			} else {
+				matches = uncle.Hash() == hash
+			}
+			if matches {
+				// Get the actual workshare hash for coinbase ETX lookup
+				workshareHash := uncle.Hash()
 				// Found the workshare
 				result := make(map[string]interface{})
 				result["workshare"] = uncle.RPCMarshalWorkObjectHeader(s.b.RpcVersion())
 				result["blockHash"] = currentBlock.Hash()
 				result["blockNumber"] = hexutil.Uint64(blockNum)
 				result["workshareIndex"] = hexutil.Uint(uncleIdx)
+
+				// Add AuxPow data if present
+				if uncle.AuxPow() != nil {
+					auxpow := uncle.AuxPow()
+					auxpowData := make(map[string]interface{})
+
+					// PowID
+					auxpowData["powId"] = uint32(auxpow.PowID())
+					auxpowData["powIdName"] = auxpow.PowID().String()
+
+					// Header data
+					if auxpow.Header() != nil {
+						header := auxpow.Header()
+						headerData := make(map[string]interface{})
+						headerData["version"] = header.Version()
+						prevBlock := header.PrevBlock()
+						headerData["prevBlock"] = hexutil.Encode(prevBlock[:])
+						merkleRoot := header.MerkleRoot()
+						headerData["merkleRoot"] = hexutil.Encode(merkleRoot[:])
+						headerData["timestamp"] = header.Timestamp()
+						headerData["bits"] = fmt.Sprintf("0x%x", header.Bits())
+						headerData["nonce"] = header.Nonce()
+						headerData["nonce64"] = header.Nonce64()
+						headerData["blockHash"] = header.BlockHash()
+						headerData["powHash"] = header.PowHash()
+						// Note: header.SealHash() returns 0 for non-Kawpow (Scrypt/SHA)
+						// Only include if non-zero (Kawpow)
+						if header.SealHash() != (common.Hash{}) {
+							headerData["sealHash"] = header.SealHash()
+						}
+						if header.Height() > 0 {
+							headerData["height"] = header.Height()
+						}
+						auxpowData["header"] = headerData
+					}
+
+					// Add the Quai seal hash (from the WorkObjectHeader, not AuxPow header)
+					// This is the hash that's combined with dogeHash to create the auxMerkleRoot
+					result["quaiSealHash"] = uncle.SealHash()
+
+					// Coinbase transaction (hex encoded)
+					if auxpow.Transaction() != nil {
+						auxpowData["coinbaseTx"] = hexutil.Encode(auxpow.Transaction())
+
+						// Extract and parse scriptsig data
+						scriptSig := types.ExtractScriptSigFromCoinbaseTx(auxpow.Transaction())
+						if scriptSig != nil {
+							scriptSigData := make(map[string]interface{})
+							scriptSigData["hex"] = hexutil.Encode(scriptSig)
+
+							// Extract seal hash (aux merkle root) from scriptsig
+							if sealHash, err := types.ExtractSealHashFromCoinbase(scriptSig); err == nil {
+								scriptSigData["auxMerkleRoot"] = sealHash
+							}
+
+							// Extract height from scriptsig
+							if height, err := types.ExtractHeightFromCoinbase(scriptSig); err == nil {
+								scriptSigData["height"] = height
+							}
+
+							// Extract signature time
+							if sigTime, err := types.ExtractSignatureTimeFromCoinbase(scriptSig); err == nil {
+								scriptSigData["signatureTime"] = sigTime
+							}
+
+							// Extract merkle size and nonce
+							if merkleSize, merkleNonce, err := types.ExtractMerkleSizeAndNonceFromCoinbase(scriptSig); err == nil {
+								scriptSigData["merkleSize"] = merkleSize
+								scriptSigData["merkleNonce"] = merkleNonce
+							}
+
+							auxpowData["scriptSig"] = scriptSigData
+						}
+					}
+
+					// TX Merkle branch (proves coinbase tx is in the parent block's merkle tree)
+					// Note: This is NOT the aux chain merkle branch. For merged mining (Scrypt/DOGE),
+					// the aux chain merkle branch (containing the sibling chain hash) would be in
+					// the DOGE block's auxpow, not in the Quai workshare's auxpow.
+					if auxpow.MerkleBranch() != nil && len(auxpow.MerkleBranch()) > 0 {
+						branchHex := make([]string, len(auxpow.MerkleBranch()))
+						for i, branch := range auxpow.MerkleBranch() {
+							branchHex[i] = hexutil.Encode(branch)
+						}
+						auxpowData["txMerkleBranch"] = branchHex
+						auxpowData["txMerkleBranchCount"] = len(auxpow.MerkleBranch())
+					}
+
+					// Signature
+					if auxpow.Signature() != nil && len(auxpow.Signature()) > 0 {
+						auxpowData["signature"] = hexutil.Encode(auxpow.Signature())
+					}
+
+					// AuxPow2 - For Scrypt workshares, this is the 32-byte DOGE block hash
+					// Used in: auxMerkleRoot = types.CreateAuxMerkleRoot(dogeHash, sealHash)
+					if auxpow.AuxPow2() != nil && len(auxpow.AuxPow2()) > 0 {
+						auxpowData["auxPow2"] = hexutil.Encode(auxpow.AuxPow2())
+
+						// For Scrypt (DOGE merged mining), auxPow2 is the DOGE block hash
+						if auxpow.PowID() == types.Scrypt && len(auxpow.AuxPow2()) == 32 {
+							auxpowData["dogeBlockHash"] = common.BytesToHash(auxpow.AuxPow2())
+						}
+					}
+
+					result["auxPow"] = auxpowData
+				}
 
 				// Search FORWARD for the coinbase ETX (it's generated ~3-4 blocks later)
 				// The workshare hash is stored in the last 32 bytes of the ETX's Data field
@@ -2700,5 +2904,220 @@ func (s *PublicBlockChainQuaiAPI) GetWorkshareByHash(ctx context.Context, worksh
 		currentBlock = parentBlock
 	}
 
-	return nil, fmt.Errorf("workshare with hash %s not found within %d blocks", workshareHash.Hex(), maxSearchDepth)
+	hashType := "workshare hash"
+	if searchBySealHash {
+		hashType = "seal hash"
+	}
+	return nil, fmt.Errorf("workshare with %s %s not found within %d blocks", hashType, hash.Hex(), maxSearchDepth)
+}
+
+// WorkshareOrphanRateResult contains the calculated orphan rate statistics
+type WorkshareOrphanRateResult struct {
+	// Time range info
+	DurationSeconds   hexutil.Uint64 `json:"durationSeconds"`
+	StartBlockNumber  hexutil.Uint64 `json:"startBlockNumber"`
+	EndBlockNumber    hexutil.Uint64 `json:"endBlockNumber"`
+	BlocksAnalyzed    hexutil.Uint64 `json:"blocksAnalyzed"`
+	StartTimestamp    hexutil.Uint64 `json:"startTimestamp"`
+	EndTimestamp      hexutil.Uint64 `json:"endTimestamp"`
+
+	// Workshare counts
+	WorksharesReceived  hexutil.Uint64 `json:"worksharesReceived"`
+	WorksharesConfirmed hexutil.Uint64 `json:"worksharesConfirmed"`
+	WorksharesOrphaned  hexutil.Uint64 `json:"worksharesOrphaned"`
+
+	// Rates
+	OrphanRatePercent    float64 `json:"orphanRatePercent"`
+	ConfirmRatePercent   float64 `json:"confirmRatePercent"`
+
+	// Breakdown by POW type
+	ByPowType map[string]*PowTypeOrphanStats `json:"byPowType"`
+}
+
+// PowTypeOrphanStats contains orphan statistics for a specific POW type
+type PowTypeOrphanStats struct {
+	Received         hexutil.Uint64 `json:"received"`
+	Confirmed        hexutil.Uint64 `json:"confirmed"`
+	Orphaned         hexutil.Uint64 `json:"orphaned"`
+	OrphanRatePercent float64       `json:"orphanRatePercent"`
+}
+
+// WorkshareOrphanRate calculates the workshare orphan rate for a given time duration.
+// It compares workshares received against those confirmed in canonical blocks.
+//
+// Parameters:
+//   - durationSeconds: How far back to analyze (in seconds from current time)
+//
+// RPC: `quai_workshareOrphanRate`
+func (s *PublicBlockChainQuaiAPI) WorkshareOrphanRate(ctx context.Context, durationSeconds hexutil.Uint64) (*WorkshareOrphanRateResult, error) {
+	nodeCtx := s.b.NodeCtx()
+	if nodeCtx != common.ZONE_CTX {
+		return nil, errors.New("workshareOrphanRate can only be called in zone chain")
+	}
+
+	db := s.b.ChainDb()
+	currentHeader := s.b.CurrentHeader()
+	if currentHeader == nil {
+		return nil, errors.New("no current header available")
+	}
+
+	currentBlockNum := currentHeader.NumberU64(nodeCtx)
+	currentTimestamp := currentHeader.Time()
+	cutoffTimestamp := currentTimestamp - uint64(durationSeconds)
+
+	// Track workshares by hash to determine which were confirmed
+	receivedWorkshares := make(map[common.Hash]*types.WorkshareReception)
+	confirmedWorkshares := make(map[common.Hash]bool)
+
+	// Track by POW type
+	powTypeReceived := make(map[types.PowID]uint64)
+	powTypeConfirmed := make(map[types.PowID]uint64)
+
+	var startBlockNum, endBlockNum uint64
+	var startTimestamp, endTimestamp uint64
+	var blocksAnalyzed uint64
+	var totalUnclesInBlocks uint64
+
+	endBlockNum = currentBlockNum
+	endTimestamp = currentTimestamp
+
+	// Walk backwards through canonical blocks until we pass the cutoff timestamp
+	for blockNum := currentBlockNum; blockNum > 0; blockNum-- {
+		block, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(blockNum))
+		if err != nil || block == nil {
+			continue
+		}
+
+		blockTime := block.Time()
+
+		// Stop if we've gone past the time window
+		if blockTime < cutoffTimestamp {
+			break
+		}
+
+		startBlockNum = blockNum
+		startTimestamp = blockTime
+		blocksAnalyzed++
+
+		// Get workshares confirmed in this canonical block (from uncles array)
+		uncles := block.Uncles()
+		totalUnclesInBlocks += uint64(len(uncles))
+		for _, uncle := range uncles {
+			wsHash := uncle.Hash()
+			confirmedWorkshares[wsHash] = true
+
+			// Get POW type from AuxPow if available, otherwise default to Progpow
+			if uncle.AuxPow() != nil {
+				powTypeConfirmed[uncle.AuxPow().PowID()]++
+			} else {
+				powTypeConfirmed[types.Progpow]++
+			}
+		}
+
+		// Get workshares received for this block height from tracking data
+		workshareHashes, err := rawdb.GetWorksharesForBlock(db, blockNum)
+		if err != nil {
+			continue
+		}
+
+		for _, wsHash := range workshareHashes {
+			// Skip if we already counted this workshare (handles reorgs)
+			if _, exists := receivedWorkshares[wsHash]; exists {
+				continue
+			}
+
+			reception, err := rawdb.ReadWorkshareReception(db, wsHash)
+			if err != nil || reception == nil {
+				continue
+			}
+
+			// Workshares are indexed by BlockHeightAtReception, so if we're
+			// iterating through blocks in our time window, these workshares
+			// are already the ones received during that period
+			receivedWorkshares[wsHash] = reception
+			powTypeReceived[reception.PowType]++
+		}
+	}
+
+	// Calculate totals
+	totalReceived := uint64(len(receivedWorkshares))
+	totalConfirmed := uint64(0)
+
+	// Count how many received workshares were actually confirmed
+	for wsHash, reception := range receivedWorkshares {
+		if confirmedWorkshares[wsHash] {
+			totalConfirmed++
+			// Update POW type confirmed count for workshares we tracked as received
+			_ = reception // Already counted above
+		}
+	}
+
+	totalOrphaned := totalReceived - totalConfirmed
+	if totalConfirmed > totalReceived {
+		// Edge case: more confirmed than received (workshares received before time window)
+		totalOrphaned = 0
+	}
+
+	// Calculate rates
+	var orphanRate, confirmRate float64
+	if totalReceived > 0 {
+		orphanRate = float64(totalOrphaned) / float64(totalReceived) * 100.0
+		confirmRate = float64(totalConfirmed) / float64(totalReceived) * 100.0
+	}
+
+	// Build POW type breakdown
+	byPowType := make(map[string]*PowTypeOrphanStats)
+	powTypeNames := map[types.PowID]string{
+		types.Progpow:  "Progpow",
+		types.SHA_BCH:  "SHA_BCH",
+		types.Scrypt:   "Scrypt",
+		types.Kawpow:   "Kawpow",
+	}
+
+	for powID, name := range powTypeNames {
+		received := powTypeReceived[powID]
+		if received == 0 {
+			continue
+		}
+
+		// Count confirmed for this POW type among received workshares
+		confirmed := uint64(0)
+		for wsHash, reception := range receivedWorkshares {
+			if reception.PowType == powID && confirmedWorkshares[wsHash] {
+				confirmed++
+			}
+		}
+
+		orphaned := received - confirmed
+		if confirmed > received {
+			orphaned = 0
+		}
+
+		var rate float64
+		if received > 0 {
+			rate = float64(orphaned) / float64(received) * 100.0
+		}
+
+		byPowType[name] = &PowTypeOrphanStats{
+			Received:          hexutil.Uint64(received),
+			Confirmed:         hexutil.Uint64(confirmed),
+			Orphaned:          hexutil.Uint64(orphaned),
+			OrphanRatePercent: rate,
+		}
+	}
+
+	return &WorkshareOrphanRateResult{
+		DurationSeconds:      durationSeconds,
+		StartBlockNumber:     hexutil.Uint64(startBlockNum),
+		EndBlockNumber:       hexutil.Uint64(endBlockNum),
+		BlocksAnalyzed:       hexutil.Uint64(blocksAnalyzed),
+		StartTimestamp:       hexutil.Uint64(startTimestamp),
+		EndTimestamp:         hexutil.Uint64(endTimestamp),
+		WorksharesReceived:   hexutil.Uint64(totalReceived),
+		WorksharesConfirmed:  hexutil.Uint64(totalConfirmed),
+		WorksharesOrphaned:   hexutil.Uint64(totalOrphaned),
+		OrphanRatePercent:    orphanRate,
+		ConfirmRatePercent:   confirmRate,
+		ByPowType:            byPowType,
+	}, nil
 }

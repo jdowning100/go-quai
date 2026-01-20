@@ -1096,11 +1096,15 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 	// go through the last WorkSharesInclusionDepth of blocks
 	if block.NumberU64(common.ZONE_CTX) > uint64(params.WorkSharesInclusionDepth) {
 
-		targetBlockNumber := block.NumberU64(common.ZONE_CTX) - uint64(params.WorkSharesInclusionDepth)
+		workshareInclusionDepth := params.WorkSharesInclusionDepth
+		if block.PrimeTerminusNumber().Uint64() >= params.InclusionDepthChangeBlock {
+			workshareInclusionDepth = params.NewWorkSharesInclusionDepth
+		}
+		targetBlockNumber := block.NumberU64(common.ZONE_CTX) - uint64(workshareInclusionDepth)
 
-		targetBlocks := make([]*types.WorkObject, 0, params.WorkSharesInclusionDepth)
+		targetBlocks := make([]*types.WorkObject, 0, workshareInclusionDepth)
 		blockCopy := block
-		for i := 0; i < params.WorkSharesInclusionDepth; i++ {
+		for i := 0; i < workshareInclusionDepth; i++ {
 			targetBlock := p.hc.GetBlockByHash(blockCopy.ParentHash(nodeCtx))
 			if targetBlock == nil {
 				return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("cannot find target block %s", block.ParentHash(nodeCtx).Hex())
@@ -1108,7 +1112,7 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 			targetBlocks = append(targetBlocks, targetBlock)
 			blockCopy = targetBlock
 		}
-		targetBlock := targetBlocks[params.WorkSharesInclusionDepth-1]
+		targetBlock := targetBlocks[workshareInclusionDepth-1]
 		if targetBlock.NumberU64(common.ZONE_CTX) != targetBlockNumber {
 			return nil, nil, nil, nil, 0, 0, 0, nil, nil, fmt.Errorf("target block number %d does not match the target block number %d", targetBlock.NumberU64(common.ZONE_CTX), targetBlockNumber)
 		}
@@ -1131,10 +1135,10 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 		sharesAtTargetBlockDepth = append(sharesAtTargetBlockDepth, targetBlock.WorkObjectHeader())
 		entropyOfSharesAtTargetBlockDepth = append(entropyOfSharesAtTargetBlockDepth, zoneThresholdEntropy)
 
-		for i := 0; i <= params.WorkSharesInclusionDepth; i++ {
+		for i := 0; i <= workshareInclusionDepth; i++ {
 
 			var uncles []*types.WorkObjectHeader
-			if i == params.WorkSharesInclusionDepth {
+			if i == workshareInclusionDepth {
 				uncles = block.Uncles()
 			} else {
 				uncles = targetBlocks[i].Uncles()

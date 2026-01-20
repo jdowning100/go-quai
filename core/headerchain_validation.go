@@ -179,7 +179,11 @@ func (hc *HeaderChain) VerifyUncles(block *types.WorkObject) error {
 	uncles, ancestors := mapset.NewSet(), make(map[common.Hash]*types.WorkObject)
 
 	number, parent := block.NumberU64(nodeCtx)-1, block.ParentHash(nodeCtx)
-	for i := 0; i < params.WorkSharesInclusionDepth; i++ {
+	worksharesInclusionDepth := params.WorkSharesInclusionDepth
+	if block.PrimeTerminusNumber().Uint64() >= params.InclusionDepthChangeBlock {
+		worksharesInclusionDepth = params.NewWorkSharesInclusionDepth
+	}
+	for i := 0; i < worksharesInclusionDepth; i++ {
 		ancestorHeader := hc.GetHeaderByHash(parent)
 		if ancestorHeader == nil {
 			break

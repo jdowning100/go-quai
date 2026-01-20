@@ -1157,9 +1157,13 @@ func (hc *HeaderChain) UncleWorkShareClassification(wo *types.WorkObjectHeader) 
 
 func (hc *HeaderChain) WorkShareDistance(wo *types.WorkObject, ws *types.WorkObjectHeader) (*big.Int, error) {
 	current := wo
+	workshareInclusionDepth := params.WorkSharesInclusionDepth
+	if wo.PrimeTerminusNumber().Uint64() >= params.InclusionDepthChangeBlock {
+		workshareInclusionDepth = params.NewWorkSharesInclusionDepth
+	}
 	// Create a list of ancestor blocks to the work object
 	ancestors := make(map[common.Hash]struct{})
-	for i := 0; i < params.WorkSharesInclusionDepth; i++ {
+	for i := 0; i < workshareInclusionDepth; i++ {
 		parent := hc.GetBlockByHash(current.ParentHash(common.ZONE_CTX))
 		if parent == nil {
 			return big.NewInt(0), errors.New("error finding the parent")
@@ -1183,14 +1187,14 @@ func (hc *HeaderChain) WorkShareDistance(wo *types.WorkObject, ws *types.WorkObj
 		}
 		distance++
 		// If distance is greater than the WorkSharesInclusionDepth, exit the for loop
-		if distance > int64(params.WorkSharesInclusionDepth) {
+		if distance > int64(workshareInclusionDepth) {
 			break
 		}
 		parentHash = parent.ParentHash(common.ZONE_CTX)
 	}
 
 	// If distance is greater than the WorkSharesInclusionDepth, reject the workshare
-	if distance > int64(params.WorkSharesInclusionDepth) {
+	if distance > int64(workshareInclusionDepth) {
 		return big.NewInt(0), errInvalidWorkShareDist
 	}
 

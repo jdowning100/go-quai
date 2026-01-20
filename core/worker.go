@@ -663,11 +663,15 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 		// go through the last WorkSharesInclusionDepth of blocks
 		if work.wo.NumberU64(common.ZONE_CTX) > uint64(params.WorkSharesInclusionDepth) {
 
-			targetBlockNumber := work.wo.NumberU64(common.ZONE_CTX) - uint64(params.WorkSharesInclusionDepth)
+			workshareInclusionDepth := params.WorkSharesInclusionDepth
+			if work.wo.PrimeTerminusNumber().Uint64() >= params.InclusionDepthChangeBlock {
+				workshareInclusionDepth = params.NewWorkSharesInclusionDepth
+			}
+			targetBlockNumber := work.wo.NumberU64(common.ZONE_CTX) - uint64(workshareInclusionDepth)
 
-			targetBlocks := make([]*types.WorkObject, 0, params.WorkSharesInclusionDepth)
+			targetBlocks := make([]*types.WorkObject, 0, workshareInclusionDepth)
 			blockCopy := work.wo
-			for i := 0; i < params.WorkSharesInclusionDepth; i++ {
+			for i := 0; i < workshareInclusionDepth; i++ {
 				targetBlock := w.hc.GetBlockByHash(blockCopy.ParentHash(nodeCtx))
 				if targetBlock == nil {
 					return nil, fmt.Errorf("target block not found, block hash %v", work.wo.ParentHash(nodeCtx))
@@ -675,7 +679,7 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 				targetBlocks = append(targetBlocks, targetBlock)
 				blockCopy = targetBlock
 			}
-			targetBlock := targetBlocks[params.WorkSharesInclusionDepth-1]
+			targetBlock := targetBlocks[workshareInclusionDepth-1]
 			if targetBlock.NumberU64(common.ZONE_CTX) != targetBlockNumber {
 				return nil, fmt.Errorf("target block number %v does not match the target block number %v", targetBlock.NumberU64(common.ZONE_CTX), targetBlockNumber)
 			}
@@ -697,10 +701,10 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 			sharesAtTargetBlockDepth = append(sharesAtTargetBlockDepth, targetBlock.WorkObjectHeader())
 			entropyOfSharesAtTargetBlockDepth = append(entropyOfSharesAtTargetBlockDepth, zoneThresholdEntropy)
 
-			for i := 0; i <= params.WorkSharesInclusionDepth; i++ {
+			for i := 0; i <= workshareInclusionDepth; i++ {
 
 				var uncles []*types.WorkObjectHeader
-				if i == params.WorkSharesInclusionDepth {
+				if i == workshareInclusionDepth {
 					uncles = work.wo.Uncles()
 				} else {
 					uncles = targetBlocks[i].Uncles()
@@ -966,7 +970,11 @@ func (w *worker) commitUncle(env *environment, uncle *types.WorkObjectHeader) er
 	defer env.uncleMu.Unlock()
 	hash := uncle.Hash()
 
-	for _, ancestor := range w.hc.GetBlocksFromHash(env.wo.ParentHash(common.ZONE_CTX), params.WorkSharesInclusionDepth) {
+	workshareInclusionDepth := params.WorkSharesInclusionDepth
+	if env.wo.PrimeTerminusNumber().Uint64() >= params.InclusionDepthChangeBlock {
+		workshareInclusionDepth = params.NewWorkSharesInclusionDepth
+	}
+	for _, ancestor := range w.hc.GetBlocksFromHash(env.wo.ParentHash(common.ZONE_CTX), workshareInclusionDepth) {
 		for _, uncle := range ancestor.Uncles() {
 			env.family.Add(uncle.Hash())
 		}
@@ -2328,7 +2336,7 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				if i < len(kawpowKeys) {
 					if value, exist := kawpowCache.Peek(kawpowKeys[i]); exist {
 						uncle := value
-						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
+						if uncle.NumberU64()+uint64(params.NewWorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
 							kawpowCache.Remove(kawpowKeys[i])
 						} else {
 							uncles = append(uncles, &uncle)
@@ -2338,7 +2346,7 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				if i < len(shaKeys) {
 					if value, exist := shaCache.Peek(shaKeys[i]); exist {
 						uncle := value
-						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
+						if uncle.NumberU64()+uint64(params.NewWorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
 							shaCache.Remove(shaKeys[i])
 						} else {
 							uncles = append(uncles, &uncle)
@@ -2348,7 +2356,7 @@ func (w *worker) prepareWork(genParams *generateParams, wo *types.WorkObject) (*
 				if i < len(scryptKeys) {
 					if value, exist := scryptCache.Peek(scryptKeys[i]); exist {
 						uncle := value
-						if uncle.NumberU64()+uint64(params.WorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
+						if uncle.NumberU64()+uint64(params.NewWorkSharesInclusionDepth) < wo.NumberU64(common.ZONE_CTX) {
 							scryptCache.Remove(scryptKeys[i])
 						} else {
 							uncles = append(uncles, &uncle)
@@ -2648,7 +2656,7 @@ func (w *worker) AddAuxPowTemplate(auxTemplate *types.AuxTemplate) error {
 
 func (w *worker) AddWorkShare(workShare *types.WorkObjectHeader) error {
 	// Don't add the workshare into the list if its farther than the worksharefilterdist
-	if workShare.NumberU64()+uint64(2*params.WorkSharesInclusionDepth) < w.hc.CurrentHeader().NumberU64(common.ZONE_CTX) {
+	if workShare.NumberU64()+uint64(2*params.NewWorkSharesInclusionDepth) < w.hc.CurrentHeader().NumberU64(common.ZONE_CTX) {
 		return nil
 	}
 

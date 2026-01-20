@@ -256,6 +256,9 @@ var (
 	MaxGrindIncreaseForkBlock = big.NewInt(1865000)
 
 	MaxAllowableEntropyDist uint64 = 40 // Maximum multiple of zone intrinsic S distance allowed from the current Entropy
+
+	InclusionDepthChangeBlock   uint64 = 1330000 // Block at which WorkSharesInclusionDepth increases from 3 to 4
+	NewWorkSharesInclusionDepth        = 4
 )
 
 var (

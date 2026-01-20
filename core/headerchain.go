@@ -257,9 +257,9 @@ func CalculateKawpowShareDiff(header *types.WorkObjectHeader) *big.Int {
 
 	// If sha or scrypt target is less than the share target then use the count,
 	// otherwise use the target
+
 	shaSharesAverage := math.BigMin(header.ShaDiffAndCount().Count(), header.ShaShareTarget())
 	scryptSharesAverage := math.BigMin(header.ScryptDiffAndCount().Count(), header.ScryptShareTarget())
-
 	nonKawpowShareTarget := new(big.Int).Add(shaSharesAverage, scryptSharesAverage)
 
 	maxTarget := new(big.Int).Mul(big.NewInt(int64(params.ExpectedWorksharesPerBlock)), common.Big2e32)
@@ -352,23 +352,35 @@ func (hc *HeaderChain) CalculateShareTarget(parent, header *types.WorkObject) (n
 	}
 
 	var newShareTarget *big.Int
-	// Compare the current kawpow difficulty with the subsidy chain difficulty
-	subsidyChainDiff := parent.KawpowDifficulty()
-	// maximum subsidy chain diff should be 75% of the parent difficulty
-	maximumSubsidyChainDiff := new(big.Int).Div(new(big.Int).Mul(subsidyChainDiff, params.MaxSubsidyNumerator), params.MaxSubsidyDenominator)
+	if header.PrimeTerminusNumber().Uint64() < params.InclusionDepthChangeBlock {
+		// Compare the current kawpow difficulty with the subsidy chain difficulty
+		subsidyChainDiff := parent.KawpowDifficulty()
+		// maximum subsidy chain diff should be 75% of the parent difficulty
+		maximumSubsidyChainDiff := new(big.Int).Div(new(big.Int).Mul(subsidyChainDiff, params.MaxSubsidyNumerator), params.MaxSubsidyDenominator)
 
-	// calculate the difference
-	difference := new(big.Int).Sub(parent.Difficulty(), maximumSubsidyChainDiff)
-	// NOTE: Using shashare target in this calculation because sha and scrypt target
-	// are the same
-	newShareTarget = new(big.Int).Mul(difference, parent.ShaShareTarget())
-	newShareTarget = newShareTarget.Div(newShareTarget, parent.Difficulty())
-	newShareTarget = newShareTarget.Div(newShareTarget, new(big.Int).SetInt64(int64(params.BlocksPerDay)))
-	newShareTarget = newShareTarget.Add(newShareTarget, parent.ShaShareTarget())
+		// calculate the difference
+		difference := new(big.Int).Sub(parent.Difficulty(), maximumSubsidyChainDiff)
+		// NOTE: Using shashare target in this calculation because sha and scrypt target
+		// are the same
+		newShareTarget = new(big.Int).Mul(difference, parent.ShaShareTarget())
+		newShareTarget = newShareTarget.Div(newShareTarget, parent.Difficulty())
+		newShareTarget = newShareTarget.Div(newShareTarget, new(big.Int).SetInt64(int64(params.BlocksPerDay)))
+		newShareTarget = newShareTarget.Add(newShareTarget, parent.ShaShareTarget())
 
-	// Make sure the new share target is within bounds
-	newShareTarget = math.BigMax(newShareTarget, params.TargetShaShares)
-	newShareTarget = math.BigMin(newShareTarget, params.MaxShaShares)
+		// Make sure the new share target is within bounds
+		newShareTarget = math.BigMax(newShareTarget, params.TargetShaShares)
+		newShareTarget = math.BigMin(newShareTarget, params.MaxShaShares)
+	} else {
+		if header.PrimeTerminusNumber().Uint64() < params.InclusionDepthChangeBlock+params.InclusionDepthUpdatePeriod {
+			diff := new(big.Int).Sub(params.MaxShaShares, params.TargetShaShares)
+			progress := new(big.Int).SetUint64(header.PrimeTerminusNumber().Uint64() - params.InclusionDepthChangeBlock)
+			period := new(big.Int).SetUint64(params.InclusionDepthUpdatePeriod)
+			increment := new(big.Int).Div(new(big.Int).Mul(diff, progress), period)
+			newShareTarget = new(big.Int).Add(params.TargetShaShares, increment)
+		} else {
+			newShareTarget = new(big.Int).Set(params.MaxShaShares)
+		}
+	}
 
 	return newShareTarget
 }

@@ -1244,9 +1244,13 @@ func (p *StateProcessor) Process(block *types.WorkObject, batch ethdb.Batch) (ty
 					// the expectation
 					scritSig := types.ExtractScriptSigFromCoinbaseTx(share.AuxPow().Transaction())
 					signatureTime, err := types.ExtractSignatureTimeFromCoinbase(scritSig)
-					if err != nil || signatureTime+params.ShareLivenessTime < share.AuxPow().Header().Timestamp() {
-						shareReward = new(big.Int).Mul(shareReward, params.UnlivelySharePenalty)
-						shareReward = new(big.Int).Div(shareReward, params.ShareRewardPenaltyDivisor)
+					if block.PrimeTerminusNumber().Uint64() < params.InclusionDepthChangeBlock {
+						if err != nil || signatureTime+params.ShareLivenessTime < share.AuxPow().Header().Timestamp() {
+							shareReward = new(big.Int).Mul(shareReward, params.UnlivelySharePenalty)
+							shareReward = new(big.Int).Div(shareReward, params.ShareRewardPenaltyDivisor)
+						}
+					} else {
+						shareReward = p.hc.CalculateTimeDiscountedShareReward(share, shareReward, signatureTime)
 					}
 				}
 

@@ -482,6 +482,50 @@ func (hc *HeaderChain) CalculatePowDiffAndCount(parent *types.WorkObject, header
 	return newDiff, newAverageShares, newUncledShares
 }
 
+func (hc *HeaderChain) CalculateTimeDiscountedShareReward(share *types.WorkObjectHeader, shareReward *big.Int, signatureTime uint32) *big.Int {
+	// Apply a linear discount starting from 3 secs to
+	// the cutoff time, the max penalty is still the
+	// UnlivelySharePenalty
+	timeSinceSignature := share.AuxPow().Header().Timestamp() - signatureTime
+	var livenessTime uint32
+	switch share.AuxPow().PowID() {
+	case types.SHA_BCH, types.SHA_BTC:
+		livenessTime = params.NewShareLivenessTimeForSha
+	default:
+		livenessTime = params.ShareLivenessTime
+	}
+	// keep the time delta between the min and max
+	if timeSinceSignature > livenessTime {
+		timeSinceSignature = livenessTime
+	}
+	if timeSinceSignature < params.NoPenaltyTimeThreshold {
+		timeSinceSignature = params.NoPenaltyTimeThreshold
+	}
+
+	// Calculate scaling factor:
+	// reward := unlivelySharePenalty + ((shareReward - unlivelySharePenalty) * distance)/timeDeltaRange
+	// since unlivelySharePenalty is params.UnlivelySharePenalty(i.e penalty)/params.ShareRewardPenaltyDivisor(i.e penaltyDivisor) * shareReward
+	// reward := ((shareReward * penalty/penaltyDivisor * timeDeltaRange) + ((penaltyDivisor - penalty)/penaltyDivisor * shareReward * distance))/timeDeltaRange
+	// numerator := shareReward * penalty * timeDeltaRange + shareReward * (penaltyDivisor-penalty) * distance
+	// => numerator := shareReward * (penalty * timeDeltaRange + (penaltyDivisor-penalty) * distance)
+	// denominator := penaltyDivisor * timeDeltaRange
+
+	timeDeltaRange := livenessTime - params.NoPenaltyTimeThreshold
+	distance := livenessTime - timeSinceSignature
+
+	penalty := uint32(params.UnlivelySharePenalty.Uint64())
+	penaltyDivisor := uint32(params.ShareRewardPenaltyDivisor.Uint64())
+
+	// numerator := shareReward * (penalty * timeDeltaRange + (penaltyDivisor-penalty) * distance)
+	numerator := penalty*timeDeltaRange + (penaltyDivisor-penalty)*distance
+	shareReward = new(big.Int).Mul(shareReward, new(big.Int).SetUint64(uint64(numerator)))
+	// denominator := penaltyDivisor * timeDeltaRange
+	denominator := penaltyDivisor * timeDeltaRange
+	shareReward = new(big.Int).Div(shareReward, new(big.Int).SetUint64(uint64(denominator)))
+
+	return shareReward
+}
+
 // CountWorkSharesByAlgo counts the number of work shares by each algo in the given block
 func (hc *HeaderChain) CountWorkSharesByAlgo(wo *types.WorkObject) (int, int, int, int, int) {
 	// Need to calculate the long term average count for the number of shares

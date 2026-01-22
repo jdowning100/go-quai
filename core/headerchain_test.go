@@ -3,6 +3,7 @@ package core
 import (
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/dominant-strategies/go-quai/common"
 	"github.com/dominant-strategies/go-quai/consensus/misc"
@@ -226,4 +227,200 @@ func TestCalculateShareTarget(t *testing.T) {
 			require.Equal(t, tc.expectedTarget, result)
 		})
 	}
+}
+
+func TestCalculateTimeDiscountedShareReward(t *testing.T) {
+	hc := NewTestHeaderChain()
+
+	// Constants from params:
+	// NoPenaltyTimeThreshold = 3 (seconds)
+	// ShareLivenessTime = 18 (seconds for Kawpow/Scrypt)
+	// NewShareLivenessTimeForSha = 30 (seconds for SHA_BTC/SHA_BCH)
+	// UnlivelySharePenalty = 70 (70% reward at max penalty)
+	// ShareRewardPenaltyDivisor = 100
+
+	testCases := []struct {
+		name           string
+		powID          types.PowID
+		shareTimestamp uint32 // timestamp in the share's AuxPow header
+		signatureTime  uint32 // signature time passed to the function
+		shareReward    int64
+		expectedReward int64
+	}{
+		{
+			name:           "No penalty - within 3 seconds (Kawpow)",
+			powID:          types.Kawpow,
+			shareTimestamp: 103,
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 1000, // Full reward when timeSinceSignature < NoPenaltyTimeThreshold
+		},
+		{
+			name:           "No penalty - exactly at 3 seconds boundary (Kawpow)",
+			powID:          types.Kawpow,
+			shareTimestamp: 103,
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 1000, // timeSinceSignature=3, clamped to 3, distance=15, full reward
+		},
+		{
+			name:           "Maximum penalty - at liveness time (Kawpow)",
+			powID:          types.Kawpow,
+			shareTimestamp: 118, // 18 seconds after signature
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // 70% of reward at max penalty
+		},
+		{
+			name:           "Maximum penalty - beyond liveness time (Kawpow)",
+			powID:          types.Kawpow,
+			shareTimestamp: 200, // well beyond 18 seconds
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // Clamped to livenessTime, so 70%
+		},
+		{
+			name:           "Midpoint penalty (Kawpow)",
+			powID:          types.Kawpow,
+			shareTimestamp: 110, // 10 seconds after signature (midpoint of 3-18 range)
+			signatureTime:  100,
+			shareReward:    1000,
+			// timeDeltaRange = 18 - 3 = 15
+			// distance = 18 - 10 = 8
+			// numerator = 70 * 15 + (100-70) * 8 = 1050 + 240 = 1290
+			// denominator = 100 * 15 = 1500
+			// reward = 1000 * 1290 / 1500 = 860
+			expectedReward: 860,
+		},
+		{
+			name:           "No penalty - within 3 seconds (SHA_BTC)",
+			powID:          types.SHA_BTC,
+			shareTimestamp: 102,
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 1000, // Full reward
+		},
+		{
+			name:           "Maximum penalty - at liveness time (SHA_BTC)",
+			powID:          types.SHA_BTC,
+			shareTimestamp: 130, // 30 seconds after signature (SHA liveness time)
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // 70% of reward
+		},
+		{
+			name:           "Midpoint penalty (SHA_BTC)",
+			powID:          types.SHA_BTC,
+			shareTimestamp: 116, // 16 seconds after signature (roughly midpoint of 3-30)
+			signatureTime:  100,
+			shareReward:    1000,
+			// timeDeltaRange = 30 - 3 = 27
+			// distance = 30 - 16 = 14
+			// numerator = 70 * 27 + 30 * 14 = 1890 + 420 = 2310
+			// denominator = 100 * 27 = 2700
+			// reward = 1000 * 2310 / 2700 = 855
+			expectedReward: 855,
+		},
+		{
+			name:           "SHA_BCH uses SHA liveness time",
+			powID:          types.SHA_BCH,
+			shareTimestamp: 130, // 30 seconds after signature
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // Max penalty at 30s for SHA
+		},
+		{
+			name:           "Scrypt uses default liveness time",
+			powID:          types.Scrypt,
+			shareTimestamp: 118, // 18 seconds after signature
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // Max penalty at 18s for Scrypt
+		},
+		{
+			name:           "Maximum penalty - beyond liveness time (SHA_BTC)",
+			powID:          types.SHA_BTC,
+			shareTimestamp: 200, // well beyond 30 seconds
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // Clamped to livenessTime, so 70%
+		},
+		{
+			name:           "Maximum penalty - beyond liveness time (SHA_BCH)",
+			powID:          types.SHA_BCH,
+			shareTimestamp: 200, // well beyond 30 seconds
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // Clamped to livenessTime, so 70%
+		},
+		{
+			name:           "Maximum penalty - beyond liveness time (Scrypt)",
+			powID:          types.Scrypt,
+			shareTimestamp: 200, // well beyond 18 seconds
+			signatureTime:  100,
+			shareReward:    1000,
+			expectedReward: 700, // Clamped to livenessTime, so 70%
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a share with the specified AuxPow
+			share := types.EmptyWorkObject(common.ZONE_CTX).WorkObjectHeader()
+
+			// Create AuxPow with the appropriate PowID and timestamp
+			auxPow := createTestAuxPow(tc.powID, tc.shareTimestamp)
+			share.SetAuxPow(auxPow)
+
+			shareReward := big.NewInt(tc.shareReward)
+			result := hc.CalculateTimeDiscountedShareReward(share, shareReward, tc.signatureTime)
+
+			require.Equal(t, tc.expectedReward, result.Int64(),
+				"Expected reward %d but got %d for test case: %s",
+				tc.expectedReward, result.Int64(), tc.name)
+		})
+	}
+}
+
+// createTestAuxPow creates an AuxPow with the specified PowID and timestamp for testing
+func createTestAuxPow(powID types.PowID, timestamp uint32) *types.AuxPow {
+	auxPow := &types.AuxPow{}
+	auxPow.SetPowID(powID)
+	auxPow.SetSignature([]byte{})
+	auxPow.SetMerkleBranch([][]byte{})
+
+	coinbaseOut := []byte{0x76, 0xa9, 0x14, 0x89, 0xab, 0xcd, 0xef, 0x88, 0xac}
+
+	switch powID {
+	case types.Kawpow:
+		header := &types.RavencoinBlockHeader{
+			Version:        10,
+			HashPrevBlock:  types.EmptyRootHash,
+			HashMerkleRoot: types.EmptyRootHash,
+			Time:           timestamp,
+			Bits:           0x1d00ffff,
+			Nonce64:        367899,
+			Height:         298899,
+			MixHash:        types.EmptyRootHash,
+		}
+		auxPow.SetHeader(types.NewAuxPowHeader(header))
+		auxPow.SetTransaction(types.NewAuxPowCoinbaseTx(powID, 100, coinbaseOut, types.EmptyRootHash, 0))
+	case types.SHA_BTC:
+		header := types.NewBitcoinBlockHeader(10, types.EmptyRootHash, types.EmptyRootHash, 0, 0x1d00ffff, 0)
+		header.BlockHeader.Timestamp = time.Unix(int64(timestamp), 0)
+		auxPow.SetHeader(types.NewAuxPowHeader(header))
+		auxPow.SetTransaction(types.NewAuxPowCoinbaseTx(powID, 100, coinbaseOut, types.EmptyRootHash, 0))
+	case types.SHA_BCH:
+		header := types.NewBitcoinCashBlockHeader(10, types.EmptyRootHash, types.EmptyRootHash, 0, 0x1d00ffff, 0)
+		header.BlockHeader.Timestamp = time.Unix(int64(timestamp), 0)
+		auxPow.SetHeader(types.NewAuxPowHeader(header))
+		auxPow.SetTransaction(types.NewAuxPowCoinbaseTx(powID, 100, coinbaseOut, types.EmptyRootHash, 0))
+	case types.Scrypt:
+		header := types.NewLitecoinBlockHeader(10, types.EmptyRootHash, types.EmptyRootHash, 0, 0x1d00ffff, 0)
+		header.BlockHeader.Timestamp = time.Unix(int64(timestamp), 0)
+		auxPow.SetHeader(types.NewAuxPowHeader(header))
+		auxPow.SetTransaction(types.NewAuxPowCoinbaseTx(powID, 100, coinbaseOut, types.EmptyRootHash, 0))
+	}
+
+	return auxPow
 }

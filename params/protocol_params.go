@@ -260,6 +260,8 @@ var (
 	InclusionDepthChangeBlock   uint64 = 1330000 // Block at which WorkSharesInclusionDepth increases from 3 to 4
 	NewWorkSharesInclusionDepth        = 4
 	InclusionDepthUpdatePeriod  uint64 = 10000 // Number of blocks between each inclusion depth update check
+	NewShareLivenessTimeForSha  uint32 = 30
+	NoPenaltyTimeThreshold      uint32 = 3
 )
 
 var (

@@ -1250,7 +1250,7 @@ func (s *PublicBlockChainQuaiAPI) marshalAuxPowTemplate(wo *types.WorkObject, re
 		copy(coinb2[:30], extraData[:])
 	}
 	// Add 4 bytes of padding if the requested extra nonce was only 4 bytes
-	if request.ExtraNonce2Len == 4 {
+	if request != nil && request.ExtraNonce2Len == 4 {
 		coinb2 = append([]byte{0, 0, 0, 0}, coinb2...)
 	}
 

@@ -178,7 +178,7 @@ var (
 	OrchardDurationLimit              = big.NewInt(5) // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
 	LighthouseDurationLimit           = big.NewInt(5) // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
 	LocalDurationLimit                = big.NewInt(1) // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
-	TimeToStartTx              uint64 = 15 * BlocksPerDay
+	TimeToStartTx              uint64 = 1
 	BlocksPerDay               uint64 = new(big.Int).Div(big.NewInt(86400), DurationLimit).Uint64() // BlocksPerDay is the number of blocks per day assuming 5 second block time
 	BlocksPerWeek              uint64 = 7 * BlocksPerDay
 	BlocksPerMonth             uint64 = 30 * BlocksPerDay
@@ -266,7 +266,7 @@ var (
 )
 
 var (
-	KawPowForkBlock            uint64 = 1171500            // Block at which KawPow activates
+	KawPowForkBlock            uint64 = 0                  // Block at which KawPow activates
 	KawPowTransitionPeriod     uint64 = BlocksPerMonth / 4 // Progpow grace period after kawpow upgrade, 4 weeks
 	TotalPowEngines            uint64 = 2                  // Total number of PoW engines supported (Progpow, Kawpow)
 	AuxTemplateLivenessTime    uint64 = 15
@@ -279,10 +279,10 @@ var (
 	ScryptBlockTime = big.NewInt(60)  // Doge block time 1 min in secs
 
 	// PoW share difficulty parameters
-	InitialShaDiffMultiple    = big.NewInt(167000)
-	InitialScryptDiffMultiple = big.NewInt(12)
-	ShaDiffLowerBound         = big.NewInt(7e15)
-	ScryptDiffLowerBound      = big.NewInt(7e11)
+	InitialShaDiffMultiple    = big.NewInt(100)
+	InitialScryptDiffMultiple = big.NewInt(10)
+	ShaDiffLowerBound         = big.NewInt(1e6)
+	ScryptDiffLowerBound      = big.NewInt(1e4)
 
 	PowDiffAdjustmentFactor = big.NewInt(300000)
 

@@ -121,6 +121,7 @@ type Config struct {
 	WorkShareMining       bool            // Whether to mine work shares from raw transactions.
 	WorkShareThreshold    int             // WorkShareThreshold is the minimum fraction of a share that this node will accept to mine a transaction.
 	Endpoints             []string        // Holds RPC endpoints to send minimally mined transactions to for further mining/propagation.
+	NoPow                 bool            // When true, skip PoW mining and auto-produce blocks on a timer.
 }
 
 type transactionOrderingInfo struct {
@@ -852,10 +853,12 @@ func (w *worker) GeneratePendingHeader(block *types.WorkObject, fill bool) (*typ
 	}
 
 	// If there is no auxpow template, then just fill the pow id for now
-	auxPow := types.NewAuxPow(types.Kawpow, &types.AuxPowHeader{}, []byte{}, []byte{}, nil, []byte{})
-
-	// Setting the auxpow so that pow id is registered properly
-	work.wo.WorkObjectHeader().SetAuxPow(auxPow)
+	// Skip in NoPow mode to avoid stale HeaderHash (AuxPow set after FinalizeAssemble changes the body hash)
+	if !w.config.NoPow {
+		auxPow := types.NewAuxPow(types.Kawpow, &types.AuxPowHeader{}, []byte{}, []byte{}, nil, []byte{})
+		// Setting the auxpow so that pow id is registered properly
+		work.wo.WorkObjectHeader().SetAuxPow(auxPow)
+	}
 
 	// Create a local environment copy, avoid the data race with snapshot state.
 	newWo, err := w.FinalizeAssemble(work.wo, block, work.state, work.txs, uncles, work.etxs, work.subManifest, work.receipts, work.utxoSetSize, work.utxosCreate, work.utxosDelete)

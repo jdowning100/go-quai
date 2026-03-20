@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -474,6 +475,11 @@ func (kawpow *Kawpow) SetThreads(threads int) {
 }
 
 func (kawpow *Kawpow) ComputePowHash(header *types.WorkObjectHeader) (common.Hash, error) {
+	// In fake mode, return the difficulty target as powHash so entropy calculations work correctly
+	if kawpow.config.PowMode == params.ModeFake || kawpow.config.PowMode == params.ModeFullFake {
+		target := new(big.Int).Div(common.Big2e256, header.Difficulty())
+		return common.BigToHash(target), nil
+	}
 	mixHash, powHash := kawpow.ComputePowLight(header)
 	// For KAWPOW, get the mix hash from the Ravencoin header in AuxPow
 	auxPow := header.AuxPow()

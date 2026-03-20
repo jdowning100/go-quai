@@ -330,7 +330,7 @@ func (hc *HeaderChain) VerifyUncles(block *types.WorkObject) error {
 			return fmt.Errorf("workshare lock byte: %v is not valid: it has to be %v for the first two months", uncle.Lock(), 0)
 		}
 
-		if uncle.PrimeTerminusNumber().Uint64() >= params.KawPowForkBlock && uncle.AuxPow() != nil {
+		if hc.powConfig.PowMode != params.ModeFake && uncle.PrimeTerminusNumber().Uint64() >= params.KawPowForkBlock && uncle.AuxPow() != nil {
 
 			scryptSig := types.ExtractScriptSigFromCoinbaseTx(uncle.AuxPow().Transaction())
 
@@ -461,9 +461,12 @@ func (hc *HeaderChain) verifyHeader(header, parent *types.WorkObject, uncle bool
 		return fmt.Errorf("extra-data too long: %d > %d", len(header.Extra()), params.MaximumExtraDataSize)
 	}
 	// verify that the hash of the header in the Body matches the header hash specified in the work object header
-	expectedHeaderHash := header.Body().Header().Hash()
-	if header.HeaderHash() != expectedHeaderHash {
-		return fmt.Errorf("invalid header hash: have %v, want %v", header.HeaderHash(), expectedHeaderHash)
+	// Skip in ModeFake (no-pow) mode where AuxPow placeholder causes hash mismatch
+	if hc.powConfig.PowMode != params.ModeFake {
+		expectedHeaderHash := header.Body().Header().Hash()
+		if header.HeaderHash() != expectedHeaderHash {
+			return fmt.Errorf("invalid header hash: have %v, want %v", header.HeaderHash(), expectedHeaderHash)
+		}
 	}
 	// Verify the header's timestamp
 	if !uncle {
@@ -621,11 +624,14 @@ func (hc *HeaderChain) verifyHeader(header, parent *types.WorkObject, uncle bool
 	}
 
 	// Validate the pow id is valid for this block
-	if err := hc.CheckPowIdValidity(header.WorkObjectHeader()); err != nil {
-		return err
+	// Skip in ModeFake (no-pow) mode since blocks have placeholder AuxPow with empty coinbase
+	if hc.powConfig.PowMode != params.ModeFake {
+		if err := hc.CheckPowIdValidity(header.WorkObjectHeader()); err != nil {
+			return err
+		}
 	}
 
-	if header.PrimeTerminusNumber().Uint64() >= params.KawPowForkBlock && header.AuxPow() != nil {
+	if hc.powConfig.PowMode != params.ModeFake && header.PrimeTerminusNumber().Uint64() >= params.KawPowForkBlock && header.AuxPow() != nil {
 		scryptSig := types.ExtractScriptSigFromCoinbaseTx(header.AuxPow().Transaction())
 
 		signatureTime, err := types.ExtractSignatureTimeFromCoinbase(scryptSig)
@@ -941,8 +947,10 @@ func (hc *HeaderChain) VerifySeal(header *types.WorkObjectHeader) (common.Hash, 
 // to make remote mining fast.
 func (hc *HeaderChain) verifySeal(header *types.WorkObjectHeader) (common.Hash, error) {
 	// If we're running a fake PoW, accept any seal as valid
+	// Return the difficulty target as powHash so IntrinsicLogEntropy returns log2(difficulty)
 	if hc.powConfig.PowMode == params.ModeFake || hc.powConfig.PowMode == params.ModeFullFake {
-		return common.Hash{}, nil
+		target := new(big.Int).Div(common.Big2e256, header.Difficulty())
+		return common.BigToHash(target), nil
 	}
 	// Ensure that we have a valid difficulty for the block
 	if header.Difficulty().Sign() <= 0 {
@@ -986,6 +994,28 @@ func (hc *HeaderChain) Finalize(batch ethdb.Batch, header *types.WorkObject, sta
 				"blockNum": header.Number(common.ZONE_CTX),
 			}).Error("Unable to add state for genesis accounts")
 			return nil, 0, nil, err
+		}
+	}
+
+	// Apply dev-mode genesis balances (--node.genesis-balance) on the first block after genesis.
+	// Uses parent-is-genesis check instead of a flag so balances are applied consistently
+	// during both block generation (FinalizeAndAssemble) and block validation (Process).
+	if hc.IsGenesisHash(header.ParentHash(nodeCtx)) && len(hc.powConfig.GenesisBalances) > 0 {
+		for _, entry := range hc.powConfig.GenesisBalances {
+			internalAddr, err := entry.Address.InternalAddress()
+			if err != nil {
+				hc.logger.WithFields(log.Fields{
+					"address": entry.Address.Hex(),
+					"err":     err,
+				}).Error("Failed to convert genesis balance address to internal address")
+				continue
+			}
+			state.SetBalance(internalAddr, entry.Balance)
+			hc.logger.WithFields(log.Fields{
+				"address": entry.Address.Hex(),
+				"balance": entry.Balance.String(),
+				"block":   header.NumberU64(common.ZONE_CTX),
+			}).Info("Applied genesis balance")
 		}
 	}
 

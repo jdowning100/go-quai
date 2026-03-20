@@ -123,6 +123,8 @@ var NodeFlags = []Flag{
 	NodeLogLevelFlag,
 	GenesisNonce,
 	Telemetry,
+	NoPowFlag,
+	GenesisBalanceFlag,
 }
 
 var TXPoolFlags = []Flag{
@@ -630,6 +632,18 @@ var (
 		Name:  c_NodeFlagPrefix + "telemetry",
 		Value: true,
 		Usage: "Enable telemetry reporting" + generateEnvDoc(c_NodeFlagPrefix+"telemetry"),
+	}
+
+	NoPowFlag = Flag{
+		Name:  c_NodeFlagPrefix + "no-pow",
+		Value: false,
+		Usage: "Disable PoW mining and auto-produce blocks every 5 seconds (local dev mode)" + generateEnvDoc(c_NodeFlagPrefix+"no-pow"),
+	}
+
+	GenesisBalanceFlag = Flag{
+		Name:  c_NodeFlagPrefix + "genesis-balance",
+		Value: "",
+		Usage: "Pre-fund accounts with balances in Quai. Format: addr1:amount1,addr2:amount2 (e.g. 0x1234...:1000,0x5678...:5000)" + generateEnvDoc(c_NodeFlagPrefix+"genesis-balance"),
 	}
 )
 
@@ -1501,6 +1515,35 @@ func SetQuaiConfig(stack *node.Node, cfg *quaiconfig.Config, slicesRunning []com
 		cfg.Miner.CoinbaseLockup = uint8(coinbaseLockup)
 	}
 
+	// No-PoW mode: skip PoW mining and auto-produce blocks
+	if viper.GetBool(NoPowFlag.Name) {
+		cfg.PowConfig.PowMode = params.ModeFake
+		cfg.Miner.NoPow = true
+		// Set default coinbase for no-pow mode if not already set (required for block generation)
+		if cfg.Miner.QuaiCoinbase.Equal(common.Address{}) && nodeLocation.Context() == common.ZONE_CTX {
+			defaultAddr := common.HexToAddress("0x0000000000000000000000000000000000000001", nodeLocation)
+			cfg.Miner.QuaiCoinbase = defaultAddr
+			logger.WithField("coinbase", defaultAddr.Hex()).Info("Set default coinbase for no-pow mode")
+		}
+		logger.Warn("No-PoW mode enabled: blocks will be auto-produced every 5 seconds without mining")
+	}
+
+	// Genesis balance: pre-fund accounts for local dev mode
+	// Only parse for zone context nodes (addresses require zone-level location for InternalAddress)
+	if genesisBalanceStr := viper.GetString(GenesisBalanceFlag.Name); genesisBalanceStr != "" && nodeLocation.Context() == common.ZONE_CTX {
+		balances, err := parseGenesisBalances(genesisBalanceStr, nodeLocation)
+		if err != nil {
+			log.Global.WithField("err", err).Fatal("Invalid --node.genesis-balance format")
+		}
+		cfg.PowConfig.GenesisBalances = balances
+		for _, entry := range balances {
+			logger.WithFields(log.Fields{
+				"address": entry.Address.Hex(),
+				"balance": entry.Balance.String(),
+			}).Info("Genesis balance configured")
+		}
+	}
+
 	// Override any default configs for hard coded networks.
 	switch viper.GetString(EnvironmentFlag.Name) {
 	case params.ColosseumName:
@@ -1594,6 +1637,47 @@ func SetQuaiConfig(stack *node.Node, cfg *quaiconfig.Config, slicesRunning []com
 	}
 
 	cfg.Genesis.Config.Location = nodeLocation
+}
+
+// parseGenesisBalances parses a string of "addr1:amount1,addr2:amount2" into GenesisBalanceEntry slices.
+// Amounts are in whole Quai units and are converted to wei (multiplied by 10^18).
+func parseGenesisBalances(input string, nodeLocation common.Location) ([]params.GenesisBalanceEntry, error) {
+	var entries []params.GenesisBalanceEntry
+	pairs := strings.Split(input, ",")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid genesis balance entry %q, expected format addr:amount", pair)
+		}
+		addrStr := strings.TrimSpace(parts[0])
+		amountStr := strings.TrimSpace(parts[1])
+
+		addr := common.HexToAddress(addrStr, nodeLocation)
+		if _, err := addr.InternalAndQuaiAddress(); err != nil {
+			return nil, fmt.Errorf("address is not a valid internal address %s: %v", addrStr, err)
+		}
+		// Parse the amount as whole Quai units (integer)
+		amount, ok := new(big.Int).SetString(amountStr, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid balance amount %q for address %s", amountStr, addrStr)
+		}
+		// Convert from Quai to wei (multiply by 10^18)
+		weiPerQuai := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+		amount.Mul(amount, weiPerQuai)
+
+		entries = append(entries, params.GenesisBalanceEntry{
+			Address: addr,
+			Balance: amount,
+		})
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no valid genesis balance entries found in %q", input)
+	}
+	return entries, nil
 }
 
 func SplitTagsFlag(tagsFlag string) map[string]string {

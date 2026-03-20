@@ -105,6 +105,8 @@ type HeaderChain struct {
 
 	calcOrderCache *lru.Cache[common.Hash, calcOrderResponse]
 
+	genesisBalancesApplied bool // tracks whether dev-mode genesis balances have been injected this session
+
 	logger *log.Logger
 }
 
@@ -155,9 +157,14 @@ func NewHeaderChain(db ethdb.Database, powConfig params.PowConfig, engine []cons
 		if hc.genesisHeader == nil {
 			return nil, ErrNoGenesis
 		}
-		if hc.genesisHeader.Hash() != hc.config.DefaultGenesisHash {
+		if hc.powConfig.PowMode != params.ModeFake && hc.genesisHeader.Hash() != hc.config.DefaultGenesisHash {
 			return nil, fmt.Errorf("genesis hash mismatch: have %x, want %x", hc.genesisHeader.Hash(), chainConfig.DefaultGenesisHash)
 		}
+	}
+	// In ModeFake (no-pow) mode, override DefaultGenesisHash with the actual genesis hash
+	// so that code referencing Config().DefaultGenesisHash (e.g. InitPendingHeaders) works correctly
+	if hc.powConfig.PowMode == params.ModeFake && hc.genesisHeader != nil {
+		hc.config.DefaultGenesisHash = hc.genesisHeader.Hash()
 	}
 	hc.logger.WithField("Hash", hc.genesisHeader.Hash()).Info("Genesis")
 	//Load any state that is in our db
@@ -1832,6 +1839,10 @@ func (hc *HeaderChain) ComputeAverageTxFees(parent *types.WorkObject, totalTxFee
 func (hc *HeaderChain) CalcBaseFee(block *types.WorkObject) *big.Int {
 	if hc.IsGenesisHash(block.Hash()) {
 		return big.NewInt(0)
+	}
+	// In ModeFake, use a fixed base fee to avoid negative values from QiToQuai conversion
+	if hc.powConfig.PowMode == params.ModeFake {
+		return new(big.Int).SetUint64(params.InitialBaseFee)
 	} else {
 		var exchangeRate *big.Int
 		if hc.IsGenesisHash(block.ParentHash(common.ZONE_CTX)) {

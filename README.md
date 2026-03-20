@@ -22,9 +22,9 @@ After a successful build, the binary will be located at `build/bin/go-quai`.
 ### Running a node
 To run a go-quai node, simply execute the `go-quai start` command. Be sure to specify the parameters you wish to use, such as your coinbase address (if you plan on mining), and which slices you wish to participate in.
 
-For example, here is the run command for miner (0x00a3e45aa16163F2663015b6695894D918866d19) in cyprus-1 (zone-0-0) on the "garden" test network:
+For example, here is the run command for miner (0x0050AF0000000000000000000000000000000000) in cyprus-1 (zone-0-0) on the "garden" test network:
 ```shell
-./build/bin/go-quai start --node.slices "[0 0]" --node.coinbases "0x00a3e45aa16163F2663015b6695894D918866d19" --node.environment "garden"
+./build/bin/go-quai start --node.slices "[0 0]" --node.coinbases "0x0050AF0000000000000000000000000000000000" --node.environment "garden"
 ```
 
 For the full list of available options and their default values, consult the help menu:
@@ -33,6 +33,30 @@ For the full list of available options and their default values, consult the hel
 ```
 
 All configuration options may be supplied in a config file too, located in the directory specified by `--global.config-dir`. Note specified on the command-line will override options specified in the config file.
+
+### Running locally without mining (no-PoW mode)
+
+For local development and testing, you can run a node that automatically produces blocks every 5 seconds without requiring PoW mining. Use the `--node.no-pow` flag combined with `--node.genesis-balance` to pre-fund one or more addresses:
+
+```shell
+./build/bin/go-quai start \
+  --node.no-pow \
+  --node.genesis-balance "0x0050AF0000000000000000000000000000000000:1000" \
+  --node.environment local \
+  --node.slices "[0 0]" \
+  --node.solo
+```
+
+**Flags:**
+
+- `--node.no-pow` - Skips PoW mining and auto-produces a block every 5 seconds.
+- `--node.genesis-balance` - Pre-funds addresses with Quai on every node restart. Format: `address:amount` (comma-separated for multiple). Amounts are in whole Quai units (automatically converted to wei). Example: `"0xAddr1:1000,0xAddr2:500"` gives address 1 a balance of 1000 Quai and address 2 a balance of 500 Quai.
+- `--node.solo` - Runs without connecting to external peers.
+- `--node.environment local` - Uses the local genesis configuration.
+
+Addresses must be valid internal Quai addresses for the zone you are running (first byte must match the zone's byte prefix, second byte <= 127).
+
+The RPC endpoint for zone-0-0 is available at `http://127.0.0.1:9200`.
 
 ### Running tests
 To run the included unit tests, run the following command:

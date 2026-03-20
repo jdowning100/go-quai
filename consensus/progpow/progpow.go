@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -462,6 +463,11 @@ func (progpow *Progpow) SetThreads(threads int) {
 }
 
 func (progpow *Progpow) ComputePowHash(header *types.WorkObjectHeader) (common.Hash, error) {
+	// In fake mode, return the difficulty target as powHash so entropy calculations work correctly
+	if progpow.config.PowMode == params.ModeFake || progpow.config.PowMode == params.ModeFullFake {
+		target := new(big.Int).Div(common.Big2e256, header.Difficulty())
+		return common.BigToHash(target), nil
+	}
 	// Check progpow
 	mixHash := header.PowDigest.Load()
 	powHash := header.PowHash.Load()

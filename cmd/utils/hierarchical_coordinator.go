@@ -781,6 +781,9 @@ search:
 		otherNodes := hc.GetNodeListForLocation(location, badHashes)
 		for _, node := range otherNodes {
 			leaderBlock := backend.GetBlockByHash(node.hash)
+			if leaderBlock == nil {
+				continue
+			}
 			modifiedConstraintMap, err = hc.calculateFrontierPoints(modifiedConstraintMap, leaderBlock, first)
 			first = false
 			if err != nil {

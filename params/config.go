@@ -150,6 +150,12 @@ const (
 	ModeFullFake
 )
 
+// GenesisBalanceEntry represents a pre-funded account for local dev mode.
+type GenesisBalanceEntry struct {
+	Address common.Address
+	Balance *big.Int
+}
+
 // PowConfig are the configuration parameters of pow.
 type PowConfig struct {
 	PowMode Mode
@@ -175,6 +181,9 @@ type PowConfig struct {
 	Log *log.Logger `toml:"-"`
 	// Number of threads to mine on if mining
 	NumThreads int
+
+	// GenesisBalances holds pre-funded accounts for local dev mode (--node.genesis-balance)
+	GenesisBalances []GenesisBalanceEntry
 }
 
 // SetLocation sets the location on the chain config

@@ -105,6 +105,8 @@ type Slice struct {
 	appendTimeCache *lru.Cache[common.Hash, time.Duration]
 
 	recomputeRequired bool
+
+	noPow bool // When true, auto-produce blocks without PoW
 }
 
 func NewSlice(db ethdb.Database, config *Config, powConfig params.PowConfig, txConfig *TxPoolConfig, txLookupLimit *uint64, chainConfig *params.ChainConfig, slicesRunning []common.Location, currentExpansionNumber uint8, genesisBlock *types.WorkObject, engine []consensus.Engine, cacheConfig *CacheConfig, vmConfig vm.Config, genesis *Genesis, logger *log.Logger) (*Slice, error) {
@@ -137,6 +139,7 @@ func NewSlice(db ethdb.Database, config *Config, powConfig params.PowConfig, txC
 		sl.hc.pool = sl.txPool
 	}
 	sl.miner = New(sl.hc, sl.txPool, config, db, chainConfig, engine, sl.ProcessingState(), sl.logger)
+	sl.noPow = config.NoPow
 
 	pEtxRetryCache, _ := lru.New[common.Hash, pEtxRetry](c_pEtxRetryThreshold)
 	sl.pEtxRetryCache = pEtxRetryCache
@@ -161,6 +164,9 @@ func NewSlice(db ethdb.Database, config *Config, powConfig params.PowConfig, txC
 	if nodeCtx == common.ZONE_CTX && sl.ProcessingState() {
 		go sl.asyncPendingHeaderLoop()
 		go sl.asyncWorkShareUpdateLoop()
+		if sl.noPow {
+			go sl.autoMineLoop()
+		}
 	}
 
 	return sl, nil
@@ -806,15 +812,17 @@ func (sl *Slice) Append(header *types.WorkObject, domTerminus common.Hash, domOr
 	}
 
 	var quaiDiffAsPercentOfRavencoin, quaiDiffAsPercentOfRavencoinInstantaneous *big.Int
-	if header.AuxPow() != nil {
+	if header.AuxPow() != nil && header.AuxPow().Header().Bits() != 0 {
 		// Compare the current kawpow difficulty with the subsidy chain difficulty
 		subsidyChainDiff := common.GetDifficultyFromBits(header.AuxPow().Header().Bits())
 		// Normalize the difficulty, to quai block time
-		subsidyChainDiff = new(big.Int).Div(subsidyChainDiff, params.RavenQuaiBlockTimeRatio)
-		quaiDiffAsPercentOfRavencoinInstantaneous = new(big.Int).Div(new(big.Int).Mul(header.Difficulty(), params.RavencoinDiffPercentage), subsidyChainDiff)
+		if subsidyChainDiff.Sign() > 0 {
+			subsidyChainDiff = new(big.Int).Div(subsidyChainDiff, params.RavenQuaiBlockTimeRatio)
+			quaiDiffAsPercentOfRavencoinInstantaneous = new(big.Int).Div(new(big.Int).Mul(header.Difficulty(), params.RavencoinDiffPercentage), subsidyChainDiff)
+		}
 	}
 
-	if header.KawpowDifficulty() != nil {
+	if header.KawpowDifficulty() != nil && header.KawpowDifficulty().Sign() > 0 {
 		quaiDiffAsPercentOfRavencoin = new(big.Int).Div(new(big.Int).Mul(header.Difficulty(), params.RavencoinDiffPercentage), header.KawpowDifficulty())
 	}
 
@@ -903,6 +911,102 @@ func (sl *Slice) asyncPendingHeaderLoop() {
 			sl.hc.headermu.Unlock()
 		case <-sl.asyncPhSub.Err():
 			return
+		case <-sl.quit:
+			return
+		}
+	}
+}
+
+// autoMineLoop produces a new block every 5 seconds without PoW when --node.no-pow is enabled.
+func (sl *Slice) autoMineLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			sl.logger.WithFields(log.Fields{
+				"error":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Go-Quai Panicked in autoMineLoop")
+		}
+	}()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	sl.logger.Info("No-PoW auto-mining enabled: producing blocks every 5 seconds")
+
+	for {
+		select {
+		case <-ticker.C:
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						sl.logger.WithFields(log.Fields{
+							"error":      r,
+							"stacktrace": string(debug.Stack()),
+						}).Error("Go-Quai Panicked during auto-mine block production")
+					}
+				}()
+
+				// Lock headermu to protect SetCurrentHeader and GeneratePendingHeader
+				sl.hc.headermu.Lock()
+
+				currentBlock := sl.hc.CurrentBlock()
+				if currentBlock == nil {
+					sl.hc.headermu.Unlock()
+					sl.logger.Warn("No current block available for auto-mining")
+					return
+				}
+
+				// Advance state to current block (may be a no-op if already current)
+				if err := sl.hc.SetCurrentHeader(currentBlock); err != nil {
+					sl.hc.headermu.Unlock()
+					sl.logger.WithField("err", err).Error("Failed to set current header for auto-mining")
+					return
+				}
+
+				// Generate pending header directly via worker (returns full work object with body)
+				wo, err := sl.miner.worker.GeneratePendingHeader(currentBlock, true)
+				sl.hc.headermu.Unlock()
+				if err != nil {
+					sl.logger.WithField("err", err).Error("Failed to generate pending header for auto-mining")
+					return
+				}
+
+				// Deep copy to avoid concurrent modification by hierarchical coordinator
+				block := types.CopyWorkObject(wo)
+
+				// Write the block to the database
+				sl.WriteBlock(block)
+
+				// Write termini for the new block (required for chain continuity)
+				parentTermini := sl.hc.GetTerminiByHash(block.ParentHash(common.ZONE_CTX))
+				if parentTermini != nil {
+					newTermini := types.CopyTermini(*parentTermini)
+					newTermini.SetDomTerminiAtIndex(block.Hash(), block.Location().DomIndex(sl.NodeLocation()))
+					batch := sl.sliceDb.NewBatch()
+					rawdb.WriteTermini(batch, block.Hash(), newTermini)
+					if err := batch.Write(); err != nil {
+						sl.logger.WithField("err", err).Error("Failed to write termini for auto-mined block")
+						return
+					}
+				}
+
+				// Advance the current header and process state via SetCurrentHeader → AppendBlock
+				sl.hc.headermu.Lock()
+				err = sl.hc.SetCurrentHeader(block)
+				sl.hc.headermu.Unlock()
+				if err != nil {
+					sl.logger.WithField("err", err).Error("Failed to set current header after auto-mining")
+					return
+				}
+
+				// Notify subscribers (tx pool, etc.) about the new chain head
+				sl.hc.chainHeadFeed.Send(ChainHeadEvent{block})
+
+				sl.logger.WithFields(log.Fields{
+					"number": block.NumberU64(common.ZONE_CTX),
+					"hash":   block.Hash(),
+				}).Info("Auto-mined new block (no-pow)")
+			}()
 		case <-sl.quit:
 			return
 		}
